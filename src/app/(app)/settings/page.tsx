@@ -24,6 +24,40 @@ type ReconciliationLog = {
   createdAt: string;
 };
 
+type ParseLogEntry = {
+  id: string;
+  gmailMsgId: string;
+  senderDomain: string;
+  emailDate: string | null;
+  outcome: string;
+  geminiConfidence: number | null;
+  parsedMerchant: string | null;
+  parsedAmount: number | null;
+  wasTruncated: boolean;
+  bodyLengthRaw: number;
+  bodyLengthSent: number;
+  transactionId: string | null;
+  createdAt: string;
+};
+
+function outcomeColor(outcome: string): string {
+  if (outcome === "inserted") return "text-green-700 bg-green-50";
+  if (outcome === "upgraded") return "text-blue-700 bg-blue-50";
+  if (outcome === "skipped_duplicate") return "text-gray-500 bg-gray-50";
+  if (outcome.startsWith("skipped_")) return "text-orange-700 bg-orange-50";
+  if (outcome.startsWith("failed_")) return "text-red-700 bg-red-50";
+  return "text-gray-600 bg-gray-50";
+}
+
+const REPROCESSABLE = new Set([
+  "skipped_no_amount",
+  "skipped_gemini_null",
+  "skipped_filter",
+  "skipped_pdf_encrypted",
+  "skipped_pdf_failed",
+  "failed_gemini_error",
+]);
+
 const RANK_LABELS: Record<number, string> = { 1: "Bank", 2: "Payment", 3: "Merchant" };
 const STATUS_COLOURS: Record<string, string> = {
   matched: "bg-green-100 text-green-700",
@@ -32,7 +66,7 @@ const STATUS_COLOURS: Record<string, string> = {
 };
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<"filters" | "audit" | "passwords">("filters");
+  const [tab, setTab] = useState<"filters" | "audit" | "passwords" | "parse-logs">("filters");
 
   /* ── Email Filters ── */
   const [filters, setFilters] = useState<EmailFilter[]>([]);
@@ -84,6 +118,40 @@ export default function SettingsPage() {
     await loadPasswords();
   };
 
+  /* ── Parse Logs ── */
+  const [parseLogs, setParseLogs] = useState<ParseLogEntry[]>([]);
+  const [parseLogsTotal, setParseLogsTotal] = useState(0);
+  const [parseLogsPage, setParseLogsPage] = useState(1);
+  const [parseLogsLoading, setParseLogsLoading] = useState(false);
+  const [parseOutcomeFilter, setParseOutcomeFilter] = useState("");
+  const [parseDomainFilter, setParseDomainFilter] = useState("");
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null);
+
+  const loadParseLogs = async (page = 1) => {
+    setParseLogsLoading(true);
+    const params = new URLSearchParams({ page: String(page) });
+    if (parseOutcomeFilter) params.set("outcome", parseOutcomeFilter);
+    if (parseDomainFilter) params.set("domain", parseDomainFilter);
+    const res = await fetch(`/api/settings/parse-logs?${params}`);
+    const data = await res.json() as { logs: ParseLogEntry[]; total: number };
+    setParseLogs(data.logs ?? []);
+    setParseLogsTotal(data.total ?? 0);
+    setParseLogsPage(page);
+    setParseLogsLoading(false);
+  };
+
+  const handleReprocess = async (id: string) => {
+    setReprocessingId(id);
+    const res = await fetch(`/api/settings/parse-logs/${id}/reprocess`, { method: "POST" });
+    const data = await res.json() as { outcome?: string; error?: string };
+    setReprocessingId(null);
+    if (data.error) {
+      alert(`Reprocess failed: ${data.error}`);
+    } else {
+      await loadParseLogs(parseLogsPage);
+    }
+  };
+
   const handleClearDemo = async () => {
     if (!confirm("This will permanently delete all demo transactions. Continue?")) return;
     setClearingDemo(true);
@@ -107,6 +175,8 @@ export default function SettingsPage() {
 
   useEffect(() => { if (tab === "filters") fetchFilters(); }, [tab]);
   useEffect(() => { if (tab === "passwords") { void loadPasswords(); } }, [tab]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === "parse-logs") { void loadParseLogs(1); } }, [tab, parseOutcomeFilter, parseDomainFilter]);
 
   const handleAddFilter = async () => {
     if (!newValue.trim()) { setAddError("Value is required"); return; }
@@ -158,7 +228,7 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-gray-100">
-        {(["filters", "audit", "passwords"] as const).map((t) => (
+        {(["filters", "audit", "passwords", "parse-logs"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -166,7 +236,7 @@ export default function SettingsPage() {
               tab === t ? "text-[#5b7cfa] border-b-2 border-[#5b7cfa]" : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            {t === "filters" ? "Email Filters" : t === "audit" ? "Reconciliation Audit" : "Statement Passwords"}
+            {t === "filters" ? "Email Filters" : t === "audit" ? "Reconciliation Audit" : t === "passwords" ? "Statement Passwords" : "Parse Logs"}
           </button>
         ))}
       </div>
@@ -391,6 +461,143 @@ export default function SettingsPage() {
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
                   <p className="text-sm text-gray-400">No encrypted statements found yet.</p>
                   <p className="text-xs text-gray-300 mt-1">Passwords will appear here after a Gmail sync encounters a protected PDF.</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Parse Logs Tab ── */}
+      {tab === "parse-logs" && (
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Parse Logs</h2>
+          <p className="text-sm text-gray-500 mb-4">
+            Every email that entered the parsing pipeline. Use this to debug missing transactions. Logs are kept for 30 days.
+          </p>
+
+          <div className="flex flex-wrap gap-2 mb-4">
+            <select
+              value={parseOutcomeFilter}
+              onChange={(e) => setParseOutcomeFilter(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            >
+              <option value="">All outcomes</option>
+              <option value="inserted">Inserted</option>
+              <option value="upgraded">Upgraded</option>
+              <option value="skipped_duplicate">Skipped (duplicate)</option>
+              <option value="skipped_no_amount">Skipped (no amount)</option>
+              <option value="skipped_gemini_null">Skipped (Gemini null)</option>
+              <option value="skipped_filter">Skipped (filter)</option>
+              <option value="skipped_pdf_encrypted">Skipped (encrypted PDF)</option>
+              <option value="skipped_pdf_failed">Skipped (PDF error)</option>
+              <option value="failed_gemini_error">Failed (Gemini error)</option>
+            </select>
+            <input
+              type="text"
+              placeholder="Filter by domain…"
+              value={parseDomainFilter}
+              onChange={(e) => setParseDomainFilter(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa] w-48"
+            />
+          </div>
+
+          {parseLogsLoading ? (
+            <div className="flex flex-col gap-2">{[...Array(5)].map((_, i) => <div key={i} className="h-10 bg-gray-100 rounded-xl animate-pulse" />)}</div>
+          ) : (
+            <>
+              <p className="text-xs text-gray-400 mb-2">{parseLogsTotal} entries</p>
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                        <th className="text-left px-5 py-3">Date</th>
+                        <th className="text-left px-5 py-3">Domain</th>
+                        <th className="text-left px-5 py-3">Outcome</th>
+                        <th className="text-left px-5 py-3">Merchant</th>
+                        <th className="text-right px-5 py-3">Amount</th>
+                        <th className="text-center px-3 py-3">Trunc</th>
+                        <th className="px-3 py-3"></th>
+                        <th className="px-3 py-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {parseLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-gray-50">
+                          <td className="px-5 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+                            {new Date(log.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                          </td>
+                          <td className="px-5 py-2.5 text-sm text-gray-700">{log.senderDomain}</td>
+                          <td className="px-5 py-2.5">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${outcomeColor(log.outcome)}`}>
+                              {log.outcome}
+                            </span>
+                          </td>
+                          <td className="px-5 py-2.5 text-sm text-gray-700">{log.parsedMerchant ?? "—"}</td>
+                          <td className="px-5 py-2.5 text-sm text-right text-gray-700">
+                            {log.parsedAmount != null ? `₹${log.parsedAmount}` : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            {log.wasTruncated ? (
+                              <span title={`${log.bodyLengthRaw} → ${log.bodyLengthSent} chars`} className="text-orange-500 cursor-help text-xs">
+                                ⚠️
+                              </span>
+                            ) : <span className="text-gray-300 text-xs">—</span>}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <a
+                              href={`https://mail.google.com/mail/u/0/#all/${log.gmailMsgId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#5b7cfa] hover:underline text-xs"
+                            >
+                              View ↗
+                            </a>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {REPROCESSABLE.has(log.outcome) && (
+                              <button
+                                onClick={() => void handleReprocess(log.id)}
+                                disabled={reprocessingId === log.id}
+                                className="text-xs px-2 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                              >
+                                {reprocessingId === log.id ? "…" : "Reprocess"}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {parseLogsTotal > 50 && (
+                <div className="flex justify-between items-center mt-4">
+                  <button
+                    disabled={parseLogsPage <= 1}
+                    onClick={() => void loadParseLogs(parseLogsPage - 1)}
+                    className="text-sm text-[#5b7cfa] disabled:text-gray-300"
+                  >
+                    ← Previous
+                  </button>
+                  <span className="text-sm text-gray-500">
+                    Page {parseLogsPage} of {Math.ceil(parseLogsTotal / 50)}
+                  </span>
+                  <button
+                    disabled={parseLogsPage >= Math.ceil(parseLogsTotal / 50)}
+                    onClick={() => void loadParseLogs(parseLogsPage + 1)}
+                    className="text-sm text-[#5b7cfa] disabled:text-gray-300"
+                  >
+                    Next →
+                  </button>
+                </div>
+              )}
+
+              {parseLogs.length === 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center mt-2">
+                  <p className="text-sm text-gray-400">No parse logs found.</p>
                 </div>
               )}
             </>
