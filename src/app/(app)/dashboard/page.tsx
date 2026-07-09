@@ -4,6 +4,7 @@ import { SyncProgressBar } from "@/components/SyncProgressBar";
 import { KpiCard } from "@/components/KpiCard";
 import { BarChartCard } from "@/components/BarChartCard";
 import { DonutChartCard } from "@/components/DonutChartCard";
+import { OnboardingOverlay } from "@/components/OnboardingOverlay";
 import type { MonthlyTotal, CategoryTotal } from "@/lib/analytics";
 
 type KpiData = { income: number; expenses: number; netWorth: number };
@@ -76,7 +77,9 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="p-6 max-w-4xl">
+    <>
+      {data && <OnboardingOverlay hasRealData={data.hasRealData} />}
+      <div className="p-6 max-w-4xl">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -215,5 +218,6 @@ export default function DashboardPage() {
         </div>
       ) : null}
     </div>
+    </>
   );
 }
