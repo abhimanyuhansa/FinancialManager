@@ -7,41 +7,41 @@ datasource db {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  email          String    @unique
-  name           String?
-  image          String?
-  emailVerified  DateTime?
-  syncFromDate   DateTime?
-  gmailSyncedAt  DateTime?
-  lastMessageId  String?
-  createdAt      DateTime  @default(now())
-
-  transactions Transaction[]
-  assets       Asset[]
-  categories   Category[]
-  accounts     Account[]
-  sessions     Session[]
-  syncJobs     SyncJob[]
-  reconLogs    ReconciliationLog[]
+  id            String              @id @default(cuid())
+  email         String              @unique
+  name          String?
+  image         String?
+  syncFromDate  DateTime?
+  gmailSyncedAt DateTime?
+  lastMessageId String?
+  createdAt     DateTime            @default(now())
+  emailVerified DateTime?
+  accounts      Account[]
+  assets        Asset[]
+  categories    Category[]
+  reconLogs     ReconciliationLog[]
+  sessions      Session[]
+  syncJobs           SyncJob[]
+  transactions       Transaction[]
+  merchantRules      MerchantRule[]
+  statementPasswords StatementPassword[]
+  parseLogs          ParseLog[]
 }
 
-// NextAuth models
 model Account {
   id                String  @id @default(cuid())
   userId            String
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? @db.Text
+  id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -51,8 +51,7 @@ model Session {
   sessionToken String   @unique
   userId       String
   expires      DateTime
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
@@ -71,17 +70,16 @@ model Transaction {
   date        DateTime
   merchant    String
   amount      Float
-  type        String   // "expense" | "income"
+  type        String
   currency    String   @default("INR")
   category    String
   tag         String?
-  source      String   @default("gmail") // "gmail" | "manual"
-  sourceRank  Int      @default(3)       // 1=bank, 2=gateway, 3=merchant
+  source      String   @default("gmail")
+  sourceRank  Int      @default(3)
   reviewed    Boolean  @default(false)
   needsReview Boolean  @default(false)
   createdAt   DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, gmailMsgId])
   @@unique([userId, fingerprint])
@@ -91,14 +89,13 @@ model Asset {
   id        String   @id @default(cuid())
   userId    String
   name      String
-  type      String   // "savings" | "fd" | "mutual_fund" | "stocks" | "property" | "gold" | "other"
+  type      String
   value     Float
   currency  String   @default("INR")
   asOf      DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Category {
@@ -108,15 +105,14 @@ model Category {
   icon      String
   color     String
   isDefault Boolean @default(false)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model EmailFilter {
   id         String   @id @default(cuid())
-  type       String   // "sender_domain" | "sender_email" | "subject_keyword"
+  type       String
   value      String
-  sourceRank Int      @default(3) // 1=bank, 2=gateway, 3=merchant
+  sourceRank Int      @default(3)
   isActive   Boolean  @default(true)
   addedAt    DateTime @default(now())
   note       String?
@@ -125,19 +121,19 @@ model EmailFilter {
 }
 
 model SyncJob {
-  id              String    @id @default(cuid())
-  userId          String
-  status          String    @default("running") // "running" | "complete" | "failed"
-  totalEmails     Int       @default(0)
-  processedEmails Int       @default(0)
-  newTransactions Int       @default(0)
-  skippedEmails   Int       @default(0)
-  isRetrigger     Boolean   @default(false)
-  messageIds      String?   @db.Text
-  startedAt       DateTime  @default(now())
-  completedAt     DateTime?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                    String    @id @default(cuid())
+  userId                String
+  status                String    @default("running")
+  totalEmails           Int       @default(0)
+  processedEmails       Int       @default(0)
+  newTransactions       Int       @default(0)
+  skippedEmails         Int       @default(0)
+  encryptedBlockedCount Int       @default(0)
+  isRetrigger           Boolean   @default(false)
+  startedAt             DateTime  @default(now())
+  completedAt           DateTime?
+  messageIds            String?
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model ReconciliationLog {
@@ -148,10 +144,58 @@ model ReconciliationLog {
   statementMerchant    String
   statementAmount      Float
   matchedTransactionId String?
-  status               String    // "matched" | "missing" | "mismatch"
+  status               String
   mismatchDetails      String?
   resolvedAt           DateTime?
   createdAt            DateTime  @default(now())
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+model MerchantRule {
+  id           String   @id @default(cuid())
+  userId       String
+  merchantName String
+  category     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, merchantName])
+}
+
+model StatementPassword {
+  id                String   @id @default(cuid())
+  userId            String
+  senderDomain      String
+  encryptedPassword String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, senderDomain])
+}
+
+model ParseLog {
+  id               String    @id @default(cuid())
+  userId           String
+  syncJobId        String
+  gmailMsgId       String
+  senderDomain     String
+  emailDate        DateTime?
+  bodyLengthRaw    Int
+  bodyLengthSent   Int
+  wasTruncated     Boolean   @default(false)
+  batchSize        Int       @default(1)
+  outcome          String
+  geminiConfidence Float?
+  parsedMerchant   String?
+  parsedAmount     Float?
+  transactionId    String?
+  errorDetail      String?
+  createdAt        DateTime  @default(now())
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, syncJobId])
+  @@index([userId, gmailMsgId])
+  @@index([createdAt])
 }
