@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PATCH(req: Request, { params }: RouteContext) {
   const session = await auth();
@@ -10,6 +10,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
+  const { id } = await params;
 
   const { category, scope } = (await req.json()) as {
     category?: string;
@@ -21,7 +22,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
   }
 
   const tx = await prisma.transaction.findUnique({
-    where: { id: params.id },
+    where: { id },
     select: { id: true, userId: true, merchant: true },
   });
 
@@ -31,7 +32,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 
   if (scope === "single") {
     await prisma.transaction.update({
-      where: { id: params.id },
+      where: { id },
       data: { category },
     });
     return NextResponse.json({ updatedCount: 1 });

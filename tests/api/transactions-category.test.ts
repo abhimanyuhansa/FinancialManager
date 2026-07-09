@@ -47,7 +47,7 @@ describe("PATCH /api/transactions/[id]/category", () => {
     mockUpdate.mockResolvedValue({ ...mockTransaction, category: "transport" } as never);
 
     const req = makeRequest("tx-1", { category: "transport", scope: "single" });
-    const res = await PATCH(req, { params: { id: "tx-1" } });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "tx-1" }) });
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -65,7 +65,7 @@ describe("PATCH /api/transactions/[id]/category", () => {
     mockUpsert.mockResolvedValue({} as never);
 
     const req = makeRequest("tx-1", { category: "food", scope: "all_merchant" });
-    const res = await PATCH(req, { params: { id: "tx-1" } });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "tx-1" }) });
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -84,14 +84,14 @@ describe("PATCH /api/transactions/[id]/category", () => {
   it("returns 404 if transaction not found", async () => {
     mockFindUnique.mockResolvedValue(null);
     const req = makeRequest("missing", { category: "food", scope: "single" });
-    const res = await PATCH(req, { params: { id: "missing" } });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "missing" }) });
     expect(res.status).toBe(404);
   });
 
   it("returns 400 for invalid scope", async () => {
     mockFindUnique.mockResolvedValue(mockTransaction as never);
     const req = makeRequest("tx-1", { category: "food", scope: "invalid" });
-    const res = await PATCH(req, { params: { id: "tx-1" } });
+    const res = await PATCH(req, { params: Promise.resolve({ id: "tx-1" }) });
     expect(res.status).toBe(400);
   });
 });
