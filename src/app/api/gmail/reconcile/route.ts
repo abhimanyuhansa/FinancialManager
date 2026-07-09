@@ -88,6 +88,7 @@ export async function POST(req: Request) {
   if (!gmailMsgId) {
     return NextResponse.json({ error: "Missing gmailMsgId" }, { status: 400 });
   }
+  console.log(`[reconcile] userId=${userId} gmailMsgId=${gmailMsgId}`);
 
   const accessToken = await getGmailToken(userId);
   if (!accessToken) {
@@ -96,6 +97,7 @@ export async function POST(req: Request) {
 
   const statement = await fetchStatementBody(accessToken, gmailMsgId);
   if (!statement || !statement.body) {
+    console.warn(`[reconcile] Could not fetch statement body for gmailMsgId=${gmailMsgId}`);
     return NextResponse.json({ error: "Could not fetch statement email" }, { status: 422 });
   }
 
@@ -106,6 +108,7 @@ export async function POST(req: Request) {
   const items = rawItems
     .map((raw) => normaliseStatementItem(raw))
     .filter((item): item is NonNullable<typeof item> => item !== null);
+  console.log(`[reconcile] Gemini extracted ${items.length} line items from statement`);
 
   if (items.length === 0) {
     return NextResponse.json({ error: "No line items extracted from statement" }, { status: 422 });
@@ -189,6 +192,7 @@ export async function POST(req: Request) {
     });
   }
 
+  console.log(`[reconcile] Result: totalItems=${items.length} matched=${matched} missing=${missing} mismatch=${mismatch}`);
   return NextResponse.json({ totalItems: items.length, matched, missing, mismatch });
 }
 

@@ -67,12 +67,14 @@ export async function POST(req: Request) {
 
   const allIds: string[] = job.messageIds ? JSON.parse(job.messageIds) : [];
   const slice = allIds.slice(job.processedEmails, job.processedEmails + CHUNK_SIZE);
+  console.log(`[sync/chunk] jobId=${jobId} processed=${job.processedEmails}/${allIds.length} chunk=${slice.length}`);
 
   if (slice.length === 0) {
     await prisma.syncJob.update({
       where: { id: jobId },
       data: { status: "complete", completedAt: new Date() },
     });
+    console.log(`[sync/chunk] jobId=${jobId} complete (no remaining messages)`);
     return NextResponse.json({ done: true, processed: 0, newTransactions: 0 });
   }
 
@@ -84,13 +86,18 @@ export async function POST(req: Request) {
 
   const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
   const apiKey = process.env.GEMINI_API_KEY ?? "";
+  if (!apiKey) console.warn(`[sync/chunk] GEMINI_API_KEY not set — Gemini calls will fail`);
 
   let newTransactions = 0;
   let skipped = 0;
 
   for (const msgId of slice) {
     const full = await fetchFullMessage(accessToken, msgId);
-    if (!full || !full.body) { skipped++; continue; }
+    if (!full || !full.body) {
+      console.log(`[sync/chunk] msgId=${msgId} skipped: no body`);
+      skipped++;
+      continue;
+    }
 
     const sourceRankMatch = matchesEmailFilter(
       { from: full.senderName, subject: "" },
@@ -105,7 +112,11 @@ export async function POST(req: Request) {
       apiKey,
     });
 
-    if (!parsed) { skipped++; continue; }
+    if (!parsed) {
+      console.log(`[sync/chunk] msgId=${msgId} skipped: Gemini returned null`);
+      skipped++;
+      continue;
+    }
 
     const result = await upsertTransaction(prisma, userId, {
       gmailMsgId: msgId,
@@ -119,6 +130,7 @@ export async function POST(req: Request) {
 
   const newProcessed = job.processedEmails + slice.length;
   const done = newProcessed >= allIds.length;
+  console.log(`[sync/chunk] jobId=${jobId} chunk done: newTransactions=${newTransactions} skipped=${skipped} done=${done}`);
 
   await prisma.syncJob.update({
     where: { id: jobId },

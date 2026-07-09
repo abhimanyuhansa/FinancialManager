@@ -15,6 +15,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
+  console.log(`[scan] userId=${userId}`);
 
   const body = (await req.json()) as { period?: LookbackPeriod };
   const period: LookbackPeriod = body.period ?? "6m";
@@ -25,6 +26,7 @@ export async function POST(req: Request) {
   }
 
   const fromDate = buildScanFromDate(period);
+  console.log(`[scan] period=${period} fromDate=${fromDate.toISOString()}`);
 
   const allMessages = [];
   let pageToken: string | undefined;
@@ -33,10 +35,13 @@ export async function POST(req: Request) {
     allMessages.push(...page.messages);
     pageToken = page.nextPageToken;
   } while (pageToken);
+  console.log(`[scan] fetched ${allMessages.length} total messages`);
 
   const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
+  console.log(`[scan] ${filters.length} active EmailFilters loaded`);
 
   const scanResult = classifySenders(allMessages, filters);
+  console.log(`[scan] autoApproved=${scanResult.autoApproved.length} needsReview=${scanResult.needsReview.length} financialFound=${scanResult.financialFound}`);
 
   const filterValues = new Set(filters.map((f) => f.value));
   for (const s of scanResult.autoApproved) {

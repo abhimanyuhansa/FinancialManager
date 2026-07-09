@@ -6,6 +6,9 @@ export async function getGmailToken(userId: string): Promise<string | null> {
     where: { userId, provider: "google" },
     select: { access_token: true },
   });
+  if (!account?.access_token) {
+    console.warn(`[gmail] No access token found for user ${userId}`);
+  }
   return account?.access_token ?? null;
 }
 
@@ -125,11 +128,13 @@ export async function fetchMessageMetadataList(
 
   if (!listRes.ok) {
     const err = await listRes.text();
+    console.error(`[gmail] fetchMessageMetadataList failed: ${listRes.status}`, err);
     throw new Error(`Gmail list failed: ${listRes.status} ${err}`);
   }
 
   const listData = await listRes.json() as { messages?: GmailMessageRef[]; nextPageToken?: string };
   const refs = listData.messages ?? [];
+  console.log(`[gmail] fetchMessageMetadataList: ${refs.length} message refs returned (pageToken=${pageToken ?? "none"})`);
 
   const BATCH = 20;
   const results: EmailMeta[] = [];

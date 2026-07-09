@@ -10,6 +10,7 @@ export async function POST() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
+  console.log(`[sync/start] userId=${userId}`);
 
   const accessToken = await getGmailToken(userId);
   if (!accessToken) {
@@ -21,10 +22,13 @@ export async function POST() {
     select: { syncFromDate: true },
   });
   if (!user?.syncFromDate) {
+    console.warn(`[sync/start] No syncFromDate for userId=${userId}`);
     return NextResponse.json({ error: "No syncFromDate set — complete onboarding first" }, { status: 400 });
   }
+  console.log(`[sync/start] Scanning from ${user.syncFromDate.toISOString()}`);
 
   const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
+  console.log(`[sync/start] Loaded ${filters.length} active EmailFilters`);
 
   const qualifyingIds: string[] = [];
   let pageToken: string | undefined;
@@ -37,6 +41,8 @@ export async function POST() {
     pageToken = page.nextPageToken;
   } while (pageToken);
 
+  console.log(`[sync/start] ${qualifyingIds.length} qualifying messages found`);
+
   const job = await prisma.syncJob.create({
     data: {
       userId,
@@ -44,6 +50,7 @@ export async function POST() {
       messageIds: JSON.stringify(qualifyingIds),
     },
   });
+  console.log(`[sync/start] SyncJob created: jobId=${job.id}`);
 
   return NextResponse.json({ jobId: job.id, totalEmails: qualifyingIds.length });
 }

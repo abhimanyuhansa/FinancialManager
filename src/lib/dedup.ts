@@ -27,7 +27,10 @@ export async function upsertTransaction(
     where: { userId_gmailMsgId: { userId, gmailMsgId } },
     select: { id: true },
   });
-  if (existing) return "skipped_msgid";
+  if (existing) {
+    console.log(`[dedup] skipped_msgid: gmailMsgId=${gmailMsgId}`);
+    return "skipped_msgid";
+  }
 
   const date = new Date(parsed.date);
   const fingerprint = buildFingerprint(parsed.merchant, parsed.amount, date);
@@ -53,8 +56,10 @@ export async function upsertTransaction(
           needsReview: parsed.needsReview,
         },
       });
+      console.log(`[dedup] upgraded: fingerprint=${fingerprint} newRank=${sourceRank}`);
       return "upgraded";
     }
+    console.log(`[dedup] skipped_fingerprint: fingerprint=${fingerprint}`);
     return "skipped_fingerprint";
   }
 
@@ -73,5 +78,6 @@ export async function upsertTransaction(
       needsReview: parsed.needsReview,
     },
   });
+  console.log(`[dedup] inserted: merchant="${parsed.merchant}" amount=${parsed.amount} date=${parsed.date}`);
   return "inserted";
 }

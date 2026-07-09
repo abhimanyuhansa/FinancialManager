@@ -56,7 +56,10 @@ export async function parseEmailTransaction(input: ParseInput): Promise<ParsedTr
     }
   );
 
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.error(`[gemini] parseEmailTransaction HTTP error: ${res.status} for sender="${senderName}"`);
+    return null;
+  }
 
   try {
     const data = await res.json() as {
@@ -75,7 +78,10 @@ export async function parseEmailTransaction(input: ParseInput): Promise<ParsedTr
     };
 
     const amount = typeof parsed.amount === "number" ? parsed.amount : null;
-    if (!amount || amount <= 0) return null;
+    if (!amount || amount <= 0) {
+      console.log(`[gemini] Skipping email from "${senderName}": amount=${amount} (invalid)`);
+      return null;
+    }
 
     const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0;
     const merchant = parsed.merchant ?? senderName;
@@ -85,6 +91,8 @@ export async function parseEmailTransaction(input: ParseInput): Promise<ParsedTr
     const category = parsed.category && VALID_CATEGORIES.includes(parsed.category)
       ? parsed.category
       : "other";
+
+    console.log(`[gemini] Parsed: merchant="${merchant}" amount=${amount} type=${type} category=${category} confidence=${confidence} needsReview=${confidence < 0.7}`);
 
     return {
       merchant,
@@ -97,6 +105,7 @@ export async function parseEmailTransaction(input: ParseInput): Promise<ParsedTr
       needsReview: confidence < 0.7,
     };
   } catch {
+    console.error(`[gemini] Failed to parse response for sender="${senderName}"`);
     return null;
   }
 }

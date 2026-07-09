@@ -9,6 +9,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
+  console.log(`[analytics/dashboard] userId=${userId}`);
 
   const now = new Date();
   const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -75,6 +76,8 @@ export async function GET() {
   const needsReviewCount = await prisma.transaction.count({
     where: { userId, needsReview: true, reviewed: false },
   });
+
+  console.log(`[analytics/dashboard] sixMonthTxs=${sixMonthTxs.length} assets=${assets.length} assetTotal=${assetTotal} needsReview=${needsReviewCount}`);
 
   return NextResponse.json({
     currentMonth,
