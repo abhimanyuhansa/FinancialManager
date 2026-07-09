@@ -7,7 +7,7 @@ export function buildFingerprint(merchant: string, amount: number, date: Date): 
   return `${normalizedMerchant}|${amount}|${dateBucket}`;
 }
 
-type UpsertInput = {
+type UpsertLegacyInput = {
   gmailMsgId: string;
   parsed: ParsedTransaction;
   sourceRank: number;
@@ -18,11 +18,10 @@ export type UpsertResult = "inserted" | "skipped_msgid" | "skipped_fingerprint" 
 export async function upsertTransaction(
   prisma: PrismaClient,
   userId: string,
-  input: UpsertInput
+  input: UpsertLegacyInput
 ): Promise<UpsertResult> {
   const { gmailMsgId, parsed, sourceRank } = input;
 
-  // Layer 2: skip if gmailMsgId already processed
   const existing = await prisma.transaction.findUnique({
     where: { userId_gmailMsgId: { userId, gmailMsgId } },
     select: { id: true },
@@ -35,7 +34,6 @@ export async function upsertTransaction(
   const date = new Date(parsed.date);
   const fingerprint = buildFingerprint(parsed.merchant, parsed.amount, date);
 
-  // Layer 3 + 4: check fingerprint collision
   const fpExisting = await prisma.transaction.findUnique({
     where: { userId_fingerprint: { userId, fingerprint } },
     select: { id: true, sourceRank: true },
@@ -80,4 +78,76 @@ export async function upsertTransaction(
   });
   console.log(`[dedup] inserted: merchant="${parsed.merchant}" amount=${parsed.amount} date=${parsed.date}`);
   return "inserted";
+}
+
+// New-style upsert used by chunk/v2, reprocess, and advance routes
+export type UpsertTransactionInput = {
+  userId: string;
+  gmailMsgId: string;
+  date: Date;
+  merchant: string;
+  amount: number;
+  type: string;
+  currency: string;
+  category: string;
+  source: string;
+  sourceRank: number;
+  confidence?: number;
+  needsReview?: boolean;
+};
+
+export type UpsertTransactionResult = { action: "inserted" | "upgraded" | "skipped"; id?: string };
+
+export async function upsertTransactionV2(
+  prismaClient: PrismaClient,
+  input: UpsertTransactionInput
+): Promise<UpsertTransactionResult> {
+  const { userId, gmailMsgId, date, merchant, amount, type, currency, category, source, sourceRank, needsReview } = input;
+
+  const existing = await prismaClient.transaction.findUnique({
+    where: { userId_gmailMsgId: { userId, gmailMsgId } },
+    select: { id: true },
+  });
+  if (existing) {
+    console.log(`[dedup] skipped_msgid: gmailMsgId=${gmailMsgId}`);
+    return { action: "skipped", id: existing.id };
+  }
+
+  const fingerprint = buildFingerprint(merchant, amount, date);
+  const fpExisting = await prismaClient.transaction.findUnique({
+    where: { userId_fingerprint: { userId, fingerprint } },
+    select: { id: true, sourceRank: true },
+  });
+
+  if (fpExisting) {
+    if (sourceRank < fpExisting.sourceRank) {
+      await prismaClient.transaction.update({
+        where: { id: fpExisting.id },
+        data: { gmailMsgId, sourceRank, merchant, amount, type, category, currency, needsReview },
+      });
+      console.log(`[dedup] upgraded: fingerprint=${fingerprint}`);
+      return { action: "upgraded", id: fpExisting.id };
+    }
+    console.log(`[dedup] skipped_fingerprint: fingerprint=${fingerprint}`);
+    return { action: "skipped", id: fpExisting.id };
+  }
+
+  const tx = await prismaClient.transaction.create({
+    data: {
+      userId,
+      gmailMsgId,
+      fingerprint,
+      date,
+      merchant,
+      amount,
+      type,
+      currency,
+      category,
+      source,
+      sourceRank,
+      needsReview: needsReview ?? false,
+    },
+  });
+  console.log(`[dedup] inserted: merchant="${merchant}" amount=${amount}`);
+  return { action: "inserted", id: tx.id };
 }
