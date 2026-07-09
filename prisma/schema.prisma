@@ -11,6 +11,7 @@ model User {
   email          String    @unique
   name           String?
   image          String?
+  emailVerified  DateTime?
   syncFromDate   DateTime?
   gmailSyncedAt  DateTime?
   lastMessageId  String?
