@@ -1,5 +1,6 @@
 "use client";
 import { NavItem } from "./NavItem";
+import { SyncProgressBanner } from "./SyncProgressBanner";
 
 const DashboardIcon = () => (
   <svg
@@ -117,7 +118,10 @@ export function AppLayout({ children }: AppLayoutProps) {
       </nav>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col min-w-0 pb-20 md:pb-0">{children}</main>
+      <div className="flex-1 flex flex-col min-w-0">
+        <SyncProgressBanner />
+        <main className="flex-1 flex flex-col pb-20 md:pb-0 bg-[#eef0f6]">{children}</main>
+      </div>
 
       {/* Mobile bottom tab bar */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex justify-around px-2 py-2 z-50">
