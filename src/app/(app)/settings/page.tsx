@@ -44,6 +44,23 @@ export default function SettingsPage() {
   const [addError, setAddError] = useState("");
   const [addSaving, setAddSaving] = useState(false);
 
+  /* ── Demo Data ── */
+  const [clearingDemo, setClearingDemo] = useState(false);
+  const [demoCleared, setDemoCleared] = useState(false);
+
+  const handleClearDemo = async () => {
+    if (!confirm("This will permanently delete all demo transactions. Continue?")) return;
+    setClearingDemo(true);
+    try {
+      const res = await fetch("/api/transactions/demo", { method: "DELETE" });
+      const data = await res.json() as { deleted: number };
+      setDemoCleared(true);
+      alert(`Deleted ${data.deleted} demo transaction${data.deleted !== 1 ? "s" : ""}.`);
+    } finally {
+      setClearingDemo(false);
+    }
+  };
+
   const fetchFilters = () => {
     setFiltersLoading(true);
     fetch("/api/settings/filters")
@@ -266,6 +283,21 @@ export default function SettingsPage() {
           )}
         </>
       )}
+
+      {/* Demo Data */}
+      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Demo Data</h3>
+        <p className="text-sm text-gray-500 mb-3">
+          Remove the sample transactions that were pre-loaded to demonstrate the app.
+        </p>
+        <button
+          onClick={handleClearDemo}
+          disabled={clearingDemo || demoCleared}
+          className="px-4 py-2 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50"
+        >
+          {demoCleared ? "Demo data cleared" : clearingDemo ? "Clearing…" : "Clear Demo Data"}
+        </button>
+      </div>
 
       {/* Dev-only advance sync */}
       {process.env.NODE_ENV === "development" && (
