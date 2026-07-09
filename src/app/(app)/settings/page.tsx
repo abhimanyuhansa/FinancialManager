@@ -32,7 +32,7 @@ const STATUS_COLOURS: Record<string, string> = {
 };
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<"filters" | "audit">("filters");
+  const [tab, setTab] = useState<"filters" | "audit" | "passwords">("filters");
 
   /* ── Email Filters ── */
   const [filters, setFilters] = useState<EmailFilter[]>([]);
@@ -47,6 +47,42 @@ export default function SettingsPage() {
   /* ── Demo Data ── */
   const [clearingDemo, setClearingDemo] = useState(false);
   const [demoCleared, setDemoCleared] = useState(false);
+
+  /* ── Statement Passwords ── */
+  const [passwords, setPasswords] = useState<{
+    stored: Array<{ senderDomain: string; updatedAt: string }>;
+    pending: string[];
+  } | null>(null);
+  const [pwLoading, setPwLoading] = useState(false);
+  const [newPassword, setNewPassword] = useState<Record<string, string>>({});
+  const [savingPw, setSavingPw] = useState<Record<string, boolean>>({});
+
+  const loadPasswords = async () => {
+    setPwLoading(true);
+    const res = await fetch("/api/settings/statement-passwords");
+    const data = await res.json() as { stored: Array<{ senderDomain: string; updatedAt: string }>; pending: string[] };
+    setPasswords(data);
+    setPwLoading(false);
+  };
+
+  const handleSavePassword = async (domain: string) => {
+    const pw = newPassword[domain];
+    if (!pw) return;
+    setSavingPw((prev) => ({ ...prev, [domain]: true }));
+    await fetch("/api/settings/statement-passwords", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senderDomain: domain, password: pw }),
+    });
+    setNewPassword((prev) => ({ ...prev, [domain]: "" }));
+    await loadPasswords();
+    setSavingPw((prev) => ({ ...prev, [domain]: false }));
+  };
+
+  const handleDeletePassword = async (domain: string) => {
+    await fetch(`/api/settings/statement-passwords/${encodeURIComponent(domain)}`, { method: "DELETE" });
+    await loadPasswords();
+  };
 
   const handleClearDemo = async () => {
     if (!confirm("This will permanently delete all demo transactions. Continue?")) return;
@@ -70,6 +106,7 @@ export default function SettingsPage() {
   };
 
   useEffect(() => { if (tab === "filters") fetchFilters(); }, [tab]);
+  useEffect(() => { if (tab === "passwords") { void loadPasswords(); } }, [tab]);
 
   const handleAddFilter = async () => {
     if (!newValue.trim()) { setAddError("Value is required"); return; }
@@ -121,7 +158,7 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-gray-100">
-        {(["filters", "audit"] as const).map((t) => (
+        {(["filters", "audit", "passwords"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -129,7 +166,7 @@ export default function SettingsPage() {
               tab === t ? "text-[#5b7cfa] border-b-2 border-[#5b7cfa]" : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            {t === "filters" ? "Email Filters" : "Reconciliation Audit"}
+            {t === "filters" ? "Email Filters" : t === "audit" ? "Reconciliation Audit" : "Statement Passwords"}
           </button>
         ))}
       </div>
@@ -282,6 +319,83 @@ export default function SettingsPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* ── Statement Passwords Tab ── */}
+      {tab === "passwords" && (
+        <div>
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Statement Passwords</h2>
+          <p className="text-sm text-gray-500 mb-6">
+            Some bank statements arrive as password-protected PDFs. Enter the password for each sender so Financial Manager can read them.
+          </p>
+
+          {pwLoading && <p className="text-sm text-gray-400">Loading…</p>}
+
+          {passwords && (
+            <>
+              {passwords.pending.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-xs font-semibold text-orange-700 uppercase tracking-wide mb-3">
+                    ⚠️ Encrypted statements found ({passwords.pending.length})
+                  </h3>
+                  <div className="flex flex-col gap-2">
+                    {passwords.pending.map((domain) => (
+                      <div key={domain} className="flex items-center gap-3 p-3 bg-orange-50 border border-orange-200 rounded-xl">
+                        <span className="flex-1 text-sm font-medium text-gray-700 font-mono">{domain}</span>
+                        <input
+                          type="password"
+                          placeholder="Enter password"
+                          value={newPassword[domain] ?? ""}
+                          onChange={(e) => setNewPassword((prev) => ({ ...prev, [domain]: e.target.value }))}
+                          onKeyDown={(e) => e.key === "Enter" && void handleSavePassword(domain)}
+                          className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                        />
+                        <button
+                          onClick={() => void handleSavePassword(domain)}
+                          disabled={savingPw[domain] || !newPassword[domain]}
+                          className="px-4 py-1.5 bg-[#5b7cfa] text-white text-sm rounded-xl hover:bg-[#4a6be8] disabled:opacity-50 transition-colors"
+                        >
+                          {savingPw[domain] ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {passwords.stored.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="px-5 py-3 border-b border-gray-50">
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Stored passwords</span>
+                  </div>
+                  <div className="divide-y divide-gray-50">
+                    {passwords.stored.map((entry) => (
+                      <div key={entry.senderDomain} className="px-5 py-2.5 flex items-center gap-4">
+                        <span className="flex-1 text-sm text-gray-900 font-mono">{entry.senderDomain}</span>
+                        <span className="text-xs text-gray-400">
+                          {new Date(entry.updatedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                        </span>
+                        <button
+                          onClick={() => void handleDeletePassword(entry.senderDomain)}
+                          className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {passwords.pending.length === 0 && passwords.stored.length === 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
+                  <p className="text-sm text-gray-400">No encrypted statements found yet.</p>
+                  <p className="text-xs text-gray-300 mt-1">Passwords will appear here after a Gmail sync encounters a protected PDF.</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
 
       {/* Demo Data */}
