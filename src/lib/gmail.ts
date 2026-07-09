@@ -1,15 +1,97 @@
 import { prisma } from "@/lib/prisma";
 import { matchesEmailFilter } from "@/lib/emailFilter";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require("pdf-parse") as (buffer: Buffer, options?: Record<string, unknown>) => Promise<{ text: string }>;
+
+export type PdfResult =
+  | { status: "ok"; text: string }
+  | { status: "encrypted" }
+  | { status: "failed"; error: string };
+
+export async function fetchPdfAttachment(
+  accessToken: string,
+  msgId: string,
+  attachmentId: string
+): Promise<PdfResult> {
+  const res = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}/attachments/${attachmentId}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!res.ok) return { status: "failed", error: `HTTP ${res.status}` };
+
+  const data = await res.json() as { data?: string };
+  if (!data.data) return { status: "failed", error: "Empty attachment" };
+
+  const buffer = Buffer.from(data.data, "base64url");
+
+  try {
+    const result = await pdfParse(buffer);
+    return { status: "ok", text: result.text.slice(0, 3000) };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.toLowerCase().includes("password") || msg.toLowerCase().includes("encrypted")) {
+      return { status: "encrypted" };
+    }
+    return { status: "failed", error: msg };
+  }
+}
 
 export async function getGmailToken(userId: string): Promise<string | null> {
   const account = await prisma.account.findFirst({
     where: { userId, provider: "google" },
-    select: { access_token: true },
+    select: { access_token: true, refresh_token: true, expires_at: true },
   });
-  if (!account?.access_token) {
-    console.warn(`[gmail] No access token found for user ${userId}`);
+  if (!account) {
+    console.warn(`[gmail] No Google account found for user ${userId}`);
+    return null;
   }
-  return account?.access_token ?? null;
+
+  // Check if token is still valid (with 60s buffer)
+  const nowSec = Math.floor(Date.now() / 1000);
+  const isExpired = account.expires_at != null && account.expires_at < nowSec + 60;
+
+  if (!isExpired && account.access_token) {
+    return account.access_token;
+  }
+
+  // Token expired or missing — try to refresh
+  if (!account.refresh_token) {
+    console.warn(`[gmail] Access token expired and no refresh_token for user ${userId}`);
+    return null;
+  }
+
+  try {
+    const res = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        refresh_token: account.refresh_token,
+        grant_type: "refresh_token",
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`[gmail] Token refresh failed: ${res.status}`, err);
+      return null;
+    }
+    const tokens = (await res.json()) as {
+      access_token: string;
+      expires_in: number;
+      token_type: string;
+    };
+    const newExpiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;
+    await prisma.account.updateMany({
+      where: { userId, provider: "google" },
+      data: { access_token: tokens.access_token, expires_at: newExpiresAt },
+    });
+    console.log(`[gmail] Token refreshed for user ${userId}, expires_at=${newExpiresAt}`);
+    return tokens.access_token;
+  } catch (e) {
+    console.error(`[gmail] Token refresh error:`, e);
+    return null;
+  }
 }
 
 export type EmailMeta = {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getGmailToken } from "@/lib/gmail";
+import { getGmailToken, fetchPdfAttachment } from "@/lib/gmail";
 import { parseEmailBatch, type BatchInput } from "@/lib/gemini";
 import { upsertTransactionV2 } from "@/lib/dedup";
 import { matchesEmailFilter } from "@/lib/emailFilter";
@@ -9,10 +9,19 @@ const CHUNK_SIZE = 15;
 const BATCH_SIZE = 10;
 const BODY_LIMIT = 1500;
 
+type FetchedMessage = {
+  body: string;
+  senderName: string;
+  senderDomain: string;
+  receivedDate: string;
+  hasPdfAttachment: boolean;
+  pdfOutcome: "ok" | "encrypted" | "failed" | null;
+};
+
 async function fetchFullMessage(
   accessToken: string,
   msgId: string
-): Promise<{ body: string; senderName: string; senderDomain: string; receivedDate: string } | null> {
+): Promise<FetchedMessage | null> {
   const res = await fetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=full`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -24,7 +33,7 @@ async function fetchFullMessage(
     payload?: {
       headers?: Array<{ name: string; value: string }>;
       body?: { data?: string };
-      parts?: Array<{ mimeType: string; body?: { data?: string } }>;
+      parts?: Array<{ mimeType: string; body?: { data?: string; attachmentId?: string } }>;
     };
   };
 
@@ -49,7 +58,23 @@ async function fetchFullMessage(
     body = decoded.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   }
 
-  return { body, senderName, senderDomain, receivedDate };
+  let hasPdfAttachment = false;
+  let pdfOutcome: FetchedMessage["pdfOutcome"] = null;
+
+  const pdfParts = parts.filter((p) => p.mimeType === "application/pdf" && p.body?.attachmentId);
+  if (pdfParts.length > 0) {
+    hasPdfAttachment = true;
+    const part = pdfParts[0];
+    const pdfResult = await fetchPdfAttachment(accessToken, msgId, part.body!.attachmentId!);
+    if (pdfResult.status === "ok") {
+      body = (body + "\n\n" + pdfResult.text).trim();
+      pdfOutcome = "ok";
+    } else {
+      pdfOutcome = pdfResult.status;
+    }
+  }
+
+  return { body, senderName, senderDomain, receivedDate, hasPdfAttachment, pdfOutcome };
 }
 
 async function advanceJob(job: {
@@ -89,9 +114,47 @@ async function advanceJob(job: {
   };
 
   const fetched: FetchedEmail[] = [];
+  let encryptedBlockedCount = 0;
+
   for (const msgId of slice) {
     const msg = await fetchFullMessage(accessToken, msgId);
     if (!msg) continue;
+
+    if (msg.hasPdfAttachment && msg.pdfOutcome === "encrypted") {
+      await prisma.parseLog.create({
+        data: {
+          userId: job.userId,
+          syncJobId: job.id,
+          gmailMsgId: msgId,
+          senderDomain: msg.senderDomain,
+          bodyLengthRaw: 0,
+          bodyLengthSent: 0,
+          wasTruncated: false,
+          batchSize: 1,
+          outcome: "skipped_pdf_encrypted",
+        },
+      });
+      encryptedBlockedCount++;
+      continue;
+    }
+
+    if (msg.hasPdfAttachment && msg.pdfOutcome === "failed") {
+      await prisma.parseLog.create({
+        data: {
+          userId: job.userId,
+          syncJobId: job.id,
+          gmailMsgId: msgId,
+          senderDomain: msg.senderDomain,
+          bodyLengthRaw: 0,
+          bodyLengthSent: 0,
+          wasTruncated: false,
+          batchSize: 1,
+          outcome: "skipped_pdf_failed",
+        },
+      });
+      continue;
+    }
+
     const filterResult = matchesEmailFilter({ from: msg.senderName, subject: "" }, filters);
     fetched.push({
       msgId,
@@ -121,7 +184,6 @@ async function advanceJob(job: {
 
   const toProcess = fetched.filter((e) => !e.filtered);
   let newTransactions = 0;
-  const encryptedBlockedCount = 0;
 
   for (let i = 0; i < toProcess.length; i += BATCH_SIZE) {
     const batch = toProcess.slice(i, i + BATCH_SIZE);
