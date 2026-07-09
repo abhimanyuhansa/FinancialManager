@@ -21,11 +21,10 @@ export async function POST() {
     where: { id: userId },
     select: { syncFromDate: true },
   });
-  if (!user?.syncFromDate) {
-    console.warn(`[sync/start] No syncFromDate for userId=${userId}`);
-    return NextResponse.json({ error: "No syncFromDate set — complete onboarding first" }, { status: 400 });
-  }
-  console.log(`[sync/start] Scanning from ${user.syncFromDate.toISOString()}`);
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  const syncFromDate = user?.syncFromDate ?? sixMonthsAgo;
+  console.log(`[sync/start] Scanning from ${syncFromDate.toISOString()}${user?.syncFromDate ? "" : " (default 6 months)"}`);
 
   const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
   console.log(`[sync/start] Loaded ${filters.length} active EmailFilters`);
@@ -33,7 +32,7 @@ export async function POST() {
   const qualifyingIds: string[] = [];
   let pageToken: string | undefined;
   do {
-    const page = await fetchMessageMetadataList(accessToken, user.syncFromDate, pageToken);
+    const page = await fetchMessageMetadataList(accessToken, syncFromDate, pageToken);
     for (const msg of page.messages) {
       const match = matchesEmailFilter(msg, filters);
       if (match.matched) qualifyingIds.push(msg.id);

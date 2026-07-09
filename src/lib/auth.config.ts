@@ -1,0 +1,31 @@
+import type { NextAuthConfig } from "next-auth";
+import Google from "next-auth/providers/google";
+
+export const authConfig: NextAuthConfig = {
+  providers: [
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      authorization: {
+        params: {
+          scope:
+            "openid email profile https://www.googleapis.com/auth/gmail.readonly",
+          access_type: "offline",
+          prompt: "consent",
+        },
+      },
+    }),
+  ],
+  pages: {
+    signIn: "/login",
+  },
+  callbacks: {
+    authorized({ auth, request }) {
+      const pathname = request.nextUrl.pathname;
+      const isPublic =
+        pathname.startsWith("/login") || pathname.startsWith("/api/auth");
+      if (isPublic) return true;
+      return !!auth?.user;
+    },
+  },
+};

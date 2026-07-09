@@ -32,8 +32,11 @@ type DonutChartCardProps = {
 export function DonutChartCard({ data }: DonutChartCardProps) {
   if (data.length === 0) {
     return (
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center justify-center h-[280px]">
-        <p className="text-sm text-gray-400">No expense data this month</p>
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 h-[280px] flex flex-col">
+        <h2 className="text-sm font-semibold text-gray-700 mb-4">Spending by Category</h2>
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-sm text-gray-400">No expense data this month</p>
+        </div>
       </div>
     );
   }
