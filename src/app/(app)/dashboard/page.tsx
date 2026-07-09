@@ -23,6 +23,7 @@ type DashboardData = {
   categoryBreakdown: CategoryTotal[];
   recentTransactions: RecentTx[];
   needsReviewCount: number;
+  hasRealData: boolean;
 };
 
 const CATEGORY_ICONS: Record<string, string> = {

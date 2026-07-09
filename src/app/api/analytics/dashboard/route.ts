@@ -16,8 +16,17 @@ export async function GET() {
   const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
+  const realTxCount = await prisma.transaction.count({
+    where: { userId, source: { not: "seed" } },
+  });
+  const hasRealData = realTxCount > 0;
+
   const sixMonthTxs = await prisma.transaction.findMany({
-    where: { userId, date: { gte: sixMonthsAgo } },
+    where: {
+      userId,
+      date: { gte: sixMonthsAgo },
+      ...(hasRealData ? { source: { not: "seed" } } : {}),
+    },
     select: { amount: true, type: true, category: true, date: true },
     orderBy: { date: "desc" },
   });
@@ -59,7 +68,10 @@ export async function GET() {
   );
 
   const recentTransactions = await prisma.transaction.findMany({
-    where: { userId },
+    where: {
+      userId,
+      ...(hasRealData ? { source: { not: "seed" } } : {}),
+    },
     orderBy: { date: "desc" },
     take: 5,
     select: {
@@ -77,7 +89,7 @@ export async function GET() {
     where: { userId, needsReview: true, reviewed: false },
   });
 
-  console.log(`[analytics/dashboard] sixMonthTxs=${sixMonthTxs.length} assets=${assets.length} assetTotal=${assetTotal} needsReview=${needsReviewCount}`);
+  console.log(`[analytics/dashboard] sixMonthTxs=${sixMonthTxs.length} assets=${assets.length} assetTotal=${assetTotal} needsReview=${needsReviewCount} hasRealData=${hasRealData}`);
 
   return NextResponse.json({
     currentMonth,
@@ -86,5 +98,6 @@ export async function GET() {
     categoryBreakdown,
     recentTransactions,
     needsReviewCount,
+    hasRealData,
   });
 }
