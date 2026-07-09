@@ -32,6 +32,15 @@ const CATEGORY_ICONS: Record<string, string> = {
   personal: "💆", investment: "📈", work: "💼", income: "💰", other: "📦",
 };
 
+function fmtAmount(amount: number, type: string): string {
+  const abs = Math.abs(amount);
+  const formatted =
+    abs >= 100000 ? `₹${(abs / 100000).toFixed(1)}L`
+    : abs >= 1000 ? `₹${(abs / 1000).toFixed(1)}K`
+    : `₹${abs}`;
+  return type === "income" ? `+${formatted}` : formatted;
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -186,9 +195,9 @@ export default function DashboardPage() {
                         </span>
                       )}
                       <span
-                        className={`text-sm font-semibold ${tx.type === "income" ? "text-green-600" : "text-gray-900"}`}
+                        className={`text-sm font-semibold ${tx.type === "income" ? "text-green-600" : "text-red-500"}`}
                       >
-                        {tx.type === "income" ? "+" : "−"}₹{tx.amount.toLocaleString("en-IN")}
+                        {fmtAmount(tx.amount, tx.type)}
                       </span>
                     </div>
                   </div>
