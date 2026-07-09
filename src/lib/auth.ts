@@ -28,6 +28,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return session;
     },
   },
+  events: {
+    async signIn({ user }) {
+      console.log(`[auth] signIn success: userId=${user.id} email=${user.email}`);
+    },
+  },
+  logger: {
+    error(error) {
+      console.error("[auth] error:", error.name, (error as Error & { cause?: unknown }).cause ?? error.message);
+    },
+  },
   pages: {
     signIn: "/login",
   },
