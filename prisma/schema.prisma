@@ -132,6 +132,7 @@ model SyncJob {
   newTransactions Int       @default(0)
   skippedEmails   Int       @default(0)
   isRetrigger     Boolean   @default(false)
+  messageIds      String?   @db.Text
   startedAt       DateTime  @default(now())
   completedAt     DateTime?
 
