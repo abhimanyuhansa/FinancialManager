@@ -4,8 +4,9 @@ import { useRouter } from "next/navigation";
 import { StepPicker, LookbackPeriod } from "@/components/onboarding/StepPicker";
 import { StepScanning } from "@/components/onboarding/StepScanning";
 import { StepReview, ScanResult, SenderSummary } from "@/components/onboarding/StepReview";
+import { SyncProgressBar } from "@/components/SyncProgressBar";
 
-type Step = "pick" | "scanning" | "review" | "confirming";
+type Step = "pick" | "scanning" | "review" | "confirming" | "syncing";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -13,6 +14,7 @@ export default function OnboardingPage() {
   const [period, setPeriod] = useState<LookbackPeriod>("6m");
   const [emailCount, setEmailCount] = useState(0);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [syncJobId, setSyncJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const handleScan = async () => {
@@ -41,13 +43,18 @@ export default function OnboardingPage() {
   const handleConfirm = async (approved: SenderSummary[], rejected: string[]) => {
     setStep("confirming");
     try {
-      const res = await fetch("/api/gmail/scan/confirm", {
+      const confirmRes = await fetch("/api/gmail/scan/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ period, approvedSenders: approved, rejectedSenders: rejected }),
       });
-      if (!res.ok) throw new Error("Failed to save choices");
-      router.push("/dashboard");
+      if (!confirmRes.ok) throw new Error("Failed to save choices");
+
+      const startRes = await fetch("/api/gmail/sync/start", { method: "POST" });
+      if (!startRes.ok) throw new Error("Failed to start sync");
+      const { jobId } = (await startRes.json()) as { jobId: string };
+      setSyncJobId(jobId);
+      setStep("syncing");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
       setStep("review");
@@ -68,7 +75,7 @@ export default function OnboardingPage() {
           </div>
           <div>
             <h1 className="text-base font-semibold text-gray-900">Set up Financial Manager</h1>
-            <p className="text-xs text-gray-500">Step {stepNumber} of 3</p>
+            {step !== "syncing" && <p className="text-xs text-gray-500">Step {stepNumber} of 3</p>}
           </div>
         </div>
 
@@ -79,20 +86,21 @@ export default function OnboardingPage() {
         )}
 
         {step === "pick" && (
-          <StepPicker
-            value={period}
-            onChange={setPeriod}
-            onConfirm={handleScan}
-            loading={false}
-          />
+          <StepPicker value={period} onChange={setPeriod} onConfirm={handleScan} loading={false} />
         )}
         {step === "scanning" && <StepScanning emailCount={emailCount} />}
         {(step === "review" || step === "confirming") && scanResult && (
-          <StepReview
-            result={scanResult}
-            onConfirm={handleConfirm}
-            loading={step === "confirming"}
-          />
+          <StepReview result={scanResult} onConfirm={handleConfirm} loading={step === "confirming"} />
+        )}
+        {step === "syncing" && syncJobId && (
+          <div className="flex flex-col gap-4">
+            <h2 className="text-xl font-semibold text-gray-900">Importing transactions</h2>
+            <p className="text-sm text-gray-500">Parsing emails with Gemini. This may take a few minutes.</p>
+            <SyncProgressBar
+              jobId={syncJobId}
+              onComplete={() => router.push("/dashboard")}
+            />
+          </div>
         )}
       </div>
     </div>
