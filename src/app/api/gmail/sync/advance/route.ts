@@ -275,8 +275,14 @@ async function advanceJob(job: {
 }
 
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret");
-  if (secret !== process.env.CRON_SECRET) {
+  // Vercel Cron sends: Authorization: Bearer <CRON_SECRET>
+  // Local dev manual trigger sends: ?secret=<CRON_SECRET> query param
+  const authHeader = req.headers.get("authorization");
+  const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  const querySecret = req.nextUrl.searchParams.get("secret");
+  const provided = bearerToken ?? querySecret;
+
+  if (!process.env.CRON_SECRET || provided !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
