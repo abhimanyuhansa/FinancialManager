@@ -15,6 +15,12 @@ export async function DELETE() {
     data: { status: "cancelled", completedAt: new Date() },
   });
 
+  // Reset watermark so next sync restarts from period picker
+  await prisma.user.update({
+    where: { id: userId },
+    data: { gmailSyncedAt: null },
+  });
+
   const [transactions, syncJobs, parseLogs, assets] = await Promise.all([
     prisma.transaction.deleteMany({ where: { userId } }),
     prisma.syncJob.deleteMany({ where: { userId } }),
