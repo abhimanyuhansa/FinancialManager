@@ -16,7 +16,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
-  console.log(`[scan] userId=${userId}`);
 
   const body = (await req.json()) as { period?: LookbackPeriod };
   const period: LookbackPeriod = body.period ?? "6m";
@@ -27,19 +26,21 @@ export async function POST(req: Request) {
   }
 
   const fromDate = buildScanFromDate(period);
-  console.log(`[scan] period=${period} fromDate=${fromDate.toISOString()}`);
-
   const gmailQuery = buildGmailQuery(fromDate);
-  console.log(`[scan] gmailQuery="${gmailQuery}"`);
-  const page = await fetchMessageMetadataList(accessToken, fromDate, undefined, gmailQuery);
-  const allMessages = page.messages;
-  console.log(`[scan] fetched ${allMessages.length} messages after pre-filter`);
+
+  // Paginate through ALL pages — no longer limited to 500
+  let allMessages: Awaited<ReturnType<typeof fetchMessageMetadataList>>["messages"] = [];
+  let pageToken: string | undefined = undefined;
+  do {
+    const page = await fetchMessageMetadataList(accessToken, fromDate, pageToken, gmailQuery);
+    allMessages = allMessages.concat(page.messages);
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+
+  console.log(`[scan] fetched ${allMessages.length} messages total after pagination`);
 
   const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
-  console.log(`[scan] ${filters.length} active EmailFilters loaded`);
-
   const scanResult = classifySenders(allMessages, filters);
-  console.log(`[scan] autoApproved=${scanResult.autoApproved.length} needsReview=${scanResult.needsReview.length} financialFound=${scanResult.financialFound}`);
 
   const filterValues = new Set(filters.map((f) => f.value));
   for (const s of scanResult.autoApproved) {
