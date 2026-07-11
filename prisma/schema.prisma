@@ -212,3 +212,11 @@ model ParseLog {
   @@index([userId, gmailMsgId])
   @@index([createdAt])
 }
+
+model GeminiUsageLog {
+  id        String   @id @default(cuid())
+  date      String   // YYYY-MM-DD (UTC) — one row per calendar day
+  callCount Int      @default(0)
+
+  @@unique([date])
+}

@@ -28,8 +28,10 @@ describe("Prisma schema integrity", () => {
     const _reconciliationLog: ModelNames = "reconciliationLog";
     const _asset: ModelNames = "asset";
     const _verificationToken: ModelNames = "verificationToken";
+    const _geminiUsageLog: ModelNames = "geminiUsageLog";
 
-    expect([_user, _account, _session, _transaction, _emailFilter, _syncJob, _reconciliationLog, _asset, _verificationToken]).toHaveLength(9);
+    expect([_user, _account, _session, _transaction, _emailFilter, _syncJob,
+      _reconciliationLog, _asset, _verificationToken, _geminiUsageLog]).toHaveLength(10);
   });
 
   it("Transaction type accepts required fields", () => {
