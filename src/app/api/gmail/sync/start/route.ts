@@ -12,6 +12,17 @@ export async function POST() {
   const userId = session.user.id;
   console.log(`[sync/start] userId=${userId}`);
 
+  const existingJob = await prisma.syncJob.findFirst({
+    where: { userId, status: "running" },
+    select: { id: true, processedEmails: true, totalEmails: true },
+  });
+  if (existingJob) {
+    return NextResponse.json(
+      { error: "A sync is already in progress", jobId: existingJob.id, running: true },
+      { status: 409 }
+    );
+  }
+
   const accessToken = await getGmailToken(userId);
   if (!accessToken) {
     return NextResponse.json({ error: "No Gmail token — please sign in again" }, { status: 401 });

@@ -82,6 +82,10 @@ export default function SettingsPage() {
   const [clearingDemo, setClearingDemo] = useState(false);
   const [demoCleared, setDemoCleared] = useState(false);
 
+  /* ── Clear All Data ── */
+  const [clearingAll, setClearingAll] = useState(false);
+  const [allCleared, setAllCleared] = useState(false);
+
   /* ── Statement Passwords ── */
   const [passwords, setPasswords] = useState<{
     stored: Array<{ senderDomain: string; updatedAt: string }>;
@@ -162,6 +166,26 @@ export default function SettingsPage() {
       alert(`Deleted ${data.deleted} demo transaction${data.deleted !== 1 ? "s" : ""}.`);
     } finally {
       setClearingDemo(false);
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!confirm("This will permanently delete ALL your transactions, sync history, and assets. This cannot be undone.")) return;
+    setClearingAll(true);
+    try {
+      const res = await fetch("/api/user/data", { method: "DELETE" });
+      const text = await res.text();
+      if (!res.ok) {
+        alert(`Failed to clear data (${res.status}): ${text}`);
+        return;
+      }
+      const data = JSON.parse(text) as { deleted: { transactions: number; syncJobs: number; parseLogs: number; assets: number } };
+      setAllCleared(true);
+      alert(`Cleared: ${data.deleted.transactions} transactions, ${data.deleted.syncJobs} sync jobs, ${data.deleted.parseLogs} parse logs, ${data.deleted.assets} assets.`);
+    } catch (e) {
+      alert(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setClearingAll(false);
     }
   };
 
@@ -617,6 +641,21 @@ export default function SettingsPage() {
           className="px-4 py-2 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50"
         >
           {demoCleared ? "Demo data cleared" : clearingDemo ? "Clearing…" : "Clear Demo Data"}
+        </button>
+      </div>
+
+      {/* Clear All Data */}
+      <div className="mt-4 bg-white rounded-2xl border border-red-100 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-red-700 mb-2">Danger Zone</h3>
+        <p className="text-sm text-gray-500 mb-3">
+          Permanently delete all transactions, sync history, parse logs, and assets. Use this to start fresh. This cannot be undone.
+        </p>
+        <button
+          onClick={handleClearAll}
+          disabled={clearingAll || allCleared}
+          className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+        >
+          {allCleared ? "All data cleared" : clearingAll ? "Clearing…" : "Clear All Data"}
         </button>
       </div>
 

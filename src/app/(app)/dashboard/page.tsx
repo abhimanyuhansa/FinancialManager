@@ -43,6 +43,8 @@ function fmtAmount(amount: number, type: string): string {
   return type === "income" ? `+${formatted}` : formatted;
 }
 
+type ActiveJob = { id: string; status: string; totalEmails: number; processedEmails: number; newTransactions: number };
+
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,6 +52,19 @@ export default function DashboardPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // On load, check if a sync is already running and auto-attach to it
+  useEffect(() => {
+    fetch("/api/gmail/sync/active")
+      .then((r) => r.ok ? r.json() : null)
+      .then((job: ActiveJob | null) => {
+        if (job && job.status === "running") {
+          setSyncJobId(job.id);
+          setSyncing(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -64,16 +79,31 @@ export default function DashboardPage() {
     setSyncError(null);
     try {
       const res = await fetch("/api/gmail/sync/start", { method: "POST" });
+      const body = await res.json() as { jobId?: string; error?: string; running?: boolean };
       if (!res.ok) {
-        const err = (await res.json()) as { error: string };
-        throw new Error(err.error ?? "Failed to start sync");
+        if (res.status === 409 && body.jobId) {
+          // Already running — attach to existing job
+          setSyncJobId(body.jobId);
+          return;
+        }
+        throw new Error(body.error ?? "Failed to start sync");
       }
-      const { jobId } = (await res.json()) as { jobId: string };
-      setSyncJobId(jobId);
+      setSyncJobId(body.jobId!);
     } catch (e) {
       setSyncError(e instanceof Error ? e.message : "Something went wrong");
       setSyncing(false);
     }
+  };
+
+  const handleSyncComplete = (newTx: number) => {
+    setSyncJobId(null);
+    setSyncing(false);
+    if (newTx > 0) setRefreshKey((k) => k + 1);
+  };
+
+  const handleSyncCancel = () => {
+    setSyncJobId(null);
+    setSyncing(false);
   };
 
   return (
@@ -115,11 +145,8 @@ export default function DashboardPage() {
           <h2 className="text-base font-semibold text-gray-900 mb-4">Syncing Gmail</h2>
           <SyncProgressBar
             jobId={syncJobId}
-            onComplete={() => {
-              setSyncJobId(null);
-              setSyncing(false);
-              setRefreshKey((k) => k + 1);
-            }}
+            onComplete={handleSyncComplete}
+            onCancel={handleSyncCancel}
           />
         </div>
       )}

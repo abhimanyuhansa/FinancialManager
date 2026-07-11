@@ -23,7 +23,10 @@ export const authConfig: NextAuthConfig = {
     authorized({ auth, request }) {
       const pathname = request.nextUrl.pathname;
       const isPublic =
-        pathname.startsWith("/login") || pathname.startsWith("/api/auth");
+        pathname.startsWith("/login") ||
+        pathname.startsWith("/api/auth") ||
+        // Cron endpoint uses its own x-cron-secret header auth, not session
+        pathname === "/api/gmail/sync/advance";
       if (isPublic) return true;
       return !!auth?.user;
     },
