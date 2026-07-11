@@ -133,6 +133,8 @@ model SyncJob {
   startedAt             DateTime  @default(now())
   completedAt           DateTime?
   messageIds            String?
+  scanPageToken         String?
+  gmailQuery            String?
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
