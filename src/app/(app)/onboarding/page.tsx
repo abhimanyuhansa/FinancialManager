@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { StepPicker, LookbackPeriod } from "@/components/onboarding/StepPicker";
 import { StepScanning } from "@/components/onboarding/StepScanning";
@@ -16,6 +16,16 @@ export default function OnboardingPage() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [syncJobId, setSyncJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // If user already synced, skip onboarding
+  useEffect(() => {
+    fetch("/api/gmail/sync/active")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.status === "complete") router.replace("/dashboard");
+      })
+      .catch(() => {});
+  }, [router]);
 
   const handleScan = async () => {
     setStep("scanning");
@@ -40,6 +50,12 @@ export default function OnboardingPage() {
     }
   };
 
+  const handleSkipPreview = async () => {
+    if (!scanResult) return;
+    // Auto-approve all autoApproved senders, skip needsReview
+    await handleConfirm(scanResult.autoApproved, []);
+  };
+
   const handleConfirm = async (approved: SenderSummary[], rejected: string[]) => {
     setStep("confirming");
     try {
@@ -51,7 +67,16 @@ export default function OnboardingPage() {
       if (!confirmRes.ok) throw new Error("Failed to save choices");
 
       const startRes = await fetch("/api/gmail/sync/start", { method: "POST" });
-      if (!startRes.ok) throw new Error("Failed to start sync");
+      if (!startRes.ok) {
+        const errData = (await startRes.json()) as { error: string; jobId?: string; running?: boolean };
+        if (errData.running && errData.jobId) {
+          // Already running — resume with existing job
+          setSyncJobId(errData.jobId);
+          setStep("syncing");
+          return;
+        }
+        throw new Error(errData.error ?? "Failed to start sync");
+      }
       const { jobId } = (await startRes.json()) as { jobId: string };
       setSyncJobId(jobId);
       setStep("syncing");
@@ -61,7 +86,7 @@ export default function OnboardingPage() {
     }
   };
 
-  const stepNumber = step === "pick" ? 1 : step === "scanning" ? 2 : 3;
+  const stepNumber = step === "pick" ? 1 : step === "scanning" || step === "review" || step === "confirming" ? 2 : 3;
 
   return (
     <div className="min-h-screen bg-[#eef0f6] flex items-center justify-center p-4">
@@ -90,7 +115,18 @@ export default function OnboardingPage() {
         )}
         {step === "scanning" && <StepScanning emailCount={emailCount} />}
         {(step === "review" || step === "confirming") && scanResult && (
-          <StepReview result={scanResult} onConfirm={handleConfirm} loading={step === "confirming"} />
+          <div>
+            <StepReview result={scanResult} onConfirm={handleConfirm} loading={step === "confirming"} />
+            <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
+              <button
+                onClick={handleSkipPreview}
+                disabled={step === "confirming"}
+                className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:opacity-50"
+              >
+                Skip preview — sync everything
+              </button>
+            </div>
+          </div>
         )}
         {step === "syncing" && syncJobId && (
           <div className="flex flex-col gap-4">
