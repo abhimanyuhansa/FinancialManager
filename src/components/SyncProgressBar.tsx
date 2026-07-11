@@ -91,7 +91,7 @@ export function SyncProgressBar({ jobId, onComplete, onCancel }: SyncProgressBar
     <div className="flex flex-col gap-3">
       <div className="flex justify-between items-center text-sm">
         <span className="text-gray-700 font-medium">
-          {isDone ? "Sync complete" : isCancelled ? "Sync cancelled" : "Syncing Gmail in background…"}
+          {isDone ? "Sync complete" : isCancelled ? "Sync cancelled" : status.status === "scanning" ? "Scanning Gmail inbox…" : "Syncing Gmail in background…"}
         </span>
         <span className="text-gray-500">{pct}%</span>
       </div>

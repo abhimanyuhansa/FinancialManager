@@ -59,7 +59,7 @@ export default function DashboardPage() {
     fetch("/api/gmail/sync/active")
       .then((r) => r.ok ? r.json() : null)
       .then((job: ActiveJob | null) => {
-        if (job && job.status === "running") {
+        if (job && (job.status === "running" || job.status === "scanning")) {
           setSyncJobId(job.id);
           setSyncing(true);
         }

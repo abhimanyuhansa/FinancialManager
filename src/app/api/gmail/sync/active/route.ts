@@ -9,7 +9,7 @@ export async function GET() {
   }
 
   const job = await prisma.syncJob.findFirst({
-    where: { userId: session.user.id },
+    where: { userId: session.user.id, status: { in: ["scanning", "running"] } },
     orderBy: { startedAt: "desc" },
     select: {
       id: true,

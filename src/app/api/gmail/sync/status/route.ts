@@ -34,7 +34,7 @@ export async function GET(req: Request) {
     processedEmails: job.processedEmails,
     newTransactions: job.newTransactions,
     skippedEmails: job.skippedEmails,
-    done: job.status !== "running",
+    done: job.status !== "running" && job.status !== "scanning",
     startedAt: job.startedAt,
     completedAt: job.completedAt,
   });

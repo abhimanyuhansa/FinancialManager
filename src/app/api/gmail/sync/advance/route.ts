@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getGmailToken, fetchPdfAttachment } from "@/lib/gmail";
+import { getGmailToken, fetchPdfAttachment, fetchMessageMetadataList } from "@/lib/gmail";
 import { parseEmailBatch, type BatchInput } from "@/lib/gemini";
 import { upsertTransactionV2 } from "@/lib/dedup";
 import { matchesEmailFilter } from "@/lib/emailFilter";
@@ -278,6 +278,44 @@ export async function GET(req: NextRequest) {
   const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret");
   if (secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Handle jobs in "scanning" phase first — populate messageIds then flip to "running"
+  const scanningJobs = await prisma.syncJob.findMany({
+    where: { status: "scanning" },
+    select: { id: true, userId: true },
+  });
+
+  for (const job of scanningJobs) {
+    console.log(`[advance] Scanning Gmail for jobId=${job.id}`);
+    const accessToken = await getGmailToken(job.userId);
+    if (!accessToken) {
+      await prisma.syncJob.update({ where: { id: job.id }, data: { status: "failed", completedAt: new Date() } });
+      continue;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: job.userId }, select: { syncFromDate: true } });
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const syncFromDate = user?.syncFromDate ?? sixMonthsAgo;
+
+    const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
+    const qualifyingIds: string[] = [];
+    let pageToken: string | undefined;
+    do {
+      const page = await fetchMessageMetadataList(accessToken, syncFromDate, pageToken);
+      for (const msg of page.messages) {
+        const match = matchesEmailFilter(msg, filters);
+        if (match.matched) qualifyingIds.push(msg.id);
+      }
+      pageToken = page.nextPageToken;
+    } while (pageToken);
+
+    console.log(`[advance] jobId=${job.id} scan complete: ${qualifyingIds.length} qualifying messages`);
+    await prisma.syncJob.update({
+      where: { id: job.id },
+      data: { status: "running", totalEmails: qualifyingIds.length, messageIds: JSON.stringify(qualifyingIds) },
+    });
   }
 
   const runningJobs = await prisma.syncJob.findMany({

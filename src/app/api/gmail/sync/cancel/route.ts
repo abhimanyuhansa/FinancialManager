@@ -10,7 +10,7 @@ export async function POST() {
   const userId = session.user.id;
 
   const job = await prisma.syncJob.findFirst({
-    where: { userId, status: "running" },
+    where: { userId, status: { in: ["scanning", "running"] } },
     orderBy: { startedAt: "desc" },
   });
 
