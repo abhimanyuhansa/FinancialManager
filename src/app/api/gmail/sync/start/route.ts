@@ -42,7 +42,6 @@ export async function POST() {
     data: {
       userId,
       totalEmails: 0,
-      messageIds: null,
       status: "scanning",
       gmailQuery,
       scanPageToken: null,

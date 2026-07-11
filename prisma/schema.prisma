@@ -121,21 +121,32 @@ model EmailFilter {
 }
 
 model SyncJob {
-  id                    String    @id @default(cuid())
+  id                    String           @id @default(cuid())
   userId                String
-  status                String    @default("running")
-  totalEmails           Int       @default(0)
-  processedEmails       Int       @default(0)
-  newTransactions       Int       @default(0)
-  skippedEmails         Int       @default(0)
-  encryptedBlockedCount Int       @default(0)
-  isRetrigger           Boolean   @default(false)
-  startedAt             DateTime  @default(now())
+  status                String           @default("running")
+  totalEmails           Int              @default(0)
+  processedEmails       Int              @default(0)
+  newTransactions       Int              @default(0)
+  skippedEmails         Int              @default(0)
+  encryptedBlockedCount Int              @default(0)
+  isRetrigger           Boolean          @default(false)
+  startedAt             DateTime         @default(now())
   completedAt           DateTime?
-  messageIds            String?
   scanPageToken         String?
   gmailQuery            String?
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages              SyncJobMessage[]
+}
+
+model SyncJobMessage {
+  id         String  @id @default(cuid())
+  syncJobId  String
+  gmailMsgId String
+  processed  Boolean @default(false)
+  syncJob    SyncJob @relation(fields: [syncJobId], references: [id], onDelete: Cascade)
+
+  @@unique([syncJobId, gmailMsgId])
+  @@index([syncJobId, processed])
 }
 
 model ReconciliationLog {
