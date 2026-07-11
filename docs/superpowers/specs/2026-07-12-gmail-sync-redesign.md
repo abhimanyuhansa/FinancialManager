@@ -1,6 +1,6 @@
 # Gmail Sync Redesign — Design Spec
 **Date:** 2026-07-12  
-**Status:** Awaiting user approval  
+**Status:** Approved — implementation plan written  
 **Author:** Architecture session with Abhimanyu  
 
 ---
