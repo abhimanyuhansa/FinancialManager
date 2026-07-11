@@ -42,10 +42,10 @@ export function SyncProgressBar({ jobId, onComplete, onCancel }: SyncProgressBar
         }
 
         if (runningRef.current) {
-          setTimeout(tick, 15000);
+          setTimeout(tick, 5000);
         }
       } catch {
-        if (runningRef.current) setTimeout(tick, 15000);
+        if (runningRef.current) setTimeout(tick, 5000);
       }
     }
 
@@ -122,7 +122,7 @@ export function SyncProgressBar({ jobId, onComplete, onCancel }: SyncProgressBar
 
       {!isDone && !isCancelled && (
         <p className="text-xs text-gray-400">
-          Processing runs every 15 minutes in the background. Progress updates here automatically.
+          Emails are processed in batches every 15 minutes. This page updates automatically.
         </p>
       )}
 

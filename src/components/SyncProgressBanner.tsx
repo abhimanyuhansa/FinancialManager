@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 
 type SyncJob = {
   id: string;
-  status: "running" | "complete" | "failed";
+  status: "scanning" | "running" | "complete" | "failed" | "cancelled";
   totalEmails: number;
   processedEmails: number;
   newTransactions: number;
@@ -12,7 +12,7 @@ type SyncJob = {
   completedAt: string | null;
 };
 
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = 5_000;
 const AUTO_DISMISS_MS = 10_000;
 
 function isDismissed(jobId: string): boolean {
@@ -76,6 +76,17 @@ export function SyncProgressBanner() {
     setDismissedState(true);
   };
 
+  if (job.status === "scanning") {
+    return (
+      <div className="bg-blue-50 border-b border-blue-200 px-4 py-2">
+        <div className="max-w-4xl mx-auto flex items-center gap-3">
+          <div className="w-3 h-3 rounded-full border-2 border-blue-300 border-t-blue-600 animate-spin flex-shrink-0" />
+          <span className="text-sm text-blue-800 font-medium">Scanning Gmail inbox…</span>
+        </div>
+      </div>
+    );
+  }
+
   if (job.status === "running") {
     return (
       <div className="bg-blue-50 border-b border-blue-200 px-4 py-3">
@@ -93,7 +104,7 @@ export function SyncProgressBanner() {
             />
           </div>
           <p className="text-xs text-blue-600 mt-1">
-            {job.newTransactions} new transactions found
+            {job.newTransactions} new transactions found · processed in batches every 15 min
           </p>
         </div>
       </div>
@@ -111,12 +122,7 @@ export function SyncProgressBanner() {
               Enter passwords →
             </a>
           </span>
-          <button
-            onClick={handleDismiss}
-            className="ml-4 text-orange-500 hover:text-orange-700 text-sm"
-          >
-            ✕
-          </button>
+          <button onClick={handleDismiss} className="ml-4 text-orange-500 hover:text-orange-700 text-sm">✕</button>
         </div>
       </div>
     );
@@ -129,12 +135,7 @@ export function SyncProgressBanner() {
           <span className="text-sm text-green-800 font-medium">
             Sync complete — {job.newTransactions} transactions imported
           </span>
-          <button
-            onClick={handleDismiss}
-            className="ml-4 text-green-500 hover:text-green-700 text-sm"
-          >
-            ✕
-          </button>
+          <button onClick={handleDismiss} className="ml-4 text-green-500 hover:text-green-700 text-sm">✕</button>
         </div>
       </div>
     );
@@ -147,18 +148,13 @@ export function SyncProgressBanner() {
           <span className="text-sm text-red-800">
             Sync failed.{" "}
             <button
-              onClick={async () => {
-                await fetch("/api/gmail/sync/start", { method: "POST" });
-                fetchJob();
-              }}
+              onClick={async () => { await fetch("/api/gmail/sync/start", { method: "POST" }); fetchJob(); }}
               className="underline font-medium"
             >
               Retry
             </button>
           </span>
-          <button onClick={handleDismiss} className="ml-4 text-red-500 hover:text-red-700 text-sm">
-            ✕
-          </button>
+          <button onClick={handleDismiss} className="ml-4 text-red-500 hover:text-red-700 text-sm">✕</button>
         </div>
       </div>
     );
