@@ -194,12 +194,13 @@ type GmailMessageRef = {
 export async function fetchMessageMetadataList(
   accessToken: string,
   afterDate: Date,
-  pageToken?: string
+  pageToken?: string,
+  query?: string
 ): Promise<{ messages: EmailMeta[]; nextPageToken?: string }> {
   const afterSeconds = Math.floor(afterDate.getTime() / 1000);
   const params = new URLSearchParams({
     maxResults: "500",
-    q: `after:${afterSeconds}`,
+    q: query ?? `after:${afterSeconds}`,
   });
   if (pageToken) params.set("pageToken", pageToken);
 
@@ -249,4 +250,34 @@ export async function fetchMessageMetadataList(
   }
 
   return { messages: results, nextPageToken: listData.nextPageToken };
+}
+
+export async function fetchMessageIdPage(
+  accessToken: string,
+  query: string,
+  pageToken?: string
+): Promise<{ messageIds: string[]; nextPageToken?: string }> {
+  const params = new URLSearchParams({ maxResults: "500", q: query });
+  if (pageToken) params.set("pageToken", pageToken);
+
+  const res = await fetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error(`[gmail] fetchMessageIdPage failed: ${res.status}`, err);
+    throw new Error(`Gmail list failed: ${res.status}`);
+  }
+
+  const data = await res.json() as {
+    messages?: Array<{ id: string }>;
+    nextPageToken?: string;
+  };
+
+  return {
+    messageIds: (data.messages ?? []).map((m) => m.id),
+    nextPageToken: data.nextPageToken,
+  };
 }
