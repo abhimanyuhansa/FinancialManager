@@ -8,6 +8,7 @@ import {
   buildScanFromDate,
   LookbackPeriod,
 } from "@/lib/gmail";
+import { buildGmailQuery } from "@/lib/gmailQuery";
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -28,14 +29,11 @@ export async function POST(req: Request) {
   const fromDate = buildScanFromDate(period);
   console.log(`[scan] period=${period} fromDate=${fromDate.toISOString()}`);
 
-  const allMessages = [];
-  let pageToken: string | undefined;
-  do {
-    const page = await fetchMessageMetadataList(accessToken, fromDate, pageToken);
-    allMessages.push(...page.messages);
-    pageToken = page.nextPageToken;
-  } while (pageToken);
-  console.log(`[scan] fetched ${allMessages.length} total messages`);
+  const gmailQuery = buildGmailQuery(fromDate);
+  console.log(`[scan] gmailQuery="${gmailQuery}"`);
+  const page = await fetchMessageMetadataList(accessToken, fromDate, undefined, gmailQuery);
+  const allMessages = page.messages;
+  console.log(`[scan] fetched ${allMessages.length} messages after pre-filter`);
 
   const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
   console.log(`[scan] ${filters.length} active EmailFilters loaded`);
