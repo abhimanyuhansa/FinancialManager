@@ -12,7 +12,8 @@ type SyncJob = {
   completedAt: string | null;
 };
 
-const POLL_INTERVAL_MS = 5_000;
+const POLL_INTERVAL_RUNNING_MS = 15_000;
+const POLL_INTERVAL_IDLE_MS = 60_000;
 const AUTO_DISMISS_MS = 10_000;
 
 function isDismissed(jobId: string): boolean {
@@ -50,9 +51,14 @@ export function SyncProgressBanner() {
 
   useEffect(() => {
     fetchJob();
-    const interval = setInterval(fetchJob, POLL_INTERVAL_MS);
+    const interval = setInterval(
+      fetchJob,
+      job?.status === "scanning" || job?.status === "running"
+        ? POLL_INTERVAL_RUNNING_MS
+        : POLL_INTERVAL_IDLE_MS
+    );
     return () => clearInterval(interval);
-  }, [fetchJob]);
+  }, [fetchJob, job?.status]);
 
   // Auto-dismiss complete banner when no blocked PDFs
   useEffect(() => {
@@ -78,10 +84,17 @@ export function SyncProgressBanner() {
 
   if (job.status === "scanning") {
     return (
-      <div className="bg-blue-50 border-b border-blue-200 px-4 py-2">
-        <div className="max-w-4xl mx-auto flex items-center gap-3">
-          <div className="w-3 h-3 rounded-full border-2 border-blue-300 border-t-blue-600 animate-spin flex-shrink-0" />
-          <span className="text-sm text-blue-800 font-medium">Scanning Gmail inbox…</span>
+      <div className="bg-blue-50 border-b border-blue-200 px-4 py-3">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-blue-800 font-medium">
+              Scanning your Gmail for financial emails…
+            </span>
+          </div>
+          <p className="text-xs text-blue-600 mt-1">
+            This runs in the background — you can navigate freely
+          </p>
         </div>
       </div>
     );
