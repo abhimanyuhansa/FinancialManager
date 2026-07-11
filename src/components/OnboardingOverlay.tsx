@@ -1,15 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 type Props = {
   hasRealData: boolean;
+  onStartSync: () => void;
 };
 
 const SESSION_KEY = "onboarding-overlay-dismissed";
 
-export function OnboardingOverlay({ hasRealData }: Props) {
-  const router = useRouter();
+export function OnboardingOverlay({ hasRealData, onStartSync }: Props) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -28,13 +27,12 @@ export function OnboardingOverlay({ hasRealData }: Props) {
   const handleStartSync = () => {
     sessionStorage.setItem(SESSION_KEY, "1");
     setVisible(false);
-    router.push("/dashboard");
+    onStartSync();
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/30">
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 p-8">
-        {/* Logo */}
         <div className="flex justify-center mb-6">
           <div className="w-14 h-14 rounded-xl bg-[#e8ecf8] flex items-center justify-center">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#5b7cfa" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

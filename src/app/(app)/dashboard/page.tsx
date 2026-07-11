@@ -50,6 +50,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [syncJobId, setSyncJobId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncChecked, setSyncChecked] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -63,7 +64,8 @@ export default function DashboardPage() {
           setSyncing(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setSyncChecked(true));
   }, []);
 
   useEffect(() => {
@@ -108,7 +110,7 @@ export default function DashboardPage() {
 
   return (
     <>
-      {data && <OnboardingOverlay hasRealData={data.hasRealData} />}
+      {data && <OnboardingOverlay hasRealData={data.hasRealData} onStartSync={handleSync} />}
       <div className="p-6 max-w-4xl">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -118,7 +120,7 @@ export default function DashboardPage() {
             {new Date().toLocaleString("en", { month: "long", year: "numeric" })}
           </p>
         </div>
-        {!syncJobId && (
+        {syncChecked && !syncJobId && (
           <button
             onClick={handleSync}
             disabled={syncing}
