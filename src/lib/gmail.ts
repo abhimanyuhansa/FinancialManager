@@ -252,6 +252,123 @@ export async function fetchMessageMetadataList(
   return { messages: results, nextPageToken: listData.nextPageToken };
 }
 
+export type FullMessage = {
+  id: string;
+  body: string;
+  senderName: string;
+  senderEmail: string;
+  senderDomain: string;
+  receivedDate: string; // YYYY-MM-DD
+  hasPdfAttachment: boolean;
+  pdfAttachmentId: string | null;
+};
+
+export function parseBatchResponse(responseBody: string, boundary: string): FullMessage[] {
+  const results: FullMessage[] = [];
+  const parts = responseBody.split(`--${boundary}`);
+
+  for (const part of parts) {
+    const httpBodyStart = part.indexOf("HTTP/1.1");
+    if (httpBodyStart === -1) continue;
+    const httpSection = part.slice(httpBodyStart);
+
+    const statusLine = httpSection.split("\r\n")[0] ?? httpSection.split("\n")[0] ?? "";
+    const statusMatch = statusLine.match(/HTTP\/1\.\d\s+(\d+)/);
+    if (!statusMatch || statusMatch[1] !== "200") continue;
+
+    const jsonStart = httpSection.indexOf("\r\n\r\n");
+    const jsonStartFallback = httpSection.indexOf("\n\n");
+    const bodyStart = jsonStart !== -1 ? jsonStart + 4 : jsonStartFallback !== -1 ? jsonStartFallback + 2 : -1;
+    if (bodyStart === -1) continue;
+
+    let msg: {
+      id?: string;
+      internalDate?: string;
+      payload?: {
+        headers?: Array<{ name: string; value: string }>;
+        body?: { data?: string };
+        parts?: Array<{ mimeType: string; body?: { data?: string; attachmentId?: string } }>;
+      };
+    };
+
+    try {
+      msg = JSON.parse(httpSection.slice(bodyStart).trim());
+    } catch {
+      continue;
+    }
+
+    if (!msg.id) continue;
+
+    const headers = msg.payload?.headers ?? [];
+    const get = (name: string) => headers.find((h) => h.name === name)?.value ?? "";
+    const senderRaw = get("From");
+    const senderName = senderRaw.replace(/<[^>]+>/, "").trim() || senderRaw;
+    const emailMatch = senderRaw.match(/<([^>]+)>/);
+    const senderEmail = emailMatch ? emailMatch[1] : senderRaw.replace(/\s+/g, "");
+    const senderDomain = senderEmail.includes("@") ? senderEmail.split("@")[1] : senderEmail;
+    const receivedDate = msg.internalDate
+      ? new Date(Number(msg.internalDate)).toISOString().split("T")[0]
+      : new Date().toISOString().split("T")[0];
+
+    let body = "";
+    const parts2 = msg.payload?.parts ?? [];
+    const plainPart = parts2.find((p) => p.mimeType === "text/plain");
+    const htmlPart = parts2.find((p) => p.mimeType === "text/html");
+    const rawData = plainPart?.body?.data ?? htmlPart?.body?.data ?? msg.payload?.body?.data ?? "";
+    if (rawData) {
+      const decoded = Buffer.from(rawData, "base64url").toString("utf-8");
+      body = decoded.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
+
+    const pdfParts = parts2.filter((p) => p.mimeType === "application/pdf" && p.body?.attachmentId);
+    const hasPdfAttachment = pdfParts.length > 0;
+    const pdfAttachmentId = hasPdfAttachment ? pdfParts[0].body!.attachmentId! : null;
+
+    results.push({ id: msg.id, body, senderName, senderEmail, senderDomain, receivedDate, hasPdfAttachment, pdfAttachmentId });
+  }
+
+  return results;
+}
+
+export async function fetchFullMessageBatch(
+  accessToken: string,
+  messageIds: string[]
+): Promise<FullMessage[]> {
+  if (messageIds.length === 0) return [];
+
+  const boundary = "gmail_batch_boundary";
+  const subRequests = messageIds
+    .map(
+      (id) =>
+        `--${boundary}\r\nContent-Type: application/http\r\n\r\nGET /gmail/v1/users/me/messages/${id}?format=full\r\n`
+    )
+    .join("");
+  const batchBody = subRequests + `--${boundary}--`;
+
+  const res = await fetch("https://www.googleapis.com/batch/gmail/v1", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": `multipart/mixed; boundary=${boundary}`,
+    },
+    body: batchBody,
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error(`[gmail] fetchFullMessageBatch failed: ${res.status}`, err);
+    if (res.status === 429) throw new Error("GMAIL_RATE_LIMITED");
+    throw new Error(`Gmail batch failed: ${res.status}`);
+  }
+
+  const contentType = res.headers.get("content-type") ?? "";
+  const boundaryMatch = contentType.match(/boundary=([^\s;]+)/);
+  const responseBoundary = boundaryMatch?.[1] ?? boundary;
+  const responseBody = await res.text();
+
+  return parseBatchResponse(responseBody, responseBoundary);
+}
+
 export async function fetchMessageIdPage(
   accessToken: string,
   query: string,
