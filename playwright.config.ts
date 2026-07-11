@@ -1,7 +1,23 @@
 import { defineConfig, devices } from "@playwright/test";
+import { config } from "dotenv";
+config({ path: "e2e/.env" });
 
 export default defineConfig({
   testDir: "./e2e",
+  webServer: {
+    command: "node node_modules/next/dist/bin/next start -p 3000",
+    url: "http://localhost:3000/api/health",
+    reuseExistingServer: true,
+    timeout: 60_000,
+    env: {
+      NODE_ENV: "test",
+      ENABLE_TEST_AUTH_SEED: "1",
+      CRON_SECRET: process.env.CRON_SECRET ?? "",
+      DATABASE_URL: process.env.DATABASE_URL ?? "",
+      NEXTAUTH_URL: process.env.NEXTAUTH_URL ?? "http://localhost:3000",
+      NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET ?? "",
+    },
+  },
   timeout: 120_000,
   retries: 1,
   workers: 1,
@@ -15,17 +31,15 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
-    storageState: "e2e/.auth/user.json",
   },
   projects: [
     {
       name: "setup",
       testMatch: "e2e/setup/auth.setup.ts",
-      use: { storageState: undefined },
     },
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/user.json" },
       dependencies: ["setup"],
     },
   ],

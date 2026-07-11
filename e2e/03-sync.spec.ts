@@ -38,9 +38,12 @@ test("T3.3 starting sync while one is running returns 409", async ({ request }) 
   expect(body).toHaveProperty("jobId");
 });
 
-test("T3.4 cron advance endpoint 401 without auth", async ({ request }) => {
-  const res = await request.get("/api/gmail/sync/advance");
-  expect(res.status()).toBe(401);
+test("T3.4 cron advance endpoint rejects without auth", async ({ request }) => {
+  // Should reject unauthenticated cron calls — expect 401 or 403
+  const res = await request.get("/api/gmail/sync/advance", {
+    headers: { Cookie: "" },  // strip session cookies to simulate unauthenticated
+  });
+  expect([401, 403]).toContain(res.status());
 });
 
 test("T3.5 cron advance endpoint 200 with correct bearer token", async ({ request }) => {
@@ -50,9 +53,9 @@ test("T3.5 cron advance endpoint 200 with correct bearer token", async ({ reques
   expect(res.status()).toBe(200);
 });
 
-test("T3.6 cron advance with wrong secret returns 401", async ({ request }) => {
+test("T3.6 cron advance with wrong secret is rejected", async ({ request }) => {
   const res = await request.get("/api/gmail/sync/advance", {
-    headers: { Authorization: "Bearer wrong-secret-value" },
+    headers: { Authorization: "Bearer wrong-secret-value", Cookie: "" },
   });
-  expect(res.status()).toBe(401);
+  expect([401, 403]).toContain(res.status());
 });

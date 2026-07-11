@@ -25,8 +25,12 @@ export const authConfig: NextAuthConfig = {
       const isPublic =
         pathname.startsWith("/login") ||
         pathname.startsWith("/api/auth") ||
-        // Cron endpoint uses its own x-cron-secret header auth, not session
-        pathname === "/api/gmail/sync/advance";
+        // Cron endpoint uses its own bearer token auth, not session
+        pathname === "/api/gmail/sync/advance" ||
+        // Test-only auth seed: protected by CRON_SECRET + ENABLE_TEST_AUTH_SEED flag
+        pathname === "/api/test/auth-seed" ||
+        // Health check
+        pathname === "/api/health";
       if (isPublic) return true;
       return !!auth?.user;
     },

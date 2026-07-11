@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const publicPaths = ["/login", "/api/auth"];
+const publicPaths = [
+  "/login",
+  "/api/auth",
+  "/api/gmail/sync/advance",  // uses bearer token auth, not session
+  "/api/test/auth-seed",      // uses CRON_SECRET, not session
+  "/api/health",              // health check
+];
 
 // Database sessions use an opaque token — just check cookie presence.
 // Importing auth() here would try to JWT-decrypt a DB session token and fail.
