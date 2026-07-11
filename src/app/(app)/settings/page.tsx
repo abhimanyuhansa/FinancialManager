@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 type EmailFilter = {
   id: string;
@@ -85,6 +85,11 @@ export default function SettingsPage() {
   /* ── Clear All Data ── */
   const [clearingAll, setClearingAll] = useState(false);
   const [allCleared, setAllCleared] = useState(false);
+
+  /* ── Gmail Sync ── */
+  const [gmailSyncedAt, setGmailSyncedAt] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
 
   /* ── Statement Passwords ── */
   const [passwords, setPasswords] = useState<{
@@ -186,6 +191,35 @@ export default function SettingsPage() {
       alert(`Error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setClearingAll(false);
+    }
+  };
+
+  const loadUserInfo = useCallback(async () => {
+    try {
+      const res = await fetch("/api/user/info");
+      if (!res.ok) return;
+      const data = await res.json() as { gmailSyncedAt: string | null };
+      setGmailSyncedAt(data.gmailSyncedAt);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { void loadUserInfo(); }, [loadUserInfo]);
+
+  const handleSyncNow = async () => {
+    setSyncing(true);
+    setSyncMessage("");
+    try {
+      const res = await fetch("/api/gmail/sync/start", { method: "POST" });
+      const data = await res.json() as { jobId?: string; error?: string; running?: boolean };
+      if (data.running) {
+        setSyncMessage("Sync already in progress — check the banner at the top.");
+      } else if (data.jobId) {
+        setSyncMessage("Sync started! Watch the banner at the top of the page.");
+      } else {
+        setSyncMessage(data.error ?? "Failed to start sync.");
+      }
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -628,6 +662,32 @@ export default function SettingsPage() {
           )}
         </div>
       )}
+
+      {/* Gmail Sync */}
+      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Gmail Sync</h3>
+        {gmailSyncedAt ? (
+          <p className="text-sm text-gray-500 mb-3">
+            Last synced:{" "}
+            <span className="text-gray-700 font-medium">
+              {new Date(gmailSyncedAt).toLocaleString("en-IN", {
+                day: "numeric", month: "short", year: "numeric",
+                hour: "2-digit", minute: "2-digit",
+              })}
+            </span>
+          </p>
+        ) : (
+          <p className="text-sm text-gray-400 mb-3">No sync completed yet.</p>
+        )}
+        <button
+          onClick={handleSyncNow}
+          disabled={syncing}
+          className="px-4 py-2 text-sm bg-[#5b7cfa] text-white rounded-lg hover:bg-[#4a6be8] disabled:opacity-50 transition-colors"
+        >
+          {syncing ? "Starting…" : "Sync now"}
+        </button>
+        {syncMessage && <p className="text-xs text-gray-500 mt-2">{syncMessage}</p>}
+      </div>
 
       {/* Demo Data */}
       <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
