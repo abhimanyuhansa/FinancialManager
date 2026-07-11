@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getGmailToken, fetchPdfAttachment, fetchMessageMetadataList } from "@/lib/gmail";
+import { getGmailToken, fetchPdfAttachment, fetchMessageIdPage } from "@/lib/gmail";
 import { parseEmailBatch, type BatchInput } from "@/lib/gemini";
 import { upsertTransactionV2 } from "@/lib/dedup";
 import { matchesEmailFilter } from "@/lib/emailFilter";
@@ -12,6 +12,7 @@ const BODY_LIMIT = 1500;
 type FetchedMessage = {
   body: string;
   senderName: string;
+  senderEmail: string;
   senderDomain: string;
   receivedDate: string;
   hasPdfAttachment: boolean;
@@ -74,20 +75,24 @@ async function fetchFullMessage(
     }
   }
 
-  return { body, senderName, senderDomain, receivedDate, hasPdfAttachment, pdfOutcome };
+  return { body, senderName, senderEmail, senderDomain, receivedDate, hasPdfAttachment, pdfOutcome };
 }
 
 async function advanceJob(job: {
   id: string;
   userId: string;
-  processedEmails: number;
-  messageIds: string | null;
 }): Promise<{ newTransactions: number; encryptedBlockedCount: number; completed: boolean }> {
   const apiKey = process.env.GEMINI_API_KEY ?? "";
-  const allIds: string[] = job.messageIds ? JSON.parse(job.messageIds) : [];
-  const slice = allIds.slice(job.processedEmails, job.processedEmails + CHUNK_SIZE);
 
-  if (slice.length === 0) {
+  // Fetch next N unprocessed IDs from SyncJobMessage table
+  const pending = await prisma.syncJobMessage.findMany({
+    where: { syncJobId: job.id, processed: false },
+    take: CHUNK_SIZE,
+    orderBy: { id: "asc" },
+    select: { id: true, gmailMsgId: true },
+  });
+
+  if (pending.length === 0) {
     await prisma.syncJob.update({
       where: { id: job.id },
       data: { status: "complete", completedAt: new Date() },
@@ -103,6 +108,13 @@ async function advanceJob(job: {
 
   const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
 
+  // Batch-fetch all MerchantRules once per job tick — eliminates N+1 DB queries
+  const merchantRules = await prisma.merchantRule.findMany({
+    where: { userId: job.userId },
+    select: { merchantName: true, category: true },
+  });
+  const merchantRuleMap = new Map(merchantRules.map((r) => [r.merchantName, r.category]));
+
   type FetchedEmail = {
     msgId: string;
     body: string;
@@ -116,7 +128,7 @@ async function advanceJob(job: {
   const fetched: FetchedEmail[] = [];
   let encryptedBlockedCount = 0;
 
-  for (const msgId of slice) {
+  for (const { gmailMsgId: msgId } of pending) {
     const msg = await fetchFullMessage(accessToken, msgId);
     if (!msg) continue;
 
@@ -155,7 +167,7 @@ async function advanceJob(job: {
       continue;
     }
 
-    const filterResult = matchesEmailFilter({ from: msg.senderName, subject: "" }, filters);
+    const filterResult = matchesEmailFilter({ from: msg.senderEmail, subject: "" }, filters);
     fetched.push({
       msgId,
       body: msg.body,
@@ -219,10 +231,8 @@ async function advanceJob(job: {
 
       let category = result.category!;
       const merchantKey = result.merchant!.toLowerCase().trim();
-      const rule = await prisma.merchantRule.findUnique({
-        where: { userId_merchantName: { userId: job.userId, merchantName: merchantKey } },
-      });
-      if (rule) category = rule.category;
+      const overrideCategory = merchantRuleMap.get(merchantKey);
+      if (overrideCategory) category = overrideCategory;
 
       const upsertResult = await upsertTransactionV2(prisma, {
         userId: job.userId,
@@ -258,13 +268,24 @@ async function advanceJob(job: {
     }
   }
 
-  const processed = job.processedEmails + slice.length;
-  const isComplete = processed >= allIds.length;
+  // Mark processed messages as done
+  await prisma.syncJobMessage.updateMany({
+    where: { id: { in: pending.map((p) => p.id) } },
+    data: { processed: true },
+  });
+
+  const processedCount = await prisma.syncJobMessage.count({
+    where: { syncJobId: job.id, processed: true },
+  });
+  const totalRemaining = await prisma.syncJobMessage.count({
+    where: { syncJobId: job.id, processed: false },
+  });
+  const isComplete = totalRemaining === 0;
 
   await prisma.syncJob.update({
     where: { id: job.id },
     data: {
-      processedEmails: processed,
+      processedEmails: processedCount,
       newTransactions: { increment: newTransactions },
       encryptedBlockedCount: { increment: encryptedBlockedCount },
       ...(isComplete ? { status: "complete", completedAt: new Date() } : {}),
@@ -286,48 +307,59 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Handle jobs in "scanning" phase first — populate messageIds then flip to "running"
+  // Handle jobs in "scanning" phase — one Gmail page per cron tick, no timeout risk
   const scanningJobs = await prisma.syncJob.findMany({
     where: { status: "scanning" },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, gmailQuery: true, scanPageToken: true },
   });
 
   for (const job of scanningJobs) {
-    console.log(`[advance] Scanning Gmail for jobId=${job.id}`);
+    console.log(`[advance] scan page jobId=${job.id} pageToken=${job.scanPageToken ?? "start"}`);
+
     const accessToken = await getGmailToken(job.userId);
     if (!accessToken) {
-      await prisma.syncJob.update({ where: { id: job.id }, data: { status: "failed", completedAt: new Date() } });
+      await prisma.syncJob.update({
+        where: { id: job.id },
+        data: { status: "failed", completedAt: new Date() },
+      });
       continue;
     }
 
-    const user = await prisma.user.findUnique({ where: { id: job.userId }, select: { syncFromDate: true } });
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const syncFromDate = user?.syncFromDate ?? sixMonthsAgo;
+    const page = await fetchMessageIdPage(
+      accessToken,
+      job.gmailQuery ?? "",
+      job.scanPageToken ?? undefined
+    );
 
-    const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
-    const qualifyingIds: string[] = [];
-    let pageToken: string | undefined;
-    do {
-      const page = await fetchMessageMetadataList(accessToken, syncFromDate, pageToken);
-      for (const msg of page.messages) {
-        const match = matchesEmailFilter(msg, filters);
-        if (match.matched) qualifyingIds.push(msg.id);
-      }
-      pageToken = page.nextPageToken;
-    } while (pageToken);
+    if (page.messageIds.length > 0) {
+      await prisma.syncJobMessage.createMany({
+        data: page.messageIds.map((id) => ({
+          syncJobId: job.id,
+          gmailMsgId: id,
+          processed: false,
+        })),
+        skipDuplicates: true,
+      });
+    }
 
-    console.log(`[advance] jobId=${job.id} scan complete: ${qualifyingIds.length} qualifying messages`);
+    const totalCount = await prisma.syncJobMessage.count({ where: { syncJobId: job.id } });
+
     await prisma.syncJob.update({
       where: { id: job.id },
-      data: { status: "running", totalEmails: qualifyingIds.length, messageIds: JSON.stringify(qualifyingIds) },
+      data: {
+        totalEmails: totalCount,
+        scanPageToken: page.nextPageToken ?? null,
+        status: page.nextPageToken ? "scanning" : "running",
+      },
     });
+
+    console.log(`[advance] jobId=${job.id} +${page.messageIds.length} ids total=${totalCount} hasMore=${!!page.nextPageToken}`);
   }
 
   const runningJobs = await prisma.syncJob.findMany({
     where: { status: "running" },
     orderBy: { startedAt: "asc" },
-    select: { id: true, userId: true, processedEmails: true, messageIds: true },
+    select: { id: true, userId: true },
   });
 
   console.log(`[advance] Processing ${runningJobs.length} running jobs`);
