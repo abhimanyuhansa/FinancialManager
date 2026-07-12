@@ -7,8 +7,10 @@ type Transaction = {
   amount: number;
   type: string;
   category: string;
+  subCategory: string | null;
   date: string;
   source: string;
+  tag: string | null;
   gmailMsgId: string | null;
   needsReview?: boolean;
 };
@@ -52,7 +54,36 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
   const [scope, setScope] = useState<"single" | "all_merchant">("single");
   const [saving, setSaving] = useState(false);
 
+  // VPA identification state
+  const vpa = tx?.tag?.startsWith("vpa:") ? tx.tag.replace("vpa:", "") : null;
+  const isUnknown = tx?.merchant === "Unknown" && !!vpa;
+  const [identifyName, setIdentifyName] = useState("");
+  const [identifyCategory, setIdentifyCategory] = useState("other");
+  const [applyToAll, setApplyToAll] = useState(true);
+  const [identifySaving, setIdentifySaving] = useState(false);
+
   if (!tx) return null;
+
+  const handleIdentifySave = async () => {
+    if (!tx || !vpa || !identifyName.trim()) return;
+    setIdentifySaving(true);
+    try {
+      await fetch(`/api/transactions/${tx.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          merchant: identifyName.trim(),
+          category: identifyCategory,
+          vpa,
+          scope: applyToAll ? "all_vpa" : "single",
+        }),
+      });
+      onCategoryUpdated(tx.id, identifyCategory);
+      onClose();
+    } finally {
+      setIdentifySaving(false);
+    }
+  };
 
   const handleCategoryClick = (cat: string) => {
     if (cat === tx.category) return;
@@ -115,6 +146,52 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
           </p>
         </div>
 
+        {/* VPA Identification section */}
+        {isUnknown && (
+          <div className="px-5 py-4 border-b border-[#E9E9EB]">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="mb-1 text-sm font-semibold text-amber-800">
+                Identify this payment
+              </p>
+              <p className="mb-3 font-mono text-xs text-amber-600 break-all">
+                {vpa}
+              </p>
+              <input
+                type="text"
+                placeholder="Who is this? (e.g. Landlord, Gym)"
+                value={identifyName}
+                onChange={(e) => setIdentifyName(e.target.value)}
+                className="mb-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+              />
+              <select
+                value={identifyCategory}
+                onChange={(e) => setIdentifyCategory(e.target.value)}
+                className="mb-3 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c.value} value={c.value}>{c.icon} {c.label}</option>
+                ))}
+              </select>
+              <label className="mb-3 flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={applyToAll}
+                  onChange={(e) => setApplyToAll(e.target.checked)}
+                  className="rounded"
+                />
+                Apply to all payments from this UPI address
+              </label>
+              <button
+                onClick={handleIdentifySave}
+                disabled={!identifyName.trim() || identifySaving}
+                className="w-full rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-40"
+              >
+                {identifySaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Category picker */}
         <div className="px-5 py-4 border-b border-[#E9E9EB]">
           <p className="text-xs font-semibold text-[#7C7E8C] uppercase tracking-wide mb-3">Category</p>
@@ -167,7 +244,7 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
                 </button>
                 <button
                   onClick={() => setPendingCategory(null)}
-                  className="px-4 py-2 text-sm text-[#7C7E8C] rounded-lg hover:bg-gray-200"
+                  className="px-4 py-2 text-sm text-[#7C7E8C] rounded-lg hover:bg-[#E9E9EB]"
                 >
                   Cancel
                 </button>
