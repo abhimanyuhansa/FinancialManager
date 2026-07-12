@@ -78,7 +78,7 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
     }
   };
 
-  const amountColor = tx.type === "income" ? "text-green-600" : "text-red-500";
+  const amountColor = tx.type === "income" ? "text-[#04B488]" : "text-[#ED5533]";
   const displayAmount = fmtAmount(tx.amount, tx.type);
   const catIcon = CATEGORIES.find((c) => c.value === tx.category)?.icon ?? "📦";
 
@@ -88,36 +88,36 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
       <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
 
       {/* Panel */}
-      <div className="fixed right-0 top-0 h-full w-full max-w-md bg-white z-50 shadow-2xl flex flex-col overflow-y-auto">
+      <div className="fixed right-0 top-0 h-full w-full max-w-md bg-white z-50 shadow-xl flex flex-col overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+        <div className="flex items-center justify-between p-5 border-b border-[#E9E9EB]">
           <div className="flex items-center gap-3">
             <span className="text-3xl">{catIcon}</span>
             <div>
-              <h2 className="font-semibold text-gray-900 text-lg leading-tight">{tx.merchant}</h2>
-              <span className="text-xs text-gray-400 uppercase tracking-wide">{tx.category}</span>
+              <h2 className="font-semibold text-[#44475B] text-lg leading-tight">{tx.merchant}</h2>
+              <span className="text-xs text-[#A1A3AD] uppercase tracking-wide">{tx.category}</span>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl font-light">
+          <button onClick={onClose} className="text-[#A1A3AD] hover:text-[#7C7E8C] text-xl font-light">
             ✕
           </button>
         </div>
 
         {/* Amount + Date */}
-        <div className="px-5 py-4 border-b border-gray-100">
+        <div className="px-5 py-4 border-b border-[#E9E9EB]">
           <p className={`text-3xl font-bold ${amountColor}`}>{displayAmount}</p>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-[#7C7E8C] mt-1">
             {new Date(tx.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
             {" · "}
-            <span className={`capitalize font-medium ${tx.type === "income" ? "text-green-600" : "text-red-500"}`}>
+            <span className={`capitalize font-medium ${tx.type === "income" ? "text-[#04B488]" : "text-[#ED5533]"}`}>
               {tx.type}
             </span>
           </p>
         </div>
 
         {/* Category picker */}
-        <div className="px-5 py-4 border-b border-gray-100">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Category</p>
+        <div className="px-5 py-4 border-b border-[#E9E9EB]">
+          <p className="text-xs font-semibold text-[#7C7E8C] uppercase tracking-wide mb-3">Category</p>
           <div className="grid grid-cols-4 gap-2">
             {CATEGORIES.map((cat) => (
               <button
@@ -125,8 +125,8 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
                 onClick={() => handleCategoryClick(cat.value)}
                 className={`flex flex-col items-center gap-1 p-2 rounded-lg text-xs transition-colors ${
                   (pendingCategory ?? tx.category) === cat.value
-                    ? "bg-[#e8ecf8] text-[#5b7cfa] font-medium"
-                    : "hover:bg-gray-50 text-gray-600"
+                    ? "bg-[#E9FAF3] text-[#04B488] font-medium"
+                    : "hover:bg-[#F8F8F8] text-[#7C7E8C]"
                 }`}
               >
                 <span className="text-xl">{cat.icon}</span>
@@ -137,23 +137,23 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
 
           {/* Scope selector + confirm — only shown when pending change */}
           {pendingCategory && pendingCategory !== tx.category && (
-            <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-700 font-medium mb-2">Apply to:</p>
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer mb-1">
+            <div className="mt-4 p-3 bg-[#F8F8F8] rounded-lg">
+              <p className="text-sm text-[#44475B] font-medium mb-2">Apply to:</p>
+              <label className="flex items-center gap-2 text-sm text-[#44475B] cursor-pointer mb-1">
                 <input
                   type="radio"
                   checked={scope === "single"}
                   onChange={() => setScope("single")}
-                  className="accent-[#5b7cfa]"
+                  className="accent-[#04B488]"
                 />
                 Just this transaction
               </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-[#44475B] cursor-pointer">
                 <input
                   type="radio"
                   checked={scope === "all_merchant"}
                   onChange={() => setScope("all_merchant")}
-                  className="accent-[#5b7cfa]"
+                  className="accent-[#04B488]"
                 />
                 All <strong className="mx-1">{tx.merchant}</strong> transactions
               </label>
@@ -161,13 +161,13 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
                 <button
                   onClick={handleConfirm}
                   disabled={saving}
-                  className="flex-1 py-2 bg-[#5b7cfa] text-white text-sm rounded-lg hover:bg-[#4a6af0] disabled:opacity-50"
+                  className="flex-1 py-2 bg-[#04B488] text-white text-sm rounded-lg hover:bg-[#03a07a] disabled:opacity-50"
                 >
                   {saving ? "Saving…" : "Confirm"}
                 </button>
                 <button
                   onClick={() => setPendingCategory(null)}
-                  className="px-4 py-2 text-sm text-gray-600 rounded-lg hover:bg-gray-200"
+                  className="px-4 py-2 text-sm text-[#7C7E8C] rounded-lg hover:bg-gray-200"
                 >
                   Cancel
                 </button>
@@ -178,26 +178,26 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
 
         {/* Source section */}
         <div className="px-5 py-4">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Source</p>
+          <p className="text-xs font-semibold text-[#7C7E8C] uppercase tracking-wide mb-2">Source</p>
           {tx.gmailMsgId ? (
             <a
               href={`https://mail.google.com/mail/u/0/#all/${tx.gmailMsgId}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-[#5b7cfa] hover:underline"
+              className="inline-flex items-center gap-1.5 text-sm text-[#04B488] hover:underline"
             >
               View source email ↗
             </a>
           ) : tx.source === "seed" ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 text-gray-500 text-xs rounded-full">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#F8F8F8] text-[#7C7E8C] text-xs rounded-full">
               Demo data
             </span>
           ) : tx.source === "manual" ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 text-gray-500 text-xs rounded-full">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#F8F8F8] text-[#7C7E8C] text-xs rounded-full">
               Manually added
             </span>
           ) : (
-            <span className="text-sm text-gray-400">Gmail import</span>
+            <span className="text-sm text-[#A1A3AD]">Gmail import</span>
           )}
         </div>
       </div>

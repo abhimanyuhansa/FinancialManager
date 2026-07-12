@@ -88,12 +88,12 @@ export default function AssetsPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Assets</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Portfolio total: ₹{totalValue.toLocaleString("en-IN")}</p>
+          <h1 className="text-2xl font-semibold text-[#44475B]">Assets</h1>
+          <p className="text-sm text-[#7C7E8C] mt-0.5">Portfolio total: ₹{totalValue.toLocaleString("en-IN")}</p>
         </div>
         <button
           onClick={openAdd}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#5b7cfa] text-white text-sm font-medium hover:bg-[#4a6be8] transition-colors"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#04B488] text-white text-sm font-medium hover:bg-[#03a07a] transition-colors"
         >
           <span className="text-base leading-none">+</span> Add Asset
         </button>
@@ -101,61 +101,61 @@ export default function AssetsPage() {
 
       {/* Add/Edit form */}
       {showForm && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">{editId ? "Edit Asset" : "Add Asset"}</h2>
+        <div className="bg-white rounded-lg border border-[#E9E9EB] p-5 mb-6">
+          <h2 className="text-sm font-semibold text-[#44475B] mb-4">{editId ? "Edit Asset" : "Add Asset"}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="sm:col-span-2">
-              <label className="block text-xs text-gray-500 mb-1">Name</label>
+              <label className="block text-xs text-[#7C7E8C] mb-1">Name</label>
               <input
                 type="text"
                 placeholder="e.g. HDFC Savings Account"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Type</label>
+              <label className="block text-xs text-[#7C7E8C] mb-1">Type</label>
               <select
                 value={form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
               >
                 {ASSET_TYPES.map((t) => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Value (₹)</label>
+              <label className="block text-xs text-[#7C7E8C] mb-1">Value (₹)</label>
               <input
                 type="number"
                 placeholder="0"
                 value={form.value}
                 onChange={(e) => setForm({ ...form, value: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">As of Date</label>
+              <label className="block text-xs text-[#7C7E8C] mb-1">As of Date</label>
               <input
                 type="date"
                 value={form.asOf}
                 onChange={(e) => setForm({ ...form, asOf: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
               />
             </div>
           </div>
-          {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+          {error && <p className="text-xs text-[#ED5533] mt-2">{error}</p>}
           <div className="flex gap-2 mt-4">
             <button
               onClick={handleSave}
               disabled={saving}
-              className="px-4 py-2 bg-[#5b7cfa] text-white rounded-xl text-sm font-medium hover:bg-[#4a6be8] disabled:opacity-60 transition-colors"
+              className="px-4 py-2 bg-[#04B488] text-white rounded-lg text-sm font-medium hover:bg-[#03a07a] disabled:opacity-60 transition-colors"
             >
               {saving ? "Saving..." : editId ? "Update" : "Add"}
             </button>
             <button
               onClick={() => setShowForm(false)}
-              className="px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm hover:bg-gray-50 transition-colors"
+              className="px-4 py-2 border border-[#E9E9EB] text-[#7C7E8C] rounded-lg text-sm hover:bg-[#F8F8F8] transition-colors"
             >
               Cancel
             </button>
@@ -166,33 +166,33 @@ export default function AssetsPage() {
       {/* Assets list */}
       {loading ? (
         <div className="flex flex-col gap-3">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-gray-100 rounded-2xl animate-pulse" />)}
+          {[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-[#F8F8F8] rounded-lg animate-pulse" />)}
         </div>
       ) : assets.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
-          <p className="text-sm text-gray-400">No assets yet. Add your first asset to track your portfolio.</p>
+        <div className="bg-white rounded-lg border border-[#E9E9EB] p-12 text-center">
+          <p className="text-sm text-[#A1A3AD]">No assets yet. Add your first asset to track your portfolio.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-3">
           {assets.map((a) => (
-            <div key={a.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center justify-between">
+            <div key={a.id} className="bg-white rounded-lg border border-[#E9E9EB] p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="text-2xl">{ASSET_ICONS[a.type] ?? "💼"}</span>
                 <div>
-                  <p className="text-sm font-semibold text-gray-900">{a.name}</p>
-                  <p className="text-xs text-gray-400 capitalize">
+                  <p className="text-sm font-semibold text-[#44475B]">{a.name}</p>
+                  <p className="text-xs text-[#7C7E8C] capitalize">
                     {a.type} · as of {new Date(a.asOf).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-gray-900">
+                <span className="text-sm font-semibold text-[#44475B]">
                   ₹{a.value.toLocaleString("en-IN")}
                 </span>
                 <div className="flex gap-1">
                   <button
                     onClick={() => openEdit(a)}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                    className="p-1.5 rounded-lg text-[#A1A3AD] hover:text-[#44475B] hover:bg-[#F8F8F8] transition-colors"
                     title="Edit"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -202,7 +202,7 @@ export default function AssetsPage() {
                   </button>
                   <button
                     onClick={() => handleDelete(a.id)}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    className="p-1.5 rounded-lg text-[#A1A3AD] hover:text-[#ED5533] hover:bg-[#FAE9E5] transition-colors"
                     title="Delete"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

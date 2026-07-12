@@ -34,8 +34,8 @@ export function BarChartCard({ data }: BarChartCardProps) {
   }));
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-      <h2 className="text-sm font-semibold text-gray-700 mb-4">Income vs Expenses (6 months)</h2>
+    <div className="bg-white rounded-lg border border-[#E9E9EB]  p-5">
+      <h2 className="text-sm font-semibold text-[#44475B] mb-4">Income vs Expenses (6 months)</h2>
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={chartData} barCategoryGap="30%" barGap={4}>
           <XAxis dataKey="month" tick={{ fontSize: 12, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
@@ -45,7 +45,7 @@ export function BarChartCard({ data }: BarChartCardProps) {
             contentStyle={{ borderRadius: 12, border: "1px solid #f0f0f0", fontSize: 12 }}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar dataKey="Income" fill="#5b7cfa" radius={[4, 4, 0, 0]} />
+          <Bar dataKey="Income" fill="#04B488" radius={[4, 4, 0, 0]} />
           <Bar dataKey="Expenses" fill="#f87171" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>

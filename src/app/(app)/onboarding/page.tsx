@@ -52,22 +52,22 @@ export default function OnboardingPage() {
 
   return (
     <div className="min-h-screen bg-[#eef0f6] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 w-full max-w-lg">
+      <div className="bg-white rounded-lg  border border-[#E9E9EB] p-8 w-full max-w-lg">
         <div className="flex items-center gap-3 mb-8">
-          <div className="w-8 h-8 rounded-lg bg-[#e8ecf8] flex items-center justify-center shrink-0">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5b7cfa" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <div className="w-8 h-8 rounded-lg bg-[#E9FAF3] flex items-center justify-center shrink-0">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#04B488" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="1" x2="12" y2="23" />
               <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
             </svg>
           </div>
           <div>
-            <h1 className="text-base font-semibold text-gray-900">Set up Financial Manager</h1>
-            {step !== "syncing" && <p className="text-xs text-gray-500">Step {stepNumber} of 2</p>}
+            <h1 className="text-base font-semibold text-[#44475B]">Set up Financial Manager</h1>
+            {step !== "syncing" && <p className="text-xs text-[#7C7E8C]">Step {stepNumber} of 2</p>}
           </div>
         </div>
 
         {error && (
-          <div className="mb-4 px-4 py-3 bg-[#fce8e8] rounded-xl text-sm text-red-700 border border-red-200">
+          <div className="mb-4 px-4 py-3 bg-[#fce8e8] rounded-lg text-sm text-[#ED5533] border border-red-200">
             {error}
           </div>
         )}
@@ -77,8 +77,8 @@ export default function OnboardingPage() {
         )}
         {step === "syncing" && syncJobId && (
           <div className="flex flex-col gap-4">
-            <h2 className="text-xl font-semibold text-gray-900">Importing transactions</h2>
-            <p className="text-sm text-gray-500">Parsing emails with Gemini. This may take a few minutes.</p>
+            <h2 className="text-xl font-semibold text-[#44475B]">Importing transactions</h2>
+            <p className="text-sm text-[#7C7E8C]">Parsing emails with Gemini. This may take a few minutes.</p>
             <SyncProgressBar
               jobId={syncJobId}
               onComplete={() => router.push("/dashboard")}

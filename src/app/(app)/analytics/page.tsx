@@ -15,7 +15,7 @@ type DashboardData = {
   categoryBreakdown: CategoryItem[];
 };
 
-const COLOURS = ["#5b7cfa", "#f97316", "#22c55e", "#a855f7", "#ec4899", "#14b8a6", "#f59e0b", "#64748b"];
+const COLOURS = ["#04B488", "#f97316", "#22c55e", "#a855f7", "#ec4899", "#14b8a6", "#f59e0b", "#64748b"];
 
 const fmt = (n: number) =>
   n >= 100000 ? `₹${(n / 100000).toFixed(1)}L` : n >= 1000 ? `₹${(n / 1000).toFixed(1)}K` : `₹${n}`;
@@ -34,9 +34,9 @@ export default function AnalyticsPage() {
   if (loading) {
     return (
       <div className="p-6 max-w-4xl">
-        <h1 className="text-2xl font-semibold text-gray-900 mb-6">Analytics</h1>
+        <h1 className="text-2xl font-semibold text-[#44475B] mb-6">Analytics</h1>
         <div className="grid grid-cols-1 gap-4">
-          {[...Array(3)].map((_, i) => <div key={i} className="h-48 bg-gray-100 rounded-2xl animate-pulse" />)}
+          {[...Array(3)].map((_, i) => <div key={i} className="h-48 bg-[#F8F8F8] rounded-lg animate-pulse" />)}
         </div>
       </div>
     );
@@ -57,8 +57,8 @@ export default function AnalyticsPage() {
 
   return (
     <div className="p-6 max-w-4xl">
-      <h1 className="text-2xl font-semibold text-gray-900 mb-1">Analytics</h1>
-      <p className="text-sm text-gray-500 mb-6">
+      <h1 className="text-2xl font-semibold text-[#44475B] mb-1">Analytics</h1>
+      <p className="text-sm text-[#7C7E8C] mb-6">
         {new Date().toLocaleString("en-IN", { month: "long", year: "numeric" })}
       </p>
 
@@ -66,26 +66,26 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-3 gap-4 mb-6">
         {[
           { label: "Income", value: currentMonth.income, colour: "text-blue-600" },
-          { label: "Spent", value: currentMonth.expenses, colour: "text-red-500" },
-          { label: "Savings Rate", value: null, display: `${savingsRate}%`, colour: savingsRate >= 20 ? "text-green-600" : "text-amber-500" },
+          { label: "Spent", value: currentMonth.expenses, colour: "text-[#ED5533]" },
+          { label: "Savings Rate", value: null, display: `${savingsRate}%`, colour: savingsRate >= 20 ? "text-[#04B488]" : "text-amber-500" },
         ].map(({ label, value, display, colour }) => (
-          <div key={label} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">{label}</p>
+          <div key={label} className="bg-white rounded-lg border border-[#E9E9EB]  p-5">
+            <p className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide mb-1">{label}</p>
             <p className={`text-2xl font-bold ${colour}`}>{display ?? fmt(value ?? 0)}</p>
           </div>
         ))}
       </div>
 
       {/* Monthly bar chart */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
-        <h2 className="text-sm font-semibold text-gray-700 mb-4">Income vs Expenses (6 months)</h2>
+      <div className="bg-white rounded-lg border border-[#E9E9EB]  p-5 mb-6">
+        <h2 className="text-sm font-semibold text-[#44475B] mb-4">Income vs Expenses (6 months)</h2>
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={monthlyTotals} barCategoryGap="30%" barGap={4}>
             <XAxis dataKey="month" tick={{ fontSize: 12 }} />
             <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11 }} />
             <Tooltip formatter={(v) => fmt(Number(v ?? 0))} />
             <Legend />
-            <Bar dataKey="income" name="Income" fill="#5b7cfa" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="income" name="Income" fill="#04B488" radius={[4, 4, 0, 0]} />
             <Bar dataKey="expenses" name="Expenses" fill="#f87171" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -94,10 +94,10 @@ export default function AnalyticsPage() {
       {/* Category breakdown */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Donut */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">Spending by Category</h2>
+        <div className="bg-white rounded-lg border border-[#E9E9EB]  p-5">
+          <h2 className="text-sm font-semibold text-[#44475B] mb-4">Spending by Category</h2>
           {topCategories.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-8">No expense data this month.</p>
+            <p className="text-sm text-[#A1A3AD] text-center py-8">No expense data this month.</p>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
@@ -111,18 +111,18 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Category list */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">Category Breakdown</h2>
+        <div className="bg-white rounded-lg border border-[#E9E9EB]  p-5">
+          <h2 className="text-sm font-semibold text-[#44475B] mb-4">Category Breakdown</h2>
           <div className="flex flex-col gap-2">
             {topCategories.map((c, i) => {
               const pct = totalSpend > 0 ? Math.round((c.amount / totalSpend) * 100) : 0;
               return (
                 <div key={c.category}>
                   <div className="flex items-center justify-between mb-0.5">
-                    <span className="text-xs text-gray-600 capitalize">{c.category}</span>
-                    <span className="text-xs font-medium text-gray-900">{fmt(c.amount)} <span className="text-gray-400">({pct}%)</span></span>
+                    <span className="text-xs text-[#7C7E8C] capitalize">{c.category}</span>
+                    <span className="text-xs font-medium text-[#44475B]">{fmt(c.amount)} <span className="text-[#A1A3AD]">({pct}%)</span></span>
                   </div>
-                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-[#F8F8F8] rounded-full overflow-hidden">
                     <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: COLOURS[i % COLOURS.length] }} />
                   </div>
                 </div>

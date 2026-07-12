@@ -3,15 +3,15 @@ import { signIn } from "@/lib/auth";
 export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#eef0f6]">
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 w-full max-w-sm flex flex-col items-center gap-8">
+      <div className="bg-white rounded-lg  border border-[#E9E9EB] p-10 w-full max-w-sm flex flex-col items-center gap-8">
         <div className="flex flex-col items-center gap-2">
-          <div className="w-10 h-10 rounded-xl bg-[#e8ecf8] flex items-center justify-center">
+          <div className="w-10 h-10 rounded-lg bg-[#E9FAF3] flex items-center justify-center">
             <svg
               width="20"
               height="20"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="#5b7cfa"
+              stroke="#04B488"
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -20,10 +20,10 @@ export default function LoginPage() {
               <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
             </svg>
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 tracking-tight">
+          <h1 className="text-xl font-semibold text-[#44475B] tracking-tight">
             Financial Manager
           </h1>
-          <p className="text-sm text-gray-500 text-center">
+          <p className="text-sm text-[#7C7E8C] text-center">
             Sign in to manage your finances
           </p>
         </div>
@@ -37,7 +37,7 @@ export default function LoginPage() {
         >
           <button
             type="submit"
-            className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors shadow-sm"
+            className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg border border-[#E9E9EB] bg-white text-sm font-medium text-[#44475B] hover:bg-[#F8F8F8] transition-colors "
           >
             <svg width="18" height="18" viewBox="0 0 24 24">
               <path
@@ -61,7 +61,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="text-xs text-gray-400 text-center">
+        <p className="text-xs text-[#A1A3AD] text-center">
           Your data is private and only accessible to you.
         </p>
       </div>

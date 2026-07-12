@@ -115,8 +115,8 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h1 className="text-2xl font-semibold text-[#44475B]">Dashboard</h1>
+          <p className="text-sm text-[#7C7E8C] mt-0.5">
             {new Date().toLocaleString("en", { month: "long", year: "numeric" })}
           </p>
         </div>
@@ -124,7 +124,7 @@ export default function DashboardPage() {
           <button
             onClick={handleSync}
             disabled={syncing}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#5b7cfa] text-white text-sm font-medium hover:bg-[#4a6be8] transition-colors disabled:opacity-60"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#04B488] text-white text-sm font-medium hover:bg-[#03a07a] transition-colors disabled:opacity-60"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10" />
@@ -137,14 +137,14 @@ export default function DashboardPage() {
       </div>
 
       {syncError && (
-        <div className="mb-4 px-4 py-3 bg-[#fce8e8] rounded-xl text-sm text-red-700 border border-red-200">
+        <div className="mb-4 px-4 py-3 bg-[#fce8e8] rounded-lg text-sm text-[#ED5533] border border-red-200">
           {syncError}
         </div>
       )}
 
       {syncJobId && (
-        <div className="mb-6 bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Syncing Gmail</h2>
+        <div className="mb-6 bg-white rounded-lg border border-[#E9E9EB]  p-6">
+          <h2 className="text-base font-semibold text-[#44475B] mb-4">Syncing Gmail</h2>
           <SyncProgressBar
             jobId={syncJobId}
             onComplete={handleSyncComplete}
@@ -157,7 +157,7 @@ export default function DashboardPage() {
       {data && data.needsReviewCount > 0 && (
         <a
           href="/transactions?filter=review"
-          className="block mb-4 px-4 py-3 bg-[#fff8e1] rounded-xl text-sm text-amber-700 border border-amber-200 hover:bg-[#fff3cd] transition-colors"
+          className="block mb-4 px-4 py-3 bg-[#fff8e1] rounded-lg text-sm text-amber-700 border border-amber-200 hover:bg-[#fff3cd] transition-colors"
         >
           ⚠️ {data.needsReviewCount} transaction{data.needsReviewCount > 1 ? "s" : ""} need your review →
         </a>
@@ -166,7 +166,7 @@ export default function DashboardPage() {
       {loading ? (
         <div className="flex flex-col gap-4">
           {[...Array(3)].map((_, i) => (
-            <div key={i} className="h-24 bg-gray-100 rounded-2xl animate-pulse" />
+            <div key={i} className="h-24 bg-[#F8F8F8] rounded-lg animate-pulse" />
           ))}
         </div>
       ) : data ? (
@@ -201,10 +201,10 @@ export default function DashboardPage() {
 
           {/* Recent transactions */}
           {data.recentTransactions.length > 0 && (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+            <div className="bg-white rounded-lg border border-[#E9E9EB]  p-5">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-gray-700">Recent Transactions</h2>
-                <a href="/transactions" className="text-xs text-[#5b7cfa] hover:underline">View all</a>
+                <h2 className="text-sm font-semibold text-[#44475B]">Recent Transactions</h2>
+                <a href="/transactions" className="text-xs text-[#04B488] hover:underline">View all</a>
               </div>
               <div className="flex flex-col gap-1">
                 {data.recentTransactions.map((tx) => (
@@ -215,8 +215,8 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-3">
                       <span className="text-lg">{CATEGORY_ICONS[tx.category] ?? "📦"}</span>
                       <div>
-                        <p className="text-sm font-medium text-gray-900">{tx.merchant}</p>
-                        <p className="text-xs text-gray-400">
+                        <p className="text-sm font-medium text-[#44475B]">{tx.merchant}</p>
+                        <p className="text-xs text-[#A1A3AD]">
                           {tx.category} · {new Date(tx.date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                         </p>
                       </div>
@@ -228,7 +228,7 @@ export default function DashboardPage() {
                         </span>
                       )}
                       <span
-                        className={`text-sm font-semibold ${tx.type === "income" ? "text-green-600" : "text-red-500"}`}
+                        className={`text-sm font-semibold ${tx.type === "income" ? "text-[#04B488]" : "text-[#ED5533]"}`}
                       >
                         {fmtAmount(tx.amount, tx.type)}
                       </span>
@@ -240,8 +240,8 @@ export default function DashboardPage() {
           )}
 
           {data.recentTransactions.length === 0 && (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
-              <p className="text-sm text-gray-400">No transactions yet. Click &quot;Sync Gmail&quot; to import.</p>
+            <div className="bg-white rounded-lg border border-[#E9E9EB]  p-8 text-center">
+              <p className="text-sm text-[#A1A3AD]">No transactions yet. Click &quot;Sync Gmail&quot; to import.</p>
             </div>
           )}
         </div>

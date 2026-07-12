@@ -69,12 +69,12 @@ type SubCategoryEntry = {
 type RetroPeriod = "1m" | "3m" | "6m" | "12m";
 
 function outcomeColor(outcome: string): string {
-  if (outcome === "inserted") return "text-green-700 bg-green-50";
+  if (outcome === "inserted") return "text-[#04B488] bg-green-50";
   if (outcome === "upgraded") return "text-blue-700 bg-blue-50";
-  if (outcome === "skipped_duplicate") return "text-gray-500 bg-gray-50";
+  if (outcome === "skipped_duplicate") return "text-[#7C7E8C] bg-[#F8F8F8]";
   if (outcome.startsWith("skipped_")) return "text-orange-700 bg-orange-50";
-  if (outcome.startsWith("failed_") || outcome === "parse_failed") return "text-red-700 bg-red-50";
-  return "text-gray-600 bg-gray-50";
+  if (outcome.startsWith("failed_") || outcome === "parse_failed") return "text-[#ED5533] bg-red-50";
+  return "text-[#7C7E8C] bg-[#F8F8F8]";
 }
 
 const REPROCESSABLE = new Set([
@@ -90,8 +90,8 @@ const REPROCESSABLE = new Set([
 
 const RANK_LABELS: Record<number, string> = { 1: "Bank", 2: "Payment", 3: "Merchant" };
 const STATUS_COLOURS: Record<string, string> = {
-  matched: "bg-green-100 text-green-700",
-  missing: "bg-red-100 text-red-700",
+  matched: "bg-green-100 text-[#04B488]",
+  missing: "bg-red-100 text-[#ED5533]",
   mismatch: "bg-amber-100 text-amber-700",
 };
 
@@ -499,16 +499,16 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 max-w-4xl">
-      <h1 className="text-2xl font-semibold text-gray-900 mb-6">Settings</h1>
+      <h1 className="text-2xl font-semibold text-[#44475B] mb-6">Settings</h1>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-6 border-b border-gray-100">
+      <div className="flex gap-1 mb-6 border-b border-[#E9E9EB]">
         {(["filters", "audit", "passwords", "parse-logs"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-              tab === t ? "text-[#5b7cfa] border-b-2 border-[#5b7cfa]" : "text-gray-500 hover:text-gray-700"
+              tab === t ? "text-[#04B488] border-b-2 border-[#04B488]" : "text-[#7C7E8C] hover:text-[#44475B]"
             }`}
           >
             {t === "filters" ? "Email Filters" : t === "audit" ? "Reconciliation Audit" : t === "passwords" ? "Statement Passwords" : "Parse Logs"}
@@ -520,15 +520,15 @@ export default function SettingsPage() {
       {tab === "filters" && (
         <>
           {/* Add filter form */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">Add Filter</h2>
+          <div className="bg-white rounded-lg border border-[#E9E9EB]  p-5 mb-6">
+            <h2 className="text-sm font-semibold text-[#44475B] mb-3">Add Filter</h2>
             <div className="flex flex-wrap gap-2 items-end">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Type</label>
+                <label className="block text-xs text-[#7C7E8C] mb-1">Type</label>
                 <select
                   value={newType}
                   onChange={(e) => setNewType(e.target.value)}
-                  className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                  className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
                 >
                   <option value="sender_domain">Sender Domain</option>
                   <option value="sender_email">Sender Email</option>
@@ -536,22 +536,22 @@ export default function SettingsPage() {
                 </select>
               </div>
               <div className="flex-1 min-w-[160px]">
-                <label className="block text-xs text-gray-500 mb-1">Value</label>
+                <label className="block text-xs text-[#7C7E8C] mb-1">Value</label>
                 <input
                   type="text"
                   placeholder="e.g. hdfcbank.com"
                   value={newValue}
                   onChange={(e) => setNewValue(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleAddFilter()}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                  className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Rank</label>
+                <label className="block text-xs text-[#7C7E8C] mb-1">Rank</label>
                 <select
                   value={newRank}
                   onChange={(e) => setNewRank(parseInt(e.target.value, 10))}
-                  className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                  className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
                 >
                   <option value={1}>1 — Bank</option>
                   <option value={2}>2 — Payment</option>
@@ -559,19 +559,19 @@ export default function SettingsPage() {
                 </select>
               </div>
               <div className="flex-1 min-w-[120px]">
-                <label className="block text-xs text-gray-500 mb-1">Note (optional)</label>
+                <label className="block text-xs text-[#7C7E8C] mb-1">Note (optional)</label>
                 <input
                   type="text"
                   placeholder="Description"
                   value={newNote}
                   onChange={(e) => setNewNote(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                  className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
                 />
               </div>
               <button
                 onClick={handleAddFilter}
                 disabled={addSaving}
-                className="px-4 py-2 bg-[#5b7cfa] text-white rounded-xl text-sm font-medium hover:bg-[#4a6be8] disabled:opacity-60 transition-colors"
+                className="px-4 py-2 bg-[#04B488] text-white rounded-lg text-sm font-medium hover:bg-[#03a07a] disabled:opacity-60 transition-colors"
               >
                 {addSaving ? "Adding..." : "Add"}
               </button>
@@ -581,29 +581,29 @@ export default function SettingsPage() {
 
           {/* Filters list */}
           {filtersLoading ? (
-            <div className="flex flex-col gap-2">{[...Array(5)].map((_, i) => <div key={i} className="h-10 bg-gray-100 rounded-xl animate-pulse" />)}</div>
+            <div className="flex flex-col gap-2">{[...Array(5)].map((_, i) => <div key={i} className="h-10 bg-[#F8F8F8] rounded-lg animate-pulse" />)}</div>
           ) : (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-lg border border-[#E9E9EB]  overflow-hidden">
               <div className="px-5 py-3 border-b border-gray-50 flex gap-4">
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide w-28">Type</span>
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex-1">Value</span>
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Rank</span>
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide w-16">Active</span>
+                <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide w-28">Type</span>
+                <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide flex-1">Value</span>
+                <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide w-20">Rank</span>
+                <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide w-16">Active</span>
                 <span className="w-14" />
               </div>
               <div className="divide-y divide-gray-50">
                 {filters.map((f) => (
                   <div key={f.id} className={`px-5 py-2.5 flex items-center gap-4 ${!f.isActive ? "opacity-50" : ""}`}>
-                    <span className="text-xs text-gray-500 w-28 truncate">{f.type.replace("_", " ")}</span>
+                    <span className="text-xs text-[#7C7E8C] w-28 truncate">{f.type.replace("_", " ")}</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-900 font-mono truncate">{f.value}</p>
-                      {f.note && <p className="text-xs text-gray-400 truncate">{f.note}</p>}
+                      <p className="text-sm text-[#44475B] font-mono truncate">{f.value}</p>
+                      {f.note && <p className="text-xs text-[#A1A3AD] truncate">{f.note}</p>}
                     </div>
-                    <span className="text-xs text-gray-500 w-20">{RANK_LABELS[f.sourceRank] ?? f.sourceRank}</span>
+                    <span className="text-xs text-[#7C7E8C] w-20">{RANK_LABELS[f.sourceRank] ?? f.sourceRank}</span>
                     <button
                       onClick={() => toggleFilter(f.id, f.isActive)}
                       className={`w-16 text-xs px-2 py-1 rounded-full font-medium transition-colors ${
-                        f.isActive ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                        f.isActive ? "bg-green-100 text-[#04B488] hover:bg-green-200" : "bg-[#F8F8F8] text-[#7C7E8C] hover:bg-gray-200"
                       }`}
                     >
                       {f.isActive ? "On" : "Off"}
@@ -626,36 +626,36 @@ export default function SettingsPage() {
       {tab === "audit" && (
         <>
           {logsLoading ? (
-            <div className="flex flex-col gap-2">{[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
+            <div className="flex flex-col gap-2">{[...Array(5)].map((_, i) => <div key={i} className="h-12 bg-[#F8F8F8] rounded-lg animate-pulse" />)}</div>
           ) : logs.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
-              <p className="text-sm text-gray-400">No reconciliation runs yet.</p>
+            <div className="bg-white rounded-lg border border-[#E9E9EB]  p-12 text-center">
+              <p className="text-sm text-[#A1A3AD]">No reconciliation runs yet.</p>
               <p className="text-xs text-gray-300 mt-1">Use POST /api/gmail/reconcile with a statement email ID to reconcile.</p>
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-lg border border-[#E9E9EB]  overflow-hidden">
               <div className="px-5 py-3 border-b border-gray-50 flex gap-4">
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide w-24">Date</span>
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide flex-1">Merchant</span>
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide w-24 text-right">Amount</span>
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide w-20">Status</span>
+                <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide w-24">Date</span>
+                <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide flex-1">Merchant</span>
+                <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide w-24 text-right">Amount</span>
+                <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide w-20">Status</span>
               </div>
               <div className="divide-y divide-gray-50">
                 {logs.map((log) => (
                   <div key={log.id} className="px-5 py-2.5 flex items-center gap-4">
-                    <span className="text-xs text-gray-500 w-24 whitespace-nowrap">
+                    <span className="text-xs text-[#7C7E8C] w-24 whitespace-nowrap">
                       {new Date(log.statementDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-gray-900 truncate">{log.statementMerchant}</p>
+                      <p className="text-sm text-[#44475B] truncate">{log.statementMerchant}</p>
                       {log.mismatchDetails && (
                         <p className="text-xs text-amber-600 truncate">{log.mismatchDetails}</p>
                       )}
                     </div>
-                    <span className="text-sm font-medium text-gray-900 w-24 text-right">
+                    <span className="text-sm font-medium text-[#44475B] w-24 text-right">
                       ₹{log.statementAmount.toLocaleString("en-IN")}
                     </span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium w-20 text-center ${STATUS_COLOURS[log.status] ?? "bg-gray-100 text-gray-600"}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium w-20 text-center ${STATUS_COLOURS[log.status] ?? "bg-[#F8F8F8] text-[#7C7E8C]"}`}>
                       {log.status}
                     </span>
                   </div>
@@ -669,12 +669,12 @@ export default function SettingsPage() {
       {/* ── Statement Passwords Tab ── */}
       {tab === "passwords" && (
         <div>
-          <h2 className="text-sm font-semibold text-gray-700 mb-1">Statement Passwords</h2>
-          <p className="text-sm text-gray-500 mb-6">
+          <h2 className="text-sm font-semibold text-[#44475B] mb-1">Statement Passwords</h2>
+          <p className="text-sm text-[#7C7E8C] mb-6">
             Some bank statements arrive as password-protected PDFs. Enter the password for each sender so Financial Manager can read them.
           </p>
 
-          {pwLoading && <p className="text-sm text-gray-400">Loading…</p>}
+          {pwLoading && <p className="text-sm text-[#A1A3AD]">Loading…</p>}
 
           {passwords && (
             <>
@@ -685,20 +685,20 @@ export default function SettingsPage() {
                   </h3>
                   <div className="flex flex-col gap-2">
                     {passwords.pending.map((domain) => (
-                      <div key={domain} className="flex items-center gap-3 p-3 bg-orange-50 border border-orange-200 rounded-xl">
-                        <span className="flex-1 text-sm font-medium text-gray-700 font-mono">{domain}</span>
+                      <div key={domain} className="flex items-center gap-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                        <span className="flex-1 text-sm font-medium text-[#44475B] font-mono">{domain}</span>
                         <input
                           type="password"
                           placeholder="Enter password"
                           value={newPassword[domain] ?? ""}
                           onChange={(e) => setNewPassword((prev) => ({ ...prev, [domain]: e.target.value }))}
                           onKeyDown={(e) => e.key === "Enter" && void handleSavePassword(domain)}
-                          className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+                          className="border border-[#E9E9EB] rounded-lg px-3 py-1.5 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-[#04B488]"
                         />
                         <button
                           onClick={() => void handleSavePassword(domain)}
                           disabled={savingPw[domain] || !newPassword[domain]}
-                          className="px-4 py-1.5 bg-[#5b7cfa] text-white text-sm rounded-xl hover:bg-[#4a6be8] disabled:opacity-50 transition-colors"
+                          className="px-4 py-1.5 bg-[#04B488] text-white text-sm rounded-lg hover:bg-[#03a07a] disabled:opacity-50 transition-colors"
                         >
                           {savingPw[domain] ? "Saving…" : "Save"}
                         </button>
@@ -709,15 +709,15 @@ export default function SettingsPage() {
               )}
 
               {passwords.stored.length > 0 && (
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="bg-white rounded-lg border border-[#E9E9EB]  overflow-hidden">
                   <div className="px-5 py-3 border-b border-gray-50">
-                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Stored passwords</span>
+                    <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide">Stored passwords</span>
                   </div>
                   <div className="divide-y divide-gray-50">
                     {passwords.stored.map((entry) => (
                       <div key={entry.senderDomain} className="px-5 py-2.5 flex items-center gap-4">
-                        <span className="flex-1 text-sm text-gray-900 font-mono">{entry.senderDomain}</span>
-                        <span className="text-xs text-gray-400">
+                        <span className="flex-1 text-sm text-[#44475B] font-mono">{entry.senderDomain}</span>
+                        <span className="text-xs text-[#A1A3AD]">
                           {new Date(entry.updatedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                         </span>
                         <button
@@ -733,8 +733,8 @@ export default function SettingsPage() {
               )}
 
               {passwords.pending.length === 0 && passwords.stored.length === 0 && (
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center">
-                  <p className="text-sm text-gray-400">No encrypted statements found yet.</p>
+                <div className="bg-white rounded-lg border border-[#E9E9EB]  p-12 text-center">
+                  <p className="text-sm text-[#A1A3AD]">No encrypted statements found yet.</p>
                   <p className="text-xs text-gray-300 mt-1">Passwords will appear here after a Gmail sync encounters a protected PDF.</p>
                 </div>
               )}
@@ -746,8 +746,8 @@ export default function SettingsPage() {
       {/* ── Parse Logs Tab ── */}
       {tab === "parse-logs" && (
         <div>
-          <h2 className="text-sm font-semibold text-gray-700 mb-1">Parse Logs</h2>
-          <p className="text-sm text-gray-500 mb-4">
+          <h2 className="text-sm font-semibold text-[#44475B] mb-1">Parse Logs</h2>
+          <p className="text-sm text-[#7C7E8C] mb-4">
             Every email that entered the parsing pipeline. Use this to debug missing transactions. Logs are kept for 30 days.
           </p>
 
@@ -755,7 +755,7 @@ export default function SettingsPage() {
             <select
               value={parseOutcomeFilter}
               onChange={(e) => setParseOutcomeFilter(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+              className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             >
               <option value="">All outcomes</option>
               <option value="inserted">Inserted</option>
@@ -777,20 +777,20 @@ export default function SettingsPage() {
               placeholder="Filter by domain…"
               value={parseDomainFilter}
               onChange={(e) => setParseDomainFilter(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa] w-48"
+              className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488] w-48"
             />
           </div>
 
           {parseLogsLoading ? (
-            <div className="flex flex-col gap-2">{[...Array(5)].map((_, i) => <div key={i} className="h-10 bg-gray-100 rounded-xl animate-pulse" />)}</div>
+            <div className="flex flex-col gap-2">{[...Array(5)].map((_, i) => <div key={i} className="h-10 bg-[#F8F8F8] rounded-lg animate-pulse" />)}</div>
           ) : (
             <>
-              <p className="text-xs text-gray-400 mb-2">{parseLogsTotal} entries</p>
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+              <p className="text-xs text-[#A1A3AD] mb-2">{parseLogsTotal} entries</p>
+              <div className="bg-white rounded-lg border border-[#E9E9EB]  overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="text-xs text-gray-400 uppercase tracking-wide border-b border-gray-100">
+                      <tr className="text-xs text-[#A1A3AD] uppercase tracking-wide border-b border-[#E9E9EB]">
                         <th className="text-left px-5 py-3">Date</th>
                         <th className="text-left px-5 py-3">Domain</th>
                         <th className="text-left px-5 py-3">Outcome</th>
@@ -803,18 +803,18 @@ export default function SettingsPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-50">
                       {parseLogs.map((log) => (
-                        <tr key={log.id} className="hover:bg-gray-50">
-                          <td className="px-5 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+                        <tr key={log.id} className="hover:bg-[#F8F8F8]">
+                          <td className="px-5 py-2.5 text-xs text-[#7C7E8C] whitespace-nowrap">
                             {new Date(log.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                           </td>
-                          <td className="px-5 py-2.5 text-sm text-gray-700">{log.senderDomain}</td>
+                          <td className="px-5 py-2.5 text-sm text-[#44475B]">{log.senderDomain}</td>
                           <td className="px-5 py-2.5">
                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${outcomeColor(log.outcome)}`}>
                               {log.outcome}
                             </span>
                           </td>
-                          <td className="px-5 py-2.5 text-sm text-gray-700">{log.parsedMerchant ?? "—"}</td>
-                          <td className="px-5 py-2.5 text-sm text-right text-gray-700">
+                          <td className="px-5 py-2.5 text-sm text-[#44475B]">{log.parsedMerchant ?? "—"}</td>
+                          <td className="px-5 py-2.5 text-sm text-right text-[#44475B]">
                             {log.parsedAmount != null ? `₹${log.parsedAmount}` : "—"}
                           </td>
                           <td className="px-3 py-2.5 text-center">
@@ -829,7 +829,7 @@ export default function SettingsPage() {
                               href={`https://mail.google.com/mail/u/0/#all/${log.gmailMsgId}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-[#5b7cfa] hover:underline text-xs"
+                              className="text-[#04B488] hover:underline text-xs"
                             >
                               View ↗
                             </a>
@@ -839,7 +839,7 @@ export default function SettingsPage() {
                               <button
                                 onClick={() => void handleReprocess(log.id)}
                                 disabled={reprocessingId === log.id}
-                                className="text-xs px-2 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                                className="text-xs px-2 py-1 border border-[#E9E9EB] rounded-lg hover:bg-[#F8F8F8] disabled:opacity-50 transition-colors"
                               >
                                 {reprocessingId === log.id ? "…" : "Reprocess"}
                               </button>
@@ -857,17 +857,17 @@ export default function SettingsPage() {
                   <button
                     disabled={parseLogsPage <= 1}
                     onClick={() => void loadParseLogs(parseLogsPage - 1)}
-                    className="text-sm text-[#5b7cfa] disabled:text-gray-300"
+                    className="text-sm text-[#04B488] disabled:text-gray-300"
                   >
                     ← Previous
                   </button>
-                  <span className="text-sm text-gray-500">
+                  <span className="text-sm text-[#7C7E8C]">
                     Page {parseLogsPage} of {Math.ceil(parseLogsTotal / 50)}
                   </span>
                   <button
                     disabled={parseLogsPage >= Math.ceil(parseLogsTotal / 50)}
                     onClick={() => void loadParseLogs(parseLogsPage + 1)}
-                    className="text-sm text-[#5b7cfa] disabled:text-gray-300"
+                    className="text-sm text-[#04B488] disabled:text-gray-300"
                   >
                     Next →
                   </button>
@@ -875,8 +875,8 @@ export default function SettingsPage() {
               )}
 
               {parseLogs.length === 0 && (
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-12 text-center mt-2">
-                  <p className="text-sm text-gray-400">No parse logs found.</p>
+                <div className="bg-white rounded-lg border border-[#E9E9EB]  p-12 text-center mt-2">
+                  <p className="text-sm text-[#A1A3AD]">No parse logs found.</p>
                 </div>
               )}
             </>
@@ -885,12 +885,12 @@ export default function SettingsPage() {
       )}
 
       {/* Gmail Sync */}
-      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">Gmail Sync</h3>
+      <div className="mt-8 bg-white rounded-lg border border-[#E9E9EB]  p-5">
+        <h3 className="text-sm font-semibold text-[#44475B] mb-2">Gmail Sync</h3>
         {gmailSyncedAt ? (
-          <p className="text-sm text-gray-500 mb-3">
+          <p className="text-sm text-[#7C7E8C] mb-3">
             Last synced:{" "}
-            <span className="text-gray-700 font-medium">
+            <span className="text-[#44475B] font-medium">
               {new Date(gmailSyncedAt).toLocaleString("en-IN", {
                 day: "numeric", month: "short", year: "numeric",
                 hour: "2-digit", minute: "2-digit",
@@ -898,78 +898,78 @@ export default function SettingsPage() {
             </span>
           </p>
         ) : (
-          <p className="text-sm text-gray-400 mb-3">No sync completed yet.</p>
+          <p className="text-sm text-[#A1A3AD] mb-3">No sync completed yet.</p>
         )}
         <button
           onClick={handleSyncNow}
           disabled={syncing}
-          className="px-4 py-2 text-sm bg-[#5b7cfa] text-white rounded-lg hover:bg-[#4a6be8] disabled:opacity-50 transition-colors"
+          className="px-4 py-2 text-sm bg-[#04B488] text-white rounded-lg hover:bg-[#03a07a] disabled:opacity-50 transition-colors"
         >
           {syncing ? "Starting…" : "Sync now"}
         </button>
-        {syncMessage && <p className="text-xs text-gray-500 mt-2">{syncMessage}</p>}
+        {syncMessage && <p className="text-xs text-[#7C7E8C] mt-2">{syncMessage}</p>}
       </div>
 
       {/* Gmail Query Keywords */}
-      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-1">Gmail Query Keywords</h3>
-        <p className="text-sm text-gray-500 mb-4">
+      <div className="mt-8 bg-white rounded-lg border border-[#E9E9EB]  p-5">
+        <h3 className="text-sm font-semibold text-[#44475B] mb-1">Gmail Query Keywords</h3>
+        <p className="text-sm text-[#7C7E8C] mb-4">
           Keywords used to build the Gmail search query. Emails matching any keyword are fetched for processing. Changes take effect on the next sync.
         </p>
 
         {/* Add keyword form */}
         <div className="flex flex-wrap gap-2 items-end mb-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Type</label>
+            <label className="block text-xs text-[#7C7E8C] mb-1">Type</label>
             <select
               value={newKwType}
               onChange={(e) => setNewKwType(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+              className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             >
               <option value="from">From (sender)</option>
               <option value="subject">Subject keyword</option>
             </select>
           </div>
           <div className="flex-1 min-w-[160px]">
-            <label className="block text-xs text-gray-500 mb-1">Value</label>
+            <label className="block text-xs text-[#7C7E8C] mb-1">Value</label>
             <input
               type="text"
               placeholder="e.g. swiggy or ₹"
               value={newKwValue}
               onChange={(e) => setNewKwValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleAddKeyword()}
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+              className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             />
           </div>
           <button
             onClick={() => void handleAddKeyword()}
             disabled={addingKw || !newKwValue.trim()}
-            className="px-4 py-2 bg-[#5b7cfa] text-white rounded-xl text-sm font-medium hover:bg-[#4a6be8] disabled:opacity-60 transition-colors"
+            className="px-4 py-2 bg-[#04B488] text-white rounded-lg text-sm font-medium hover:bg-[#03a07a] disabled:opacity-60 transition-colors"
           >
             {addingKw ? "Adding…" : "Add"}
           </button>
         </div>
 
         {gmailKeywordsLoading ? (
-          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-[#F8F8F8] rounded-lg animate-pulse" />)}</div>
         ) : (
-          <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+          <div className="divide-y divide-gray-50 border border-[#E9E9EB] rounded-lg overflow-hidden">
             {["from", "subject"].map((kwType) => {
               const group = gmailKeywords.filter((k) => k.type === kwType);
               if (group.length === 0) return null;
               return (
                 <div key={kwType}>
-                  <div className="px-4 py-2 bg-gray-50">
-                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{kwType === "from" ? "From (sender)" : "Subject keyword"}</span>
+                  <div className="px-4 py-2 bg-[#F8F8F8]">
+                    <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide">{kwType === "from" ? "From (sender)" : "Subject keyword"}</span>
                   </div>
                   {group.map((kw) => (
                     <div key={kw.id} className={`px-4 py-2 flex items-center gap-3 ${!kw.isActive ? "opacity-50" : ""}`}>
                       <span className="flex-1 text-sm font-mono text-gray-800">{kw.value}</span>
-                      {kw.isDefault && <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">default</span>}
+                      {kw.isDefault && <span className="text-xs text-[#A1A3AD] bg-[#F8F8F8] px-2 py-0.5 rounded-full">default</span>}
                       <button
                         onClick={() => void toggleKeyword(kw.id, kw.isActive)}
                         className={`text-xs px-2 py-1 rounded-full font-medium transition-colors ${
-                          kw.isActive ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                          kw.isActive ? "bg-green-100 text-[#04B488] hover:bg-green-200" : "bg-[#F8F8F8] text-[#7C7E8C] hover:bg-gray-200"
                         }`}
                       >
                         {kw.isActive ? "On" : "Off"}
@@ -986,79 +986,79 @@ export default function SettingsPage() {
               );
             })}
             {gmailKeywords.length === 0 && (
-              <div className="px-4 py-6 text-center text-sm text-gray-400">No keywords configured.</div>
+              <div className="px-4 py-6 text-center text-sm text-[#A1A3AD]">No keywords configured.</div>
             )}
           </div>
         )}
       </div>
 
       {/* Exclusion Rules */}
-      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-1">Exclusion Rules</h3>
-        <p className="text-sm text-gray-500 mb-4">
+      <div className="mt-8 bg-white rounded-lg border border-[#E9E9EB]  p-5">
+        <h3 className="text-sm font-semibold text-[#44475B] mb-1">Exclusion Rules</h3>
+        <p className="text-sm text-[#7C7E8C] mb-4">
           Senders or domains excluded from processing entirely (e.g. LinkedIn, job boards). Emails from excluded senders skip the LLM.
         </p>
 
         {/* Add exclusion form */}
         <div className="flex flex-wrap gap-2 items-end mb-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Type</label>
+            <label className="block text-xs text-[#7C7E8C] mb-1">Type</label>
             <select
               value={newExType}
               onChange={(e) => setNewExType(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+              className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             >
               <option value="sender_domain">Sender Domain</option>
               <option value="sender_email">Sender Email</option>
             </select>
           </div>
           <div className="flex-1 min-w-[160px]">
-            <label className="block text-xs text-gray-500 mb-1">Value</label>
+            <label className="block text-xs text-[#7C7E8C] mb-1">Value</label>
             <input
               type="text"
               placeholder="e.g. linkedin.com"
               value={newExValue}
               onChange={(e) => setNewExValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleAddExclusion()}
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+              className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             />
           </div>
           <div className="flex-1 min-w-[120px]">
-            <label className="block text-xs text-gray-500 mb-1">Note (optional)</label>
+            <label className="block text-xs text-[#7C7E8C] mb-1">Note (optional)</label>
             <input
               type="text"
               placeholder="e.g. Job alerts"
               value={newExNote}
               onChange={(e) => setNewExNote(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+              className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             />
           </div>
           <button
             onClick={() => void handleAddExclusion()}
             disabled={addingEx || !newExValue.trim()}
-            className="px-4 py-2 bg-[#5b7cfa] text-white rounded-xl text-sm font-medium hover:bg-[#4a6be8] disabled:opacity-60 transition-colors"
+            className="px-4 py-2 bg-[#04B488] text-white rounded-lg text-sm font-medium hover:bg-[#03a07a] disabled:opacity-60 transition-colors"
           >
             {addingEx ? "Adding…" : "Add"}
           </button>
         </div>
 
         {exclusionLoading ? (
-          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-[#F8F8F8] rounded-lg animate-pulse" />)}</div>
         ) : (
-          <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+          <div className="divide-y divide-gray-50 border border-[#E9E9EB] rounded-lg overflow-hidden">
             {exclusionRules.length === 0 ? (
-              <div className="px-4 py-6 text-center text-sm text-gray-400">No exclusion rules configured.</div>
+              <div className="px-4 py-6 text-center text-sm text-[#A1A3AD]">No exclusion rules configured.</div>
             ) : exclusionRules.map((rule) => (
               <div key={rule.id} className={`px-4 py-2 flex items-center gap-3 ${!rule.isActive ? "opacity-50" : ""}`}>
-                <span className="text-xs text-gray-400 w-28 shrink-0">{rule.type.replace("_", " ")}</span>
+                <span className="text-xs text-[#A1A3AD] w-28 shrink-0">{rule.type.replace("_", " ")}</span>
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-mono text-gray-800">{rule.value}</span>
-                  {rule.note && <span className="text-xs text-gray-400 ml-2">{rule.note}</span>}
+                  {rule.note && <span className="text-xs text-[#A1A3AD] ml-2">{rule.note}</span>}
                 </div>
                 <button
                   onClick={() => void toggleExclusion(rule.id, rule.isActive)}
                   className={`text-xs px-2 py-1 rounded-full font-medium transition-colors ${
-                    rule.isActive ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                    rule.isActive ? "bg-green-100 text-[#04B488] hover:bg-green-200" : "bg-[#F8F8F8] text-[#7C7E8C] hover:bg-gray-200"
                   }`}
                 >
                   {rule.isActive ? "On" : "Off"}
@@ -1076,60 +1076,60 @@ export default function SettingsPage() {
       </div>
 
       {/* Sub-Category Taxonomy */}
-      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-1">Sub-Category Taxonomy</h3>
-        <p className="text-sm text-gray-500 mb-4">
+      <div className="mt-8 bg-white rounded-lg border border-[#E9E9EB]  p-5">
+        <h3 className="text-sm font-semibold text-[#44475B] mb-1">Sub-Category Taxonomy</h3>
+        <p className="text-sm text-[#7C7E8C] mb-4">
           Sub-categories used by Gemini to classify transactions. System entries cannot be deleted.
         </p>
 
         {/* Add sub-category form */}
         <div className="flex flex-wrap gap-2 items-end mb-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Category</label>
+            <label className="block text-xs text-[#7C7E8C] mb-1">Category</label>
             <select
               value={newSubcatCategory}
               onChange={(e) => setNewSubcatCategory(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+              className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             >
               {VALID_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="flex-1 min-w-[160px]">
-            <label className="block text-xs text-gray-500 mb-1">Sub-category</label>
+            <label className="block text-xs text-[#7C7E8C] mb-1">Sub-category</label>
             <input
               type="text"
               placeholder="e.g. food delivery"
               value={newSubcatValue}
               onChange={(e) => setNewSubcatValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleAddSubcat()}
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+              className="w-full px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             />
           </div>
           <button
             onClick={() => void handleAddSubcat()}
             disabled={addingSubcat || !newSubcatValue.trim()}
-            className="px-4 py-2 bg-[#5b7cfa] text-white rounded-xl text-sm font-medium hover:bg-[#4a6be8] disabled:opacity-60 transition-colors"
+            className="px-4 py-2 bg-[#04B488] text-white rounded-lg text-sm font-medium hover:bg-[#03a07a] disabled:opacity-60 transition-colors"
           >
             {addingSubcat ? "Adding…" : "Add"}
           </button>
         </div>
 
         {subcatLoading ? (
-          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-[#F8F8F8] rounded-lg animate-pulse" />)}</div>
         ) : (
-          <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+          <div className="divide-y divide-gray-50 border border-[#E9E9EB] rounded-lg overflow-hidden">
             {Object.keys(subcatByCategory).length === 0 ? (
-              <div className="px-4 py-6 text-center text-sm text-gray-400">No sub-categories configured.</div>
+              <div className="px-4 py-6 text-center text-sm text-[#A1A3AD]">No sub-categories configured.</div>
             ) : Object.entries(subcatByCategory).map(([category, entries]) => (
               <div key={category}>
-                <div className="px-4 py-2 bg-gray-50">
-                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{category}</span>
+                <div className="px-4 py-2 bg-[#F8F8F8]">
+                  <span className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide">{category}</span>
                 </div>
                 {entries.map((entry) => (
                   <div key={entry.id} className="px-4 py-2 flex items-center gap-3">
                     <span className="flex-1 text-sm text-gray-800">{entry.subCategory}</span>
                     {entry.addedBy === "system" ? (
-                      <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">system</span>
+                      <span className="text-xs text-[#A1A3AD] bg-[#F8F8F8] px-2 py-0.5 rounded-full">system</span>
                     ) : (
                       <button
                         onClick={() => void deleteSubcat(entry.id)}
@@ -1147,9 +1147,9 @@ export default function SettingsPage() {
       </div>
 
       {/* Retro Re-sync */}
-      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-1">Retro Re-sync</h3>
-        <p className="text-sm text-gray-500 mb-3">
+      <div className="mt-8 bg-white rounded-lg border border-[#E9E9EB]  p-5">
+        <h3 className="text-sm font-semibold text-[#44475B] mb-1">Retro Re-sync</h3>
+        <p className="text-sm text-[#7C7E8C] mb-3">
           Re-process historical emails with current filters and query keywords.
           Existing transactions are not duplicated.
         </p>
@@ -1157,7 +1157,7 @@ export default function SettingsPage() {
           <select
             value={retroPeriod}
             onChange={(e) => setRetroPeriod(e.target.value as RetroPeriod)}
-            className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            className="text-sm border border-[#E9E9EB] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#04B488]"
           >
             <option value="1m">Last 1 month</option>
             <option value="3m">Last 3 months</option>
@@ -1167,18 +1167,18 @@ export default function SettingsPage() {
           <button
             onClick={() => void handleRetroSync()}
             disabled={retroSyncing}
-            className="px-4 py-2 text-sm bg-[#5b7cfa] text-white rounded-lg hover:bg-[#4a6be8] disabled:opacity-50 transition-colors"
+            className="px-4 py-2 text-sm bg-[#04B488] text-white rounded-lg hover:bg-[#03a07a] disabled:opacity-50 transition-colors"
           >
             {retroSyncing ? "Starting…" : "Start Retro Re-sync"}
           </button>
         </div>
-        {retroMessage && <p className="text-xs text-gray-500 mt-2">{retroMessage}</p>}
+        {retroMessage && <p className="text-xs text-[#7C7E8C] mt-2">{retroMessage}</p>}
       </div>
 
       {/* Demo Data */}
-      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">Demo Data</h3>
-        <p className="text-sm text-gray-500 mb-3">
+      <div className="mt-8 bg-white rounded-lg border border-[#E9E9EB]  p-5">
+        <h3 className="text-sm font-semibold text-[#44475B] mb-2">Demo Data</h3>
+        <p className="text-sm text-[#7C7E8C] mb-3">
           Remove the sample transactions that were pre-loaded to demonstrate the app.
         </p>
         <button
@@ -1191,9 +1191,9 @@ export default function SettingsPage() {
       </div>
 
       {/* Clear All Data */}
-      <div className="mt-4 bg-white rounded-2xl border border-red-100 shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-red-700 mb-2">Danger Zone</h3>
-        <p className="text-sm text-gray-500 mb-3">
+      <div className="mt-4 bg-white rounded-lg border border-red-100  p-5">
+        <h3 className="text-sm font-semibold text-[#ED5533] mb-2">Danger Zone</h3>
+        <p className="text-sm text-[#7C7E8C] mb-3">
           Permanently delete all transactions, sync history, parse logs, and assets. Use this to start fresh. This cannot be undone.
         </p>
         <button
@@ -1207,8 +1207,8 @@ export default function SettingsPage() {
 
       {/* Dev-only advance sync */}
       {process.env.NODE_ENV === "development" && (
-        <div className="mt-8 p-4 border border-dashed border-gray-300 rounded-lg">
-          <p className="text-xs text-gray-500 font-mono mb-2">DEV ONLY</p>
+        <div className="mt-8 p-4 border border-dashed border-[#E9E9EB] rounded-lg">
+          <p className="text-xs text-[#7C7E8C] font-mono mb-2">DEV ONLY</p>
           <button
             onClick={async () => {
               const secret = process.env.NEXT_PUBLIC_CRON_SECRET ?? "";
