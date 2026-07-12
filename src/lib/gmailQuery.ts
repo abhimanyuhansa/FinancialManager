@@ -1,25 +1,30 @@
-export function buildGmailQuery(syncFromDate: Date): string {
-  const afterSeconds = Math.floor(syncFromDate.getTime() / 1000);
+import { prisma } from "@/lib/prisma";
 
-  const subjectKeywords = [
-    "statement", "transaction", "payment", "invoice", "receipt",
-    "order", "purchase", "refund", "debit", "credit", "debited",
-    "credited", "charged", "transferred", "OTP", "UPI", "NEFT",
-    "IMPS", "RTGS", "EMI", "mandate", "autopay", "subscription",
-  ];
+export async function buildGmailQueryFromDB(fromDate: Date): Promise<string> {
+  const keywords = await prisma.gmailQueryKeyword.findMany({ where: { isActive: true } });
+  const fromKws = keywords.filter((k) => k.type === "from").map((k) => k.value);
+  const subjKws = keywords.filter((k) => k.type === "subject").map((k) => k.value);
 
-  const fromKeywords = [
-    "bank", "pay", "card", "wallet", "finance", "money",
-    "credit", "noreply", "alerts", "notify", "notification",
-  ];
+  const afterSeconds = Math.floor(fromDate.getTime() / 1000);
 
-  const subjectClause = `subject:(${subjectKeywords.join(" OR ")})`;
-  const fromClause = `from:(${fromKeywords.join(" OR ")})`;
+  const fromPart = fromKws.length > 0 ? `from:(${fromKws.join(" OR ")})` : "";
+  const subjPart = subjKws.length > 0 ? `subject:(${subjKws.join(" OR ")})` : "";
+  const keywordPart = [fromPart, subjPart].filter(Boolean).join(" OR ");
 
   return [
     `after:${afterSeconds}`,
+    `in:inbox`,
     `-category:promotions`,
+    `-category:social`,
     `-category:forums`,
-    `(${subjectClause} OR ${fromClause})`,
-  ].join(" ");
+    `(${keywordPart})`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+// Keep old function as fallback for any remaining callers during migration
+export function buildGmailQuery(fromDate: Date): string {
+  const afterSeconds = Math.floor(fromDate.getTime() / 1000);
+  return `after:${afterSeconds} in:inbox -category:promotions -category:social -category:forums`;
 }

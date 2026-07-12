@@ -8,7 +8,7 @@ import {
   buildScanFromDate,
   LookbackPeriod,
 } from "@/lib/gmail";
-import { buildGmailQuery } from "@/lib/gmailQuery";
+import { buildGmailQueryFromDB } from "@/lib/gmailQuery";
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -26,7 +26,7 @@ export async function POST(req: Request) {
   }
 
   const fromDate = buildScanFromDate(period);
-  const gmailQuery = buildGmailQuery(fromDate);
+  const gmailQuery = await buildGmailQueryFromDB(fromDate);
 
   // Paginate through ALL pages — no longer limited to 500
   let allMessages: Awaited<ReturnType<typeof fetchMessageMetadataList>>["messages"] = [];
