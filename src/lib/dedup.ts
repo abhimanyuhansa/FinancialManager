@@ -94,6 +94,8 @@ export type UpsertTransactionInput = {
   sourceRank: number;
   confidence?: number;
   needsReview?: boolean;
+  subCategory?: string | null;
+  lineItems?: unknown;
 };
 
 export type UpsertTransactionResult = { action: "inserted" | "upgraded" | "skipped"; id?: string };
@@ -102,7 +104,7 @@ export async function upsertTransactionV2(
   prismaClient: PrismaClient,
   input: UpsertTransactionInput
 ): Promise<UpsertTransactionResult> {
-  const { userId, gmailMsgId, date, merchant, amount, type, currency, category, source, sourceRank, needsReview } = input;
+  const { userId, gmailMsgId, date, merchant, amount, type, currency, category, source, sourceRank, needsReview, subCategory, lineItems } = input;
 
   const existing = await prismaClient.transaction.findUnique({
     where: { userId_gmailMsgId: { userId, gmailMsgId } },
@@ -146,6 +148,8 @@ export async function upsertTransactionV2(
       source,
       sourceRank,
       needsReview: needsReview ?? false,
+      subCategory: subCategory ?? null,
+      lineItems: lineItems ?? undefined,
     },
   });
   console.log(`[dedup] inserted: merchant="${merchant}" amount=${amount}`);

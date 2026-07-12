@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getGmailToken, fetchMessageIdPage, fetchFullMessageBatch, fetchPdfAttachment } from "@/lib/gmail";
 import { parseEmailBatch, type BatchInput } from "@/lib/gemini";
 import { upsertTransactionV2 } from "@/lib/dedup";
+import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
 import { checkGeminiRateLimit, incrementGeminiUsage } from "@/lib/geminiRateLimit";
 
 const CHUNK_SIZE = 50;
@@ -158,15 +159,20 @@ async function advanceJob(job: {
         continue;
       }
 
-      let category = result.category!;
-      const merchantKey = result.merchant!.toLowerCase().trim();
-      const overrideCategory = merchantKey; // will be replaced by MerchantMaster in Task 5
+      const { category: resolvedCategory, subCategory: resolvedSubCategory } =
+        await lookupAndUpsertMerchant(
+          result.merchant!,
+          result.category!,
+          result.subCategory ?? null,
+          result.confidence ?? 0
+        );
 
       const upsertResult = await upsertTransactionV2(prisma, {
         userId: job.userId, gmailMsgId: email.msgId, date: new Date(result.date!),
         merchant: result.merchant!, amount: result.amount!, type: result.type!,
-        currency: result.currency!, category, source: "gmail",
+        currency: result.currency!, category: resolvedCategory, source: "gmail",
         sourceRank: 1, confidence: result.confidence, needsReview: result.needsReview,
+        subCategory: resolvedSubCategory ?? undefined,
       });
 
       const outcome = upsertResult.action === "inserted" ? "inserted"
