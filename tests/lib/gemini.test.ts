@@ -233,7 +233,7 @@ describe("parseEmailBatch", () => {
   });
 
   it("returns parse_failed when API call fails", async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 429 });
+    mockFetch.mockResolvedValue({ ok: false, status: 429, text: async () => "Too Many Requests" });
 
     const inputs = [
       { emailIndex: 0, body: "Test...", senderName: "test", fallbackDate: "2026-07-08" },
