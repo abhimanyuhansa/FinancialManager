@@ -105,6 +105,7 @@ export function buildScanFromDate(period: LookbackPeriod, now: Date = new Date()
 export type FullMessage = {
   id: string;
   body: string;
+  subject: string;
   senderName: string;
   senderEmail: string;
   senderDomain: string;
@@ -152,6 +153,7 @@ export function parseBatchResponse(responseBody: string, boundary: string): Full
     const headers = msg.payload?.headers ?? [];
     const get = (name: string) => headers.find((h) => h.name === name)?.value ?? "";
     const senderRaw = get("From");
+    const subject = get("Subject");
     const senderName = senderRaw.replace(/<[^>]+>/, "").trim() || senderRaw;
     const emailMatch = senderRaw.match(/<([^>]+)>/);
     const senderEmail = emailMatch ? emailMatch[1] : senderRaw.replace(/\s+/g, "");
@@ -174,7 +176,7 @@ export function parseBatchResponse(responseBody: string, boundary: string): Full
     const hasPdfAttachment = pdfParts.length > 0;
     const pdfAttachmentId = hasPdfAttachment ? pdfParts[0].body!.attachmentId! : null;
 
-    results.push({ id: msg.id, body, senderName, senderEmail, senderDomain, receivedDate, hasPdfAttachment, pdfAttachmentId });
+    results.push({ id: msg.id, body, subject, senderName, senderEmail, senderDomain, receivedDate, hasPdfAttachment, pdfAttachmentId });
   }
 
   return results;

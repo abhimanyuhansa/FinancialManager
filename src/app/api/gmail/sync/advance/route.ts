@@ -6,9 +6,24 @@ import { parseEmailBatch, type BatchInput } from "@/lib/gemini";
 import { upsertTransactionV2 } from "@/lib/dedup";
 import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
 import { checkGeminiRateLimit, incrementGeminiUsage } from "@/lib/geminiRateLimit";
+import { parseEmailStatic } from "@/lib/staticParser";
+import { autoLearnVpa, resolveVpa } from "@/lib/vpaLookup";
 
 const CHUNK_SIZE = 25;
 const BODY_LIMIT = 1500;
+
+function buildLogBase(
+  email: { msgId: string; senderDomain: string; receivedDate: string },
+  job: { id: string; userId: string }
+) {
+  return {
+    userId: job.userId,
+    syncJobId: job.id,
+    gmailMsgId: email.msgId,
+    senderDomain: email.senderDomain,
+    emailDate: new Date(email.receivedDate),
+  };
+}
 
 async function advanceJob(job: {
   id: string;
@@ -90,8 +105,10 @@ async function advanceJob(job: {
     msgId: string;
     body: string;
     senderName: string;
+    senderEmail: string;
     senderDomain: string;
     receivedDate: string;
+    subject: string;
     rowId: string;
   };
 
@@ -121,8 +138,10 @@ async function advanceJob(job: {
       msgId: gmailMsgId,
       body: msg.body.slice(0, BODY_LIMIT),
       senderName: msg.senderName,
+      senderEmail: msg.senderEmail,
       senderDomain: msg.senderDomain,
       receivedDate: msg.receivedDate,
+      subject: msg.subject ?? "",
       rowId,
     });
   }
@@ -134,64 +153,160 @@ async function advanceJob(job: {
   let newTransactions = 0;
 
   if (toProcess.length > 0) {
-    const rateCheck = await checkGeminiRateLimit();
-    if (!rateCheck.allowed) {
-      return { phase: "rate_limited", newTransactions: 0, source: "gemini" };
-    }
+    // ── Static parser pass ──────────────────────────────────────────────────
+    const geminiQueue: typeof toProcess = [];
 
-    const batchInputs: BatchInput[] = toProcess.map((e, idx) => ({
-      emailIndex: idx,
-      body: e.body,
-      senderName: e.senderName,
-      fallbackDate: e.receivedDate,
-    }));
+    for (const email of toProcess) {
+      const staticResult = parseEmailStatic({
+        body: email.body,
+        senderName: email.senderName,
+        senderDomain: email.senderDomain,
+        senderEmail: email.senderEmail ?? "",
+        subject: email.subject ?? "",
+        receivedDate: email.receivedDate,
+      });
 
-    const results = await parseEmailBatch(batchInputs, apiKey);
-    await incrementGeminiUsage();
-
-    for (const result of results) {
-      const email = toProcess[result.emailIndex];
-      if (!email) continue;
-
-      const logBase = {
-        userId: job.userId, syncJobId: job.id, gmailMsgId: email.msgId,
-        senderDomain: email.senderDomain, emailDate: new Date(email.receivedDate),
-        bodyLengthRaw: result.bodyLengthRaw, bodyLengthSent: result.bodyLengthSent,
-        wasTruncated: result.wasTruncated, batchSize: toProcess.length,
-        ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
-      };
-
-      if (result.outcome !== "parsed" || !result.transactions.length) {
-        await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome } });
+      if (staticResult.outcome === "not_transaction") {
+        await prisma.parseLog.create({
+          data: {
+            ...buildLogBase(email, job),
+            outcome: "not_transaction",
+            bodyLengthRaw: email.body.length,
+            bodyLengthSent: 0,
+            wasTruncated: false,
+            batchSize: 1,
+          },
+        });
         continue;
       }
 
-      for (const tx of result.transactions) {
-        const { category: resolvedCategory, subCategory: resolvedSubCategory } =
-          await lookupAndUpsertMerchant(
-            tx.merchant,
-            tx.category,
-            tx.subCategory ?? null,
-            tx.confidence ?? 0
-          );
+      if (staticResult.outcome === "parsed") {
+        for (const tx of staticResult.transactions) {
+          // Auto-learn VPA display name from bank alert
+          if (tx.vpa && tx.vpaMerchantRaw) {
+            await autoLearnVpa(job.userId, tx.vpa, tx.vpaMerchantRaw, tx.category, tx.subCategory);
+          }
 
-        const upsertResult = await upsertTransactionV2(prisma, {
-          userId: job.userId, gmailMsgId: email.msgId, date: new Date(tx.date),
-          merchant: tx.merchant, amount: tx.amount, type: tx.type,
-          currency: tx.currency, category: resolvedCategory, source: "gmail",
-          sourceRank: 1, confidence: tx.confidence, needsReview: tx.needsReview,
-          subCategory: resolvedSubCategory ?? undefined,
-          lineItems: tx.lineItems ?? undefined,
-        });
+          // If merchant unknown, try VPA lookup for previously seen addresses
+          let resolvedMerchant = tx.merchant;
+          let resolvedCategory = tx.category;
+          let resolvedSubCategory = tx.subCategory;
+          if (tx.merchant === "Unknown" && tx.vpa) {
+            const known = await resolveVpa(job.userId, tx.vpa);
+            if (known) {
+              resolvedMerchant = known.merchantName;
+              resolvedCategory = known.category;
+              resolvedSubCategory = known.subCategory;
+            }
+          }
 
-        const outcome = upsertResult.action === "inserted" ? "inserted"
-          : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
-        if (outcome === "inserted") newTransactions++;
+          const { category: masterCategory, subCategory: masterSubCategory } =
+            await lookupAndUpsertMerchant(resolvedMerchant, resolvedCategory, resolvedSubCategory, tx.confidence);
 
-        await prisma.parseLog.create({
-          data: { ...logBase, outcome, geminiConfidence: tx.confidence,
-            parsedMerchant: tx.merchant, parsedAmount: tx.amount, transactionId: upsertResult.id },
-        });
+          const upsertResult = await upsertTransactionV2(prisma, {
+            userId: job.userId,
+            gmailMsgId: email.msgId,
+            date: new Date(tx.date),
+            merchant: resolvedMerchant,
+            amount: tx.amount,
+            type: tx.type,
+            currency: tx.currency,
+            category: masterCategory,
+            source: "gmail",
+            sourceRank: 1,
+            confidence: tx.confidence,
+            needsReview: tx.needsReview || resolvedMerchant === "Unknown",
+            subCategory: masterSubCategory ?? undefined,
+            lineItems: undefined,
+            // Store VPA in tag field so the user can identify it later from TransactionPanel
+            tag: tx.vpa && resolvedMerchant === "Unknown" ? `vpa:${tx.vpa}` : undefined,
+          });
+
+          const outcome = upsertResult.action === "inserted" ? "inserted"
+            : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
+          if (outcome === "inserted") newTransactions++;
+
+          await prisma.parseLog.create({
+            data: {
+              ...buildLogBase(email, job),
+              outcome,
+              bodyLengthRaw: email.body.length,
+              bodyLengthSent: email.body.length,
+              wasTruncated: false,
+              batchSize: 1,
+              geminiConfidence: tx.confidence,
+              parsedMerchant: resolvedMerchant,
+              parsedAmount: tx.amount,
+              transactionId: upsertResult.id,
+            },
+          });
+        }
+        continue;
+      }
+
+      // outcome === "insufficient_data" → queue for Gemini
+      geminiQueue.push(email);
+    }
+
+    // ── Gemini fallback (only for insufficient_data emails) ─────────────────
+    if (geminiQueue.length > 0) {
+      const rateCheck = await checkGeminiRateLimit();
+      if (!rateCheck.allowed) {
+        return { phase: "rate_limited", newTransactions: 0, source: "gemini" };
+      }
+
+      const batchInputs: BatchInput[] = geminiQueue.map((e, idx) => ({
+        emailIndex: idx,
+        body: e.body,
+        senderName: e.senderName,
+        fallbackDate: e.receivedDate,
+      }));
+
+      const results = await parseEmailBatch(batchInputs, apiKey);
+      await incrementGeminiUsage();
+
+      for (const result of results) {
+        const email = geminiQueue[result.emailIndex];
+        if (!email) continue;
+
+        const logBase = {
+          ...buildLogBase(email, job),
+          bodyLengthRaw: result.bodyLengthRaw,
+          bodyLengthSent: result.bodyLengthSent,
+          wasTruncated: result.wasTruncated,
+          batchSize: geminiQueue.length,
+          ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
+        };
+
+        if (result.outcome !== "parsed" || !result.transactions.length) {
+          await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome } });
+          continue;
+        }
+
+        for (const tx of result.transactions) {
+          const { category: resolvedCategory, subCategory: resolvedSubCategory } =
+            await lookupAndUpsertMerchant(tx.merchant, tx.category, tx.subCategory ?? null, tx.confidence ?? 0);
+
+          const upsertResult = await upsertTransactionV2(prisma, {
+            userId: job.userId, gmailMsgId: email.msgId, date: new Date(tx.date),
+            merchant: tx.merchant, amount: tx.amount, type: tx.type,
+            currency: tx.currency, category: resolvedCategory, source: "gmail",
+            sourceRank: 1, confidence: tx.confidence, needsReview: tx.needsReview,
+            subCategory: resolvedSubCategory ?? undefined,
+            lineItems: tx.lineItems ?? undefined,
+          });
+
+          const outcome = upsertResult.action === "inserted" ? "inserted"
+            : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
+          if (outcome === "inserted") newTransactions++;
+
+          await prisma.parseLog.create({
+            data: {
+              ...logBase, outcome, geminiConfidence: tx.confidence,
+              parsedMerchant: tx.merchant, parsedAmount: tx.amount, transactionId: upsertResult.id,
+            },
+          });
+        }
       }
     }
   }
