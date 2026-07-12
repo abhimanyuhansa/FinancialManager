@@ -170,8 +170,14 @@ describe("parseEmailBatch", () => {
 
   it("returns parsed results for valid emails", async () => {
     mockFetch.mockResolvedValue(makeGeminiResponse([
-      { emailIndex: 0, merchant: "Swiggy", amount: 450, currency: "INR", date: "2026-07-08", type: "expense", category: "food", confidence: 0.95 },
-      { emailIndex: 1, merchant: "Zomato", amount: 320, currency: "INR", date: "2026-07-07", type: "expense", category: "food", confidence: 0.88 },
+      {
+        emailIndex: 0, isTransaction: true, outcome: "parsed",
+        transactions: [{ merchant: "Swiggy", amount: 450, currency: "INR", date: "2026-07-08", type: "expense", category: "food", subCategory: "food delivery", confidence: 0.95, needsReview: false, lineItems: null }],
+      },
+      {
+        emailIndex: 1, isTransaction: true, outcome: "parsed",
+        transactions: [{ merchant: "Zomato", amount: 320, currency: "INR", date: "2026-07-07", type: "expense", category: "food", subCategory: null, confidence: 0.88, needsReview: false, lineItems: null }],
+      },
     ]));
 
     const inputs = [
@@ -181,14 +187,18 @@ describe("parseEmailBatch", () => {
 
     const results = await parseEmailBatch(inputs, MOCK_API_KEY);
     expect(results).toHaveLength(2);
-    expect(results[0]).toMatchObject({ emailIndex: 0, merchant: "Swiggy", amount: 450, category: "food" });
-    expect(results[1]).toMatchObject({ emailIndex: 1, merchant: "Zomato", amount: 320 });
+    expect(results[0]).toMatchObject({ emailIndex: 0, outcome: "parsed", isTransaction: true });
+    expect(results[0].transactions[0]).toMatchObject({ merchant: "Swiggy", amount: 450, category: "food" });
+    expect(results[1].transactions[0]).toMatchObject({ merchant: "Zomato", amount: 320 });
   });
 
-  it("marks null-amount items as skipped_no_amount without affecting other items", async () => {
+  it("marks null-amount items as not_transaction without affecting other items", async () => {
     mockFetch.mockResolvedValue(makeGeminiResponse([
-      { emailIndex: 0, merchant: null, amount: null, currency: "INR", date: "2026-07-08", type: "expense", category: null, confidence: null },
-      { emailIndex: 1, merchant: "Amazon", amount: 999, currency: "INR", date: "2026-07-08", type: "expense", category: "shopping", confidence: 0.9 },
+      { emailIndex: 0, isTransaction: false, outcome: "not_transaction", transactions: [] },
+      {
+        emailIndex: 1, isTransaction: true, outcome: "parsed",
+        transactions: [{ merchant: "Amazon", amount: 999, currency: "INR", date: "2026-07-08", type: "expense", category: "shopping", subCategory: null, confidence: 0.9, needsReview: false, lineItems: null }],
+      },
     ]));
 
     const inputs = [
@@ -198,13 +208,17 @@ describe("parseEmailBatch", () => {
 
     const results = await parseEmailBatch(inputs, MOCK_API_KEY);
     expect(results).toHaveLength(2);
-    expect(results[0]).toMatchObject({ emailIndex: 0, outcome: "skipped_no_amount" });
-    expect(results[1]).toMatchObject({ emailIndex: 1, merchant: "Amazon", amount: 999 });
+    expect(results[0]).toMatchObject({ emailIndex: 0, outcome: "not_transaction" });
+    expect(results[1]).toMatchObject({ emailIndex: 1, outcome: "parsed" });
+    expect(results[1].transactions[0]).toMatchObject({ merchant: "Amazon", amount: 999 });
   });
 
-  it("returns skipped_gemini_null when Gemini omits an emailIndex from the response", async () => {
+  it("returns parse_failed when Gemini omits an emailIndex from the response", async () => {
     mockFetch.mockResolvedValue(makeGeminiResponse([
-      { emailIndex: 1, merchant: "Netflix", amount: 649, currency: "INR", date: "2026-07-08", type: "expense", category: "bills", confidence: 0.99 },
+      {
+        emailIndex: 1, isTransaction: true, outcome: "parsed",
+        transactions: [{ merchant: "Netflix", amount: 649, currency: "INR", date: "2026-07-08", type: "expense", category: "entertainment", subCategory: "streaming", confidence: 0.99, needsReview: false, lineItems: null }],
+      },
     ]));
 
     const inputs = [
@@ -214,11 +228,11 @@ describe("parseEmailBatch", () => {
 
     const results = await parseEmailBatch(inputs, MOCK_API_KEY);
     expect(results).toHaveLength(2);
-    expect(results.find(r => r.emailIndex === 0)).toMatchObject({ outcome: "skipped_gemini_null" });
-    expect(results.find(r => r.emailIndex === 1)).toMatchObject({ merchant: "Netflix" });
+    expect(results.find(r => r.emailIndex === 0)).toMatchObject({ outcome: "parse_failed" });
+    expect(results.find(r => r.emailIndex === 1)!.transactions[0]).toMatchObject({ merchant: "Netflix" });
   });
 
-  it("returns failed_gemini_error when API call fails", async () => {
+  it("returns parse_failed when API call fails", async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 429 });
 
     const inputs = [
@@ -227,13 +241,16 @@ describe("parseEmailBatch", () => {
 
     const results = await parseEmailBatch(inputs, MOCK_API_KEY);
     expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ emailIndex: 0, outcome: "failed_gemini_error" });
+    expect(results[0]).toMatchObject({ emailIndex: 0, outcome: "parse_failed" });
   });
 
   it("truncates body to 1500 chars and records wasTruncated", async () => {
     const longBody = "x".repeat(3000);
     mockFetch.mockResolvedValue(makeGeminiResponse([
-      { emailIndex: 0, merchant: "HDFC", amount: 5000, currency: "INR", date: "2026-07-08", type: "expense", category: "bills", confidence: 0.9 },
+      {
+        emailIndex: 0, isTransaction: true, outcome: "parsed",
+        transactions: [{ merchant: "HDFC", amount: 5000, currency: "INR", date: "2026-07-08", type: "expense", category: "finance", subCategory: null, confidence: 0.9, needsReview: false, lineItems: null }],
+      },
     ]));
 
     const inputs = [{ emailIndex: 0, body: longBody, senderName: "HDFC", fallbackDate: "2026-07-08" }];

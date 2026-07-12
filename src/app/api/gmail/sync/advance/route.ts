@@ -154,35 +154,38 @@ async function advanceJob(job: {
         wasTruncated: result.wasTruncated, batchSize: toProcess.length,
       };
 
-      if (result.outcome !== "parsed") {
+      if (result.outcome !== "parsed" || !result.transactions.length) {
         await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome } });
         continue;
       }
 
-      const { category: resolvedCategory, subCategory: resolvedSubCategory } =
-        await lookupAndUpsertMerchant(
-          result.merchant!,
-          result.category!,
-          result.subCategory ?? null,
-          result.confidence ?? 0
-        );
+      for (const tx of result.transactions) {
+        const { category: resolvedCategory, subCategory: resolvedSubCategory } =
+          await lookupAndUpsertMerchant(
+            tx.merchant,
+            tx.category,
+            tx.subCategory ?? null,
+            tx.confidence ?? 0
+          );
 
-      const upsertResult = await upsertTransactionV2(prisma, {
-        userId: job.userId, gmailMsgId: email.msgId, date: new Date(result.date!),
-        merchant: result.merchant!, amount: result.amount!, type: result.type!,
-        currency: result.currency!, category: resolvedCategory, source: "gmail",
-        sourceRank: 1, confidence: result.confidence, needsReview: result.needsReview,
-        subCategory: resolvedSubCategory ?? undefined,
-      });
+        const upsertResult = await upsertTransactionV2(prisma, {
+          userId: job.userId, gmailMsgId: email.msgId, date: new Date(tx.date),
+          merchant: tx.merchant, amount: tx.amount, type: tx.type,
+          currency: tx.currency, category: resolvedCategory, source: "gmail",
+          sourceRank: 1, confidence: tx.confidence, needsReview: tx.needsReview,
+          subCategory: resolvedSubCategory ?? undefined,
+          lineItems: tx.lineItems ?? undefined,
+        });
 
-      const outcome = upsertResult.action === "inserted" ? "inserted"
-        : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
-      if (outcome === "inserted") newTransactions++;
+        const outcome = upsertResult.action === "inserted" ? "inserted"
+          : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
+        if (outcome === "inserted") newTransactions++;
 
-      await prisma.parseLog.create({
-        data: { ...logBase, outcome, geminiConfidence: result.confidence,
-          parsedMerchant: result.merchant, parsedAmount: result.amount, transactionId: upsertResult.id },
-      });
+        await prisma.parseLog.create({
+          data: { ...logBase, outcome, geminiConfidence: tx.confidence,
+            parsedMerchant: tx.merchant, parsedAmount: tx.amount, transactionId: upsertResult.id },
+        });
+      }
     }
   }
 
