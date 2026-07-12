@@ -91,15 +91,15 @@ export function AppLayout({ children }: AppLayoutProps) {
   return (
     <div className="flex min-h-screen">
       {/* Desktop sidebar */}
-      <nav className="hidden md:flex flex-col gap-1 w-16 lg:w-52 shrink-0 p-3 bg-white border-r border-gray-100">
+      <nav className="hidden md:flex flex-col gap-1 w-16 lg:w-52 shrink-0 p-3 bg-white border-r border-[#E9E9EB]">
         <div className="flex items-center gap-3 px-3 py-4 mb-4">
-          <div className="w-8 h-8 rounded-lg bg-[#e8ecf8] flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-[#E9FAF3] flex items-center justify-center shrink-0">
             <svg
               width="14"
               height="14"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="#5b7cfa"
+              stroke="#04B488"
               strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -108,7 +108,7 @@ export function AppLayout({ children }: AppLayoutProps) {
               <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
             </svg>
           </div>
-          <span className="hidden lg:block font-semibold text-gray-900 text-sm tracking-tight">
+          <span className="hidden lg:block font-semibold text-[#44475B] text-sm tracking-tight">
             Financial Manager
           </span>
         </div>
@@ -124,7 +124,7 @@ export function AppLayout({ children }: AppLayoutProps) {
       </div>
 
       {/* Mobile bottom tab bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 flex justify-around px-2 py-2 z-50">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#E9E9EB] flex justify-around px-2 py-2 z-50">
         {navItems.map((item) => (
           <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} />
         ))}

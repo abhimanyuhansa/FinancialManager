@@ -19,8 +19,8 @@ export function StepPicker({ value, onChange, onConfirm, loading }: StepPickerPr
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h2 className="text-xl font-semibold text-gray-900">How far back should we scan?</h2>
-        <p className="text-sm text-gray-500 mt-1">We&apos;ll look at email metadata only — no email bodies read yet.</p>
+        <h2 className="text-xl font-semibold text-[#44475B]">How far back should we scan?</h2>
+        <p className="text-sm text-[#7C7E8C] mt-1">We&apos;ll look at email metadata only — no email bodies read yet.</p>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -28,22 +28,22 @@ export function StepPicker({ value, onChange, onConfirm, loading }: StepPickerPr
           <button
             key={opt.value}
             onClick={() => onChange(opt.value)}
-            className={`flex items-center gap-4 p-4 rounded-xl border text-left transition-colors ${
+            className={`flex items-center gap-4 p-4 rounded-lg border text-left transition-colors ${
               value === opt.value
-                ? "border-[#5b7cfa] bg-[#f0f3ff]"
-                : "border-gray-200 bg-white hover:border-gray-300"
+                ? "border-[#04B488] bg-[#E9FAF3]"
+                : "border-[#E9E9EB] bg-white hover:border-[#E9E9EB]"
             }`}
           >
             <div
               className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                value === opt.value ? "border-[#5b7cfa]" : "border-gray-300"
+                value === opt.value ? "border-[#04B488]" : "border-[#E9E9EB]"
               }`}
             >
-              {value === opt.value && <div className="w-2 h-2 rounded-full bg-[#5b7cfa]" />}
+              {value === opt.value && <div className="w-2 h-2 rounded-full bg-[#04B488]" />}
             </div>
             <div>
-              <div className="text-sm font-medium text-gray-900">{opt.label}</div>
-              <div className="text-xs text-gray-500">{opt.desc}</div>
+              <div className="text-sm font-medium text-[#44475B]">{opt.label}</div>
+              <div className="text-xs text-[#7C7E8C]">{opt.desc}</div>
             </div>
           </button>
         ))}
@@ -52,7 +52,7 @@ export function StepPicker({ value, onChange, onConfirm, loading }: StepPickerPr
       <button
         onClick={onConfirm}
         disabled={loading}
-        className="w-full py-3 rounded-xl bg-[#5b7cfa] text-white text-sm font-medium hover:bg-[#4a6be8] transition-colors disabled:opacity-60"
+        className="w-full py-3 rounded-lg bg-[#04B488] text-white text-sm font-medium hover:bg-[#03a07a] transition-colors disabled:opacity-60"
       >
         {loading ? "Scanning..." : "Scan My Gmail"}
       </button>

@@ -25,15 +25,15 @@ export function KpiCard({ label, value, prevValue, metric, prefix = "₹" }: Kpi
       : null;
 
   const badgeColors = {
-    good: "bg-[#e8f5e9] text-green-700",
-    bad: "bg-[#fce8e8] text-red-700",
-    neutral: "bg-gray-100 text-gray-500",
+    good: "bg-[#e8f5e9] text-[#04B488]",
+    bad: "bg-[#fce8e8] text-[#ED5533]",
+    neutral: "bg-[#F8F8F8] text-[#7C7E8C]",
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex flex-col gap-2">
-      <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">{label}</span>
-      <span className="text-2xl font-semibold text-gray-900">{formatAmount(value, prefix)}</span>
+    <div className="bg-white rounded-lg border border-[#E9E9EB]  p-5 flex flex-col gap-2">
+      <span className="text-xs text-[#7C7E8C] font-medium uppercase tracking-wide">{label}</span>
+      <span className="text-2xl font-semibold text-[#44475B]">{formatAmount(value, prefix)}</span>
       {pct !== null && (
         <span
           className={`text-xs font-medium px-2 py-0.5 rounded-full w-fit ${badgeColors[variant]}`}

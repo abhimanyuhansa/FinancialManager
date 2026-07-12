@@ -94,12 +94,12 @@ export default function TransactionsPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Transactions</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{total} transaction{total !== 1 ? "s" : ""}</p>
+          <h1 className="text-2xl font-semibold text-[#44475B]">Transactions</h1>
+          <p className="text-sm text-[#7C7E8C] mt-0.5">{total} transaction{total !== 1 ? "s" : ""}</p>
         </div>
         <button
           onClick={handleExport}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#E9E9EB] text-sm font-medium text-[#44475B] hover:bg-[#F8F8F8] transition-colors"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -111,18 +111,18 @@ export default function TransactionsPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4 flex flex-wrap gap-3">
+      <div className="bg-white rounded-lg border border-[#E9E9EB]  p-4 mb-4 flex flex-wrap gap-3">
         <input
           type="text"
           placeholder="Search merchant..."
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="flex-1 min-w-[160px] px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+          className="flex-1 min-w-[160px] px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
         />
         <select
           value={type}
           onChange={(e) => { setType(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+          className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
         >
           <option value="">All types</option>
           <option value="expense">Expenses</option>
@@ -131,7 +131,7 @@ export default function TransactionsPage() {
         <select
           value={category}
           onChange={(e) => { setCategory(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+          className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
         >
           <option value="">All categories</option>
           {CATEGORIES.map((c) => (
@@ -142,18 +142,18 @@ export default function TransactionsPage() {
           type="date"
           value={from}
           onChange={(e) => { setFrom(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+          className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
         />
         <input
           type="date"
           value={to}
           onChange={(e) => { setTo(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+          className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
         />
         {(search || type || category || from || to) && (
           <button
             onClick={() => { setSearch(""); setType(""); setCategory(""); setFrom(""); setTo(""); setPage(1); }}
-            className="px-3 py-2 rounded-xl text-sm text-gray-400 hover:text-gray-700 transition-colors"
+            className="px-3 py-2 rounded-lg text-sm text-[#A1A3AD] hover:text-[#44475B] transition-colors"
           >
             Clear
           </button>
@@ -161,45 +161,45 @@ export default function TransactionsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-lg border border-[#E9E9EB]  overflow-hidden">
         {loading ? (
           <div className="flex flex-col gap-2 p-4">
             {[...Array(8)].map((_, i) => (
-              <div key={i} className="h-12 bg-gray-50 rounded-xl animate-pulse" />
+              <div key={i} className="h-12 bg-[#F8F8F8] rounded-lg animate-pulse" />
             ))}
           </div>
         ) : transactions.length === 0 ? (
           <div className="p-12 text-center">
-            <p className="text-sm text-gray-400">No transactions found.</p>
+            <p className="text-sm text-[#A1A3AD]">No transactions found.</p>
           </div>
         ) : (
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-50">
-                <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Date</th>
-                <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Merchant</th>
-                <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Category</th>
-                <th className="text-right text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Amount</th>
+                <th className="text-left text-xs font-semibold text-[#A1A3AD] px-5 py-3 uppercase tracking-wide">Date</th>
+                <th className="text-left text-xs font-semibold text-[#A1A3AD] px-5 py-3 uppercase tracking-wide">Merchant</th>
+                <th className="text-left text-xs font-semibold text-[#A1A3AD] px-5 py-3 uppercase tracking-wide">Category</th>
+                <th className="text-right text-xs font-semibold text-[#A1A3AD] px-5 py-3 uppercase tracking-wide">Amount</th>
               </tr>
             </thead>
             <tbody>
               {transactions.map((tx) => (
                 <tr
                   key={tx.id}
-                  className="border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors cursor-pointer"
+                  className="border-b border-gray-50 last:border-0 hover:bg-[#F8F8F8] transition-colors cursor-pointer"
                   onClick={() => setSelectedTx(tx)}
                 >
-                  <td className="px-5 py-3 text-sm text-gray-500 whitespace-nowrap">
+                  <td className="px-5 py-3 text-sm text-[#7C7E8C] whitespace-nowrap">
                     {new Date(tx.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
                       <span className="text-base">{CATEGORY_ICONS[tx.category] ?? "📦"}</span>
                       <div>
-                        <p className="text-sm font-medium text-gray-900">
+                        <p className="text-sm font-medium text-[#44475B]">
                           {tx.merchant}
                           {tx.source === "seed" && (
-                            <span className="ml-2 text-xs px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded">Demo</span>
+                            <span className="ml-2 text-xs px-1.5 py-0.5 bg-[#F8F8F8] text-[#A1A3AD] rounded">Demo</span>
                           )}
                         </p>
                         {tx.needsReview && (
@@ -209,12 +209,12 @@ export default function TransactionsPage() {
                     </div>
                   </td>
                   <td className="px-5 py-3">
-                    <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                    <span className="text-xs bg-[#F8F8F8] text-[#7C7E8C] px-2 py-0.5 rounded-full">
                       {tx.category}
                     </span>
                   </td>
                   <td className="px-5 py-3 text-sm text-right">
-                    <span className={tx.type === "income" ? "text-green-600 font-semibold" : "text-red-500 font-semibold"}>
+                    <span className={tx.type === "income" ? "text-[#04B488] font-semibold" : "text-[#ED5533] font-semibold"}>
                       {fmtAmount(tx.amount, tx.type)}
                     </span>
                   </td>
@@ -228,21 +228,21 @@ export default function TransactionsPage() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4">
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-[#7C7E8C]">
             Page {page} of {totalPages} · {total} results
           </p>
           <div className="flex gap-2">
             <button
               disabled={page <= 1}
               onClick={() => setPage((p) => p - 1)}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+              className="px-3 py-1.5 rounded-lg border border-[#E9E9EB] text-sm text-[#44475B] hover:bg-[#F8F8F8] disabled:opacity-40 transition-colors"
             >
               Previous
             </button>
             <button
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
-              className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 transition-colors"
+              className="px-3 py-1.5 rounded-lg border border-[#E9E9EB] text-sm text-[#44475B] hover:bg-[#F8F8F8] disabled:opacity-40 transition-colors"
             >
               Next
             </button>

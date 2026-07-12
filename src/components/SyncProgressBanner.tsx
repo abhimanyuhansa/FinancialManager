@@ -162,7 +162,7 @@ export function SyncProgressBanner() {
           <span className="text-sm text-green-800 font-medium">
             Sync complete — {job.newTransactions} new transactions imported
           </span>
-          <button onClick={handleDismiss} className="ml-4 text-green-500 hover:text-green-700 text-sm">✕</button>
+          <button onClick={handleDismiss} className="ml-4 text-green-500 hover:text-[#04B488] text-sm">✕</button>
         </div>
       </div>
     );
@@ -177,7 +177,7 @@ export function SyncProgressBanner() {
             <button onClick={async () => { await fetch("/api/gmail/sync/start", { method: "POST" }); tick(); }}
               className="underline font-medium">Retry</button>
           </span>
-          <button onClick={handleDismiss} className="ml-4 text-red-500 hover:text-red-700 text-sm">✕</button>
+          <button onClick={handleDismiss} className="ml-4 text-[#ED5533] hover:text-[#ED5533] text-sm">✕</button>
         </div>
       </div>
     );
