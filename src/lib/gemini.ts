@@ -17,78 +17,53 @@ type ParseInput = {
 };
 
 const VALID_CATEGORIES = [
-  "food", "transport", "shopping", "bills", "health",
-  "investment", "income", "other",
+  "food", "transport", "shopping", "entertainment", "utilities",
+  "health", "finance", "travel", "groceries", "income", "other",
 ];
 
-const SYSTEM_PROMPT =
-  "You are a financial transaction parser. Extract structured data from bank and merchant emails. " +
-  "Always return valid JSON. If a field cannot be determined, use null. Never include explanations — only JSON.";
-
-const USER_PROMPT = (body: string) =>
-  `Extract the transaction from this email. Return JSON with these exact fields:
-{
-  "merchant": string,
-  "amount": number,
-  "currency": string,
-  "date": string,
-  "type": "expense"|"income",
-  "category": string,
-  "confidence": number
-}
-
-Email:
-${body}`;
-
-async function callGemini(body: string, apiKey: string, attempt = 0): Promise<Response> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{ role: "user", parts: [{ text: USER_PROMPT(body) }] }],
-        generationConfig: { temperature: 0, responseMimeType: "application/json" },
-      }),
-    }
-  );
-  // Retry once on 503 (transient service unavailable) with a short wait
-  if (res.status === 503 && attempt < 1) {
-    await new Promise((r) => setTimeout(r, 2000));
-    return callGemini(body, apiKey, attempt + 1);
-  }
-  return res;
-}
-
-const BODY_LIMIT = 1500;
-
-export type BatchInput = {
+export type GeminiEmailResult = {
   emailIndex: number;
-  body: string;
-  senderName: string;
-  fallbackDate: string;
-};
-
-export type BatchResult = {
-  emailIndex: number;
-  outcome: "parsed" | "skipped_no_amount" | "skipped_gemini_null" | "failed_gemini_error";
-  merchant?: string;
-  amount?: number;
-  currency?: string;
-  date?: string;
-  type?: "expense" | "income";
-  category?: string;
-  confidence?: number;
-  needsReview?: boolean;
+  isTransaction: boolean;
+  transactions: Array<{
+    merchant: string;
+    amount: number;
+    currency: string;
+    date: string;
+    type: "expense" | "income";
+    category: string;
+    subCategory: string | null;
+    confidence: number;
+    needsReview: boolean;
+    lineItems: Array<{
+      name: string;
+      amount: number;
+      subCategory?: string;
+    }> | null;
+  }>;
+  outcome: "parsed" | "not_transaction" | "parse_failed" | "insufficient_data";
   bodyLengthRaw: number;
   bodyLengthSent: number;
   wasTruncated: boolean;
 };
 
+const GEMINI_MODEL = "gemini-2.0-flash";
+
 const BATCH_SYSTEM_PROMPT =
-  "You are a financial transaction parser. Extract structured data from bank and merchant emails. " +
-  "Return a JSON array — one object per email. Never include explanations — only JSON.";
+  "You are a financial transaction parser. For each email, decide if it is a financial transaction email, then extract ALL transactions.\n\n" +
+  "TRANSACTION emails include: payment confirmations, debit/credit alerts, invoices, receipts, subscription charges, EMI notices, order confirmations with amounts, bank statements, dividend notices, salary credits.\n\n" +
+  "NOT TRANSACTION emails include: newsletters, marketing, job alerts, social notifications, OTP without amount, verification emails, promotional discount offers without an actual charge.\n\n" +
+  "For each transaction extract:\n" +
+  "- merchant: the business paid/received from — NOT the sending bank. E.g. for 'Rs.341 debited to Zepto via Amazon Pay', merchant = 'Zepto'\n" +
+  "- amount: positive number\n" +
+  "- currency: 'INR' by default\n" +
+  "- date: from email content (YYYY-MM-DD); use fallbackDate only if no date in body\n" +
+  "- type: 'expense' (money out) or 'income' (money in — salary, refund, dividend)\n" +
+  "- category: one of: food, transport, shopping, entertainment, utilities, health, finance, travel, groceries, income, other\n" +
+  "- subCategory: specific sub-type (e.g. 'restaurants', 'cab', 'streaming', 'electricity', 'salary', 'dividend') — null if uncertain\n" +
+  "- confidence: 0.0–1.0\n" +
+  "- needsReview: true if amount or merchant is ambiguous\n" +
+  "- lineItems: array ONLY when email explicitly itemises charges (grocery list, restaurant bill). null otherwise.\n\n" +
+  "Return a JSON array — one object per input email. Never include explanations — only JSON.";
 
 function batchUserPrompt(
   items: Array<{ emailIndex: number; body: string; senderName: string; fallbackDate: string }>
@@ -96,22 +71,30 @@ function batchUserPrompt(
   const emailsJson = JSON.stringify(
     items.map((i) => ({ emailIndex: i.emailIndex, senderName: i.senderName, fallbackDate: i.fallbackDate, body: i.body }))
   );
-  return `Extract transactions from these emails. Return a JSON array with one object per email:
+  return `Parse these emails. Return a JSON array — one object per email matching this schema exactly:
 [
   {
     "emailIndex": number,
-    "merchant": string | null,
-    "amount": number | null,
-    "currency": string | null,
-    "date": string | null,
-    "type": "expense" | "income" | null,
-    "category": string | null,
-    "confidence": number | null
+    "isTransaction": boolean,
+    "transactions": [
+      {
+        "merchant": string,
+        "amount": number,
+        "currency": string,
+        "date": string,
+        "type": "expense" | "income",
+        "category": string,
+        "subCategory": string | null,
+        "confidence": number,
+        "needsReview": boolean,
+        "lineItems": [{ "name": string, "amount": number, "subCategory": string }] | null
+      }
+    ],
+    "outcome": "parsed" | "not_transaction" | "parse_failed" | "insufficient_data"
   }
 ]
 
-Valid categories: food, transport, shopping, bills, health, investment, income, other.
-If an email contains no transaction, set amount to null.
+If isTransaction is false, set transactions to [] and outcome to "not_transaction".
 
 Emails:
 ${emailsJson}`;
@@ -119,7 +102,7 @@ ${emailsJson}`;
 
 async function callGeminiBatch(prompt: string, apiKey: string): Promise<Response> {
   return fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -132,10 +115,22 @@ async function callGeminiBatch(prompt: string, apiKey: string): Promise<Response
   );
 }
 
+export type BatchInput = {
+  emailIndex: number;
+  body: string;
+  senderName: string;
+  fallbackDate: string;
+};
+
+// Legacy type alias for backwards compatibility with tests
+export type BatchResult = GeminiEmailResult;
+
+const BODY_LIMIT = 1500;
+
 export async function parseEmailBatch(
   inputs: BatchInput[],
   apiKey: string
-): Promise<BatchResult[]> {
+): Promise<GeminiEmailResult[]> {
   const prepared = inputs.map((i) => {
     const bodyLengthRaw = i.body.length;
     const truncated = i.body.slice(0, BODY_LIMIT);
@@ -156,7 +151,9 @@ export async function parseEmailBatch(
     console.error(`[gemini] parseEmailBatch HTTP error: ${res.status}`);
     return prepared.map((p) => ({
       emailIndex: p.emailIndex,
-      outcome: "failed_gemini_error" as const,
+      isTransaction: false,
+      transactions: [],
+      outcome: "parse_failed" as const,
       bodyLengthRaw: p.bodyLengthRaw,
       bodyLengthSent: p.bodyLengthSent,
       wasTruncated: p.wasTruncated,
@@ -165,13 +162,20 @@ export async function parseEmailBatch(
 
   let parsed: Array<{
     emailIndex: number;
-    merchant?: string | null;
-    amount?: number | null;
-    currency?: string | null;
-    date?: string | null;
-    type?: string | null;
-    category?: string | null;
-    confidence?: number | null;
+    isTransaction?: boolean;
+    transactions?: Array<{
+      merchant?: string | null;
+      amount?: number | null;
+      currency?: string | null;
+      date?: string | null;
+      type?: string | null;
+      category?: string | null;
+      subCategory?: string | null;
+      confidence?: number | null;
+      needsReview?: boolean | null;
+      lineItems?: Array<{ name: string; amount: number; subCategory?: string }> | null;
+    }>;
+    outcome?: string | null;
   }> = [];
 
   try {
@@ -186,7 +190,9 @@ export async function parseEmailBatch(
     console.error("[gemini] parseEmailBatch: failed to parse JSON response");
     return prepared.map((p) => ({
       emailIndex: p.emailIndex,
-      outcome: "failed_gemini_error" as const,
+      isTransaction: false,
+      transactions: [],
+      outcome: "parse_failed" as const,
       bodyLengthRaw: p.bodyLengthRaw,
       bodyLengthSent: p.bodyLengthSent,
       wasTruncated: p.wasTruncated,
@@ -204,37 +210,101 @@ export async function parseEmailBatch(
 
     const item = parsedByIndex.get(p.emailIndex);
     if (!item) {
-      return { emailIndex: p.emailIndex, outcome: "skipped_gemini_null" as const, ...meta };
+      return {
+        emailIndex: p.emailIndex,
+        isTransaction: false,
+        transactions: [],
+        outcome: "parse_failed" as const,
+        ...meta,
+      };
     }
 
-    const amount = typeof item.amount === "number" ? item.amount : null;
-    if (!amount || amount <= 0) {
-      return { emailIndex: p.emailIndex, outcome: "skipped_no_amount" as const, ...meta };
+    if (!item.isTransaction || !item.transactions?.length) {
+      return {
+        emailIndex: p.emailIndex,
+        isTransaction: false,
+        transactions: [],
+        outcome: "not_transaction" as const,
+        ...meta,
+      };
     }
 
-    const confidence = typeof item.confidence === "number" ? item.confidence : 0;
-    const merchant = item.merchant ?? p.senderName;
-    const date = item.date ?? p.fallbackDate;
-    const currency = item.currency ?? "INR";
-    const type = item.type === "income" ? "income" : "expense";
-    const category = item.category && VALID_CATEGORIES.includes(item.category)
-      ? item.category
-      : "other";
+    const transactions = item.transactions
+      .filter((t) => typeof t.amount === "number" && (t.amount ?? 0) > 0)
+      .map((t) => {
+        const confidence = typeof t.confidence === "number" ? t.confidence : 0;
+        const category = t.category && VALID_CATEGORIES.includes(t.category) ? t.category : "other";
+        return {
+          merchant: t.merchant ?? p.senderName,
+          amount: t.amount!,
+          currency: t.currency ?? "INR",
+          date: t.date ?? p.fallbackDate,
+          type: (t.type === "income" ? "income" : "expense") as "expense" | "income",
+          category,
+          subCategory: t.subCategory ?? null,
+          confidence,
+          needsReview: t.needsReview ?? confidence < 0.7,
+          lineItems: t.lineItems ?? null,
+        };
+      });
+
+    if (transactions.length === 0) {
+      return {
+        emailIndex: p.emailIndex,
+        isTransaction: false,
+        transactions: [],
+        outcome: "insufficient_data" as const,
+        ...meta,
+      };
+    }
 
     return {
       emailIndex: p.emailIndex,
+      isTransaction: true,
+      transactions,
       outcome: "parsed" as const,
-      merchant,
-      amount,
-      currency,
-      date,
-      type,
-      category,
-      confidence,
-      needsReview: confidence < 0.7,
       ...meta,
     };
   });
+}
+
+const LEGACY_SYSTEM_PROMPT =
+  "You are a financial transaction parser. Extract structured data from bank and merchant emails. " +
+  "Always return valid JSON. If a field cannot be determined, use null. Never include explanations — only JSON.";
+
+const LEGACY_USER_PROMPT = (body: string) =>
+  `Extract the transaction from this email. Return JSON with these exact fields:
+{
+  "merchant": string,
+  "amount": number,
+  "currency": string,
+  "date": string,
+  "type": "expense"|"income",
+  "category": string,
+  "confidence": number
+}
+
+Email:
+${body}`;
+
+async function callGemini(body: string, apiKey: string, attempt = 0): Promise<Response> {
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: LEGACY_SYSTEM_PROMPT }] },
+        contents: [{ role: "user", parts: [{ text: LEGACY_USER_PROMPT(body) }] }],
+        generationConfig: { temperature: 0, responseMimeType: "application/json" },
+      }),
+    }
+  );
+  if (res.status === 503 && attempt < 1) {
+    await new Promise((r) => setTimeout(r, 2000));
+    return callGemini(body, apiKey, attempt + 1);
+  }
+  return res;
 }
 
 export async function parseEmailTransaction(input: ParseInput): Promise<ParsedTransaction | null> {

@@ -2,18 +2,14 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { StepPicker, LookbackPeriod } from "@/components/onboarding/StepPicker";
-import { StepScanning } from "@/components/onboarding/StepScanning";
-import { StepReview, ScanResult, SenderSummary } from "@/components/onboarding/StepReview";
 import { SyncProgressBar } from "@/components/SyncProgressBar";
 
-type Step = "pick" | "scanning" | "review" | "confirming" | "syncing";
+type Step = "pick" | "syncing";
 
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("pick");
   const [period, setPeriod] = useState<LookbackPeriod>("6m");
-  const [emailCount, setEmailCount] = useState(0);
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [syncJobId, setSyncJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,66 +23,32 @@ export default function OnboardingPage() {
       .catch(() => {});
   }, [router]);
 
-  const handleScan = async () => {
-    setStep("scanning");
+  const handleStart = async () => {
+    setStep("syncing");
     setError(null);
     try {
-      const res = await fetch("/api/gmail/scan", {
+      const res = await fetch("/api/gmail/sync/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ period }),
       });
       if (!res.ok) {
-        const err = (await res.json()) as { error: string };
-        throw new Error(err.error ?? "Scan failed");
+        const errData = await res.json() as { error: string; jobId?: string; running?: boolean };
+        if (errData.running && errData.jobId) {
+          setSyncJobId(errData.jobId);
+          return;
+        }
+        throw new Error(errData.error ?? "Failed to start sync");
       }
-      const data = (await res.json()) as ScanResult & { totalScanned: number };
-      setEmailCount(data.totalScanned);
-      setScanResult(data);
-      setStep("review");
+      const { jobId } = await res.json() as { jobId: string };
+      setSyncJobId(jobId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
       setStep("pick");
     }
   };
 
-  const handleSkipPreview = async () => {
-    if (!scanResult) return;
-    // Auto-approve all autoApproved senders, skip needsReview
-    await handleConfirm(scanResult.autoApproved, []);
-  };
-
-  const handleConfirm = async (approved: SenderSummary[], rejected: string[]) => {
-    setStep("confirming");
-    try {
-      const confirmRes = await fetch("/api/gmail/scan/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ period, approvedSenders: approved, rejectedSenders: rejected }),
-      });
-      if (!confirmRes.ok) throw new Error("Failed to save choices");
-
-      const startRes = await fetch("/api/gmail/sync/start", { method: "POST" });
-      if (!startRes.ok) {
-        const errData = (await startRes.json()) as { error: string; jobId?: string; running?: boolean };
-        if (errData.running && errData.jobId) {
-          // Already running — resume with existing job
-          setSyncJobId(errData.jobId);
-          setStep("syncing");
-          return;
-        }
-        throw new Error(errData.error ?? "Failed to start sync");
-      }
-      const { jobId } = (await startRes.json()) as { jobId: string };
-      setSyncJobId(jobId);
-      setStep("syncing");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong");
-      setStep("review");
-    }
-  };
-
-  const stepNumber = step === "pick" ? 1 : step === "scanning" || step === "review" || step === "confirming" ? 2 : 3;
+  const stepNumber = step === "pick" ? 1 : 2;
 
   return (
     <div className="min-h-screen bg-[#eef0f6] flex items-center justify-center p-4">
@@ -100,7 +62,7 @@ export default function OnboardingPage() {
           </div>
           <div>
             <h1 className="text-base font-semibold text-gray-900">Set up Financial Manager</h1>
-            {step !== "syncing" && <p className="text-xs text-gray-500">Step {stepNumber} of 3</p>}
+            {step !== "syncing" && <p className="text-xs text-gray-500">Step {stepNumber} of 2</p>}
           </div>
         </div>
 
@@ -111,22 +73,7 @@ export default function OnboardingPage() {
         )}
 
         {step === "pick" && (
-          <StepPicker value={period} onChange={setPeriod} onConfirm={handleScan} loading={false} />
-        )}
-        {step === "scanning" && <StepScanning emailCount={emailCount} />}
-        {(step === "review" || step === "confirming") && scanResult && (
-          <div>
-            <StepReview result={scanResult} onConfirm={handleConfirm} loading={step === "confirming"} />
-            <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
-              <button
-                onClick={handleSkipPreview}
-                disabled={step === "confirming"}
-                className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2 disabled:opacity-50"
-              >
-                Skip preview — sync everything
-              </button>
-            </div>
-          </div>
+          <StepPicker value={period} onChange={setPeriod} onConfirm={handleStart} loading={false} />
         )}
         {step === "syncing" && syncJobId && (
           <div className="flex flex-col gap-4">

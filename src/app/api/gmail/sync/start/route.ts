@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getGmailToken } from "@/lib/gmail";
-import { buildGmailQuery } from "@/lib/gmailQuery";
+import { buildGmailQueryFromDB } from "@/lib/gmailQuery";
 
-export async function POST() {
+export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,18 +32,22 @@ export async function POST() {
     select: { syncFromDate: true, gmailSyncedAt: true },
   });
 
+  const body = await req.json().catch(() => ({})) as { period?: string };
+
   let fromDate: Date;
   if (user?.gmailSyncedAt) {
-    // Incremental sync: start from watermark - 24h to catch delayed emails
     fromDate = new Date(user.gmailSyncedAt.getTime() - 24 * 60 * 60 * 1000);
+  } else if (body.period) {
+    const months = body.period === "1m" ? 1 : body.period === "3m" ? 3 : 6;
+    fromDate = new Date();
+    fromDate.setMonth(fromDate.getMonth() - months);
   } else {
-    // First sync: use the period the user selected during onboarding (or default 6m)
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     fromDate = user?.syncFromDate ?? sixMonthsAgo;
   }
 
-  const gmailQuery = buildGmailQuery(fromDate);
+  const gmailQuery = await buildGmailQueryFromDB(fromDate);
 
   const job = await prisma.syncJob.create({
     data: {

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getGmailToken } from "@/lib/gmail";
 import { parseEmailBatch } from "@/lib/gemini";
 import { upsertTransactionV2 } from "@/lib/dedup";
-import { matchesEmailFilter } from "@/lib/emailFilter";
+import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -79,13 +79,6 @@ export async function POST(_req: Request, { params }: RouteContext) {
     return NextResponse.json({ error: "Could not fetch Gmail message" }, { status: 400 });
   }
 
-  const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
-  const filterResult = matchesEmailFilter({ from: msg.senderName, subject: "" }, filters);
-  if (!filterResult.matched) {
-    await prisma.parseLog.update({ where: { id: log.id }, data: { outcome: "skipped_filter" } });
-    return NextResponse.json({ outcome: "skipped_filter" });
-  }
-
   const results = await parseEmailBatch(
     [{ emailIndex: 0, body: msg.body, senderName: msg.senderName, fallbackDate: msg.receivedDate }],
     apiKey
@@ -96,7 +89,7 @@ export async function POST(_req: Request, { params }: RouteContext) {
     return NextResponse.json({ error: "No result from Gemini" }, { status: 500 });
   }
 
-  if (result.outcome !== "parsed") {
+  if (result.outcome !== "parsed" || !result.transactions.length) {
     await prisma.parseLog.update({
       where: { id: log.id },
       data: {
@@ -109,26 +102,26 @@ export async function POST(_req: Request, { params }: RouteContext) {
     return NextResponse.json({ outcome: result.outcome });
   }
 
-  let category = result.category!;
-  const merchantKey = result.merchant!.toLowerCase().trim();
-  const rule = await prisma.merchantRule.findUnique({
-    where: { userId_merchantName: { userId, merchantName: merchantKey } },
-  });
-  if (rule) category = rule.category;
+  const tx = result.transactions[0];
+  const { category, subCategory } = await lookupAndUpsertMerchant(
+    tx.merchant, tx.category, tx.subCategory ?? null, tx.confidence ?? 0
+  );
 
   const upsertResult = await upsertTransactionV2(prisma, {
     userId,
     gmailMsgId: log.gmailMsgId,
-    date: new Date(result.date!),
-    merchant: result.merchant!,
-    amount: result.amount!,
-    type: result.type!,
-    currency: result.currency!,
+    date: new Date(tx.date),
+    merchant: tx.merchant,
+    amount: tx.amount,
+    type: tx.type,
+    currency: tx.currency,
     category,
     source: "gmail",
-    sourceRank: filterResult.sourceRank,
-    confidence: result.confidence,
-    needsReview: result.needsReview,
+    sourceRank: 1,
+    confidence: tx.confidence,
+    needsReview: tx.needsReview,
+    subCategory: subCategory ?? undefined,
+    lineItems: tx.lineItems ?? undefined,
   });
 
   const finalOutcome = upsertResult.action === "inserted" ? "inserted"
@@ -139,9 +132,9 @@ export async function POST(_req: Request, { params }: RouteContext) {
     where: { id: log.id },
     data: {
       outcome: finalOutcome,
-      geminiConfidence: result.confidence,
-      parsedMerchant: result.merchant,
-      parsedAmount: result.amount,
+      geminiConfidence: tx.confidence,
+      parsedMerchant: tx.merchant,
+      parsedAmount: tx.amount,
       transactionId: upsertResult.id ?? undefined,
       bodyLengthRaw: result.bodyLengthRaw,
       bodyLengthSent: result.bodyLengthSent,

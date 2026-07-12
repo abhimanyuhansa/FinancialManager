@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getGmailToken, fetchMessageIdPage, fetchFullMessageBatch, fetchPdfAttachment } from "@/lib/gmail";
 import { parseEmailBatch, type BatchInput } from "@/lib/gemini";
 import { upsertTransactionV2 } from "@/lib/dedup";
-import { matchesEmailFilter } from "@/lib/emailFilter";
+import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
 import { checkGeminiRateLimit, incrementGeminiUsage } from "@/lib/geminiRateLimit";
 
 const CHUNK_SIZE = 50;
@@ -30,14 +30,20 @@ async function advanceJob(job: {
   });
 
   if (pending.length === 0) {
+    const completedJob = await prisma.syncJob.findUnique({
+      where: { id: job.id },
+      select: { startedAt: true },
+    });
+    const watermark = completedJob?.startedAt ?? new Date();
     const completedAt = new Date();
+
     await prisma.syncJob.update({
       where: { id: job.id },
       data: { status: "complete", completedAt },
     });
     await prisma.user.update({
       where: { id: job.userId },
-      data: { gmailSyncedAt: completedAt },
+      data: { gmailSyncedAt: watermark },
     });
     return { phase: "complete", newTransactions: 0 };
   }
@@ -72,12 +78,13 @@ async function advanceJob(job: {
     }
   }
 
-  const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
-  const merchantRules = await prisma.merchantRule.findMany({
-    where: { userId: job.userId },
-    select: { merchantName: true, category: true },
-  });
-  const merchantRuleMap = new Map(merchantRules.map((r) => [r.merchantName, r.category]));
+  const exclusionRules = await prisma.exclusionRule.findMany({ where: { isActive: true } });
+  const excludedDomains = new Set(
+    exclusionRules.filter((r) => r.type === "sender_domain").map((r) => r.value)
+  );
+  const excludedEmails = new Set(
+    exclusionRules.filter((r) => r.type === "sender_email").map((r) => r.value)
+  );
 
   type ProcessableEmail = {
     msgId: string;
@@ -85,7 +92,6 @@ async function advanceJob(job: {
     senderName: string;
     senderDomain: string;
     receivedDate: string;
-    sourceRank: number;
     rowId: string;
   };
 
@@ -99,19 +105,26 @@ async function advanceJob(job: {
     const msg = fetchedMap.get(gmailMsgId);
     if (!msg) continue;
 
-    const filterResult = matchesEmailFilter({ from: msg.senderEmail, subject: "" }, filters);
-    if (!filterResult.matched) {
+    const isExcluded =
+      excludedDomains.has(msg.senderDomain) || excludedEmails.has(msg.senderEmail);
+
+    if (isExcluded) {
       filteredLogs.push({
         userId: job.userId, syncJobId: job.id, gmailMsgId,
         senderDomain: msg.senderDomain, bodyLengthRaw: msg.body.length,
-        bodyLengthSent: Math.min(msg.body.length, BODY_LIMIT),
-        wasTruncated: msg.body.length > BODY_LIMIT, batchSize: 1, outcome: "skipped_filter",
+        bodyLengthSent: 0, wasTruncated: false, batchSize: 1, outcome: "skipped_exclusion",
       });
       continue;
     }
-    toProcess.push({ msgId: gmailMsgId, body: msg.body, senderName: msg.senderName,
-      senderDomain: msg.senderDomain, receivedDate: msg.receivedDate,
-      sourceRank: filterResult.sourceRank, rowId });
+
+    toProcess.push({
+      msgId: gmailMsgId,
+      body: msg.body.slice(0, BODY_LIMIT),
+      senderName: msg.senderName,
+      senderDomain: msg.senderDomain,
+      receivedDate: msg.receivedDate,
+      rowId,
+    });
   }
 
   if (filteredLogs.length > 0) {
@@ -147,31 +160,38 @@ async function advanceJob(job: {
         wasTruncated: result.wasTruncated, batchSize: toProcess.length,
       };
 
-      if (result.outcome !== "parsed") {
+      if (result.outcome !== "parsed" || !result.transactions.length) {
         await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome } });
         continue;
       }
 
-      let category = result.category!;
-      const merchantKey = result.merchant!.toLowerCase().trim();
-      const overrideCategory = merchantRuleMap.get(merchantKey);
-      if (overrideCategory) category = overrideCategory;
+      for (const tx of result.transactions) {
+        const { category: resolvedCategory, subCategory: resolvedSubCategory } =
+          await lookupAndUpsertMerchant(
+            tx.merchant,
+            tx.category,
+            tx.subCategory ?? null,
+            tx.confidence ?? 0
+          );
 
-      const upsertResult = await upsertTransactionV2(prisma, {
-        userId: job.userId, gmailMsgId: email.msgId, date: new Date(result.date!),
-        merchant: result.merchant!, amount: result.amount!, type: result.type!,
-        currency: result.currency!, category, source: "gmail",
-        sourceRank: email.sourceRank, confidence: result.confidence, needsReview: result.needsReview,
-      });
+        const upsertResult = await upsertTransactionV2(prisma, {
+          userId: job.userId, gmailMsgId: email.msgId, date: new Date(tx.date),
+          merchant: tx.merchant, amount: tx.amount, type: tx.type,
+          currency: tx.currency, category: resolvedCategory, source: "gmail",
+          sourceRank: 1, confidence: tx.confidence, needsReview: tx.needsReview,
+          subCategory: resolvedSubCategory ?? undefined,
+          lineItems: tx.lineItems ?? undefined,
+        });
 
-      const outcome = upsertResult.action === "inserted" ? "inserted"
-        : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
-      if (outcome === "inserted") newTransactions++;
+        const outcome = upsertResult.action === "inserted" ? "inserted"
+          : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
+        if (outcome === "inserted") newTransactions++;
 
-      await prisma.parseLog.create({
-        data: { ...logBase, outcome, geminiConfidence: result.confidence,
-          parsedMerchant: result.merchant, parsedAmount: result.amount, transactionId: upsertResult.id },
-      });
+        await prisma.parseLog.create({
+          data: { ...logBase, outcome, geminiConfidence: tx.confidence,
+            parsedMerchant: tx.merchant, parsedAmount: tx.amount, transactionId: upsertResult.id },
+        });
+      }
     }
   }
 
@@ -194,9 +214,14 @@ async function advanceJob(job: {
   });
 
   if (isDone) {
+    const completedJob = await prisma.syncJob.findUnique({
+      where: { id: job.id },
+      select: { startedAt: true },
+    });
+    const watermark = completedJob?.startedAt ?? new Date();
     const completedAt = new Date();
     await prisma.syncJob.update({ where: { id: job.id }, data: { completedAt } });
-    await prisma.user.update({ where: { id: job.userId }, data: { gmailSyncedAt: completedAt } });
+    await prisma.user.update({ where: { id: job.userId }, data: { gmailSyncedAt: watermark } });
     return { phase: "complete", newTransactions, processed: processedCount, total: totalCount };
   }
 

@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import {
-  getGmailToken,
-  fetchMessageMetadataList,
-  classifySenders,
-  buildScanFromDate,
-  LookbackPeriod,
-} from "@/lib/gmail";
-import { buildGmailQuery } from "@/lib/gmailQuery";
+import { getGmailToken, fetchMessageIdPage, buildScanFromDate, LookbackPeriod } from "@/lib/gmail";
+import { buildGmailQueryFromDB } from "@/lib/gmailQuery";
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -26,30 +19,15 @@ export async function POST(req: Request) {
   }
 
   const fromDate = buildScanFromDate(period);
-  const gmailQuery = buildGmailQuery(fromDate);
+  const gmailQuery = await buildGmailQueryFromDB(fromDate);
 
-  // Paginate through ALL pages — no longer limited to 500
-  let allMessages: Awaited<ReturnType<typeof fetchMessageMetadataList>>["messages"] = [];
+  let totalCount = 0;
   let pageToken: string | undefined = undefined;
   do {
-    const page = await fetchMessageMetadataList(accessToken, fromDate, pageToken, gmailQuery);
-    allMessages = allMessages.concat(page.messages);
-    pageToken = page.nextPageToken;
+    const page = await fetchMessageIdPage(accessToken, gmailQuery, pageToken);
+    totalCount += page.messageIds.length;
+    pageToken = page.nextPageToken ?? undefined;
   } while (pageToken);
 
-  console.log(`[scan] fetched ${allMessages.length} messages total after pagination`);
-
-  const filters = await prisma.emailFilter.findMany({ where: { isActive: true } });
-  const scanResult = classifySenders(allMessages, filters);
-
-  const filterValues = new Set(filters.map((f) => f.value));
-  for (const s of scanResult.autoApproved) {
-    s.existsInFilter = filterValues.has(s.domain) || filterValues.has(s.sender);
-  }
-
-  return NextResponse.json({
-    period,
-    fromDate: fromDate.toISOString(),
-    ...scanResult,
-  });
+  return NextResponse.json({ period, fromDate: fromDate.toISOString(), totalCount });
 }
