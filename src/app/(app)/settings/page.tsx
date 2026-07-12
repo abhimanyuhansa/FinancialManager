@@ -40,12 +40,40 @@ type ParseLogEntry = {
   createdAt: string;
 };
 
+type GmailQueryKeyword = {
+  id: string;
+  type: string;
+  value: string;
+  isActive: boolean;
+  isDefault: boolean;
+  addedAt: string;
+};
+
+type ExclusionRule = {
+  id: string;
+  type: string;
+  value: string;
+  isActive: boolean;
+  note: string | null;
+  addedAt: string;
+};
+
+type SubCategoryEntry = {
+  id: string;
+  category: string;
+  subCategory: string;
+  isDefault: boolean;
+  addedBy: string;
+};
+
+type RetroPeriod = "1m" | "3m" | "6m" | "12m";
+
 function outcomeColor(outcome: string): string {
   if (outcome === "inserted") return "text-green-700 bg-green-50";
   if (outcome === "upgraded") return "text-blue-700 bg-blue-50";
   if (outcome === "skipped_duplicate") return "text-gray-500 bg-gray-50";
   if (outcome.startsWith("skipped_")) return "text-orange-700 bg-orange-50";
-  if (outcome.startsWith("failed_")) return "text-red-700 bg-red-50";
+  if (outcome.startsWith("failed_") || outcome === "parse_failed") return "text-red-700 bg-red-50";
   return "text-gray-600 bg-gray-50";
 }
 
@@ -56,6 +84,8 @@ const REPROCESSABLE = new Set([
   "skipped_pdf_encrypted",
   "skipped_pdf_failed",
   "failed_gemini_error",
+  "parse_failed",
+  "not_transaction",
 ]);
 
 const RANK_LABELS: Record<number, string> = { 1: "Bank", 2: "Payment", 3: "Merchant" };
@@ -64,6 +94,11 @@ const STATUS_COLOURS: Record<string, string> = {
   missing: "bg-red-100 text-red-700",
   mismatch: "bg-amber-100 text-amber-700",
 };
+
+const VALID_CATEGORIES = [
+  "food", "transport", "shopping", "entertainment", "utilities",
+  "health", "finance", "travel", "groceries", "income", "other",
+];
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<"filters" | "audit" | "passwords" | "parse-logs">("filters");
@@ -99,6 +134,33 @@ export default function SettingsPage() {
   const [pwLoading, setPwLoading] = useState(false);
   const [newPassword, setNewPassword] = useState<Record<string, string>>({});
   const [savingPw, setSavingPw] = useState<Record<string, boolean>>({});
+
+  /* ── Gmail Query Keywords ── */
+  const [gmailKeywords, setGmailKeywords] = useState<GmailQueryKeyword[]>([]);
+  const [gmailKeywordsLoading, setGmailKeywordsLoading] = useState(false);
+  const [newKwType, setNewKwType] = useState("from");
+  const [newKwValue, setNewKwValue] = useState("");
+  const [addingKw, setAddingKw] = useState(false);
+
+  /* ── Exclusion Rules ── */
+  const [exclusionRules, setExclusionRules] = useState<ExclusionRule[]>([]);
+  const [exclusionLoading, setExclusionLoading] = useState(false);
+  const [newExType, setNewExType] = useState("sender_domain");
+  const [newExValue, setNewExValue] = useState("");
+  const [newExNote, setNewExNote] = useState("");
+  const [addingEx, setAddingEx] = useState(false);
+
+  /* ── Sub-Category Taxonomy ── */
+  const [subcategories, setSubcategories] = useState<SubCategoryEntry[]>([]);
+  const [subcatLoading, setSubcatLoading] = useState(false);
+  const [newSubcatCategory, setNewSubcatCategory] = useState("food");
+  const [newSubcatValue, setNewSubcatValue] = useState("");
+  const [addingSubcat, setAddingSubcat] = useState(false);
+
+  /* ── Retro Re-sync ── */
+  const [retroPeriod, setRetroPeriod] = useState<RetroPeriod>("6m");
+  const [retroSyncing, setRetroSyncing] = useState(false);
+  const [retroMessage, setRetroMessage] = useState("");
 
   const loadPasswords = async () => {
     setPwLoading(true);
@@ -266,6 +328,155 @@ export default function SettingsPage() {
     fetchFilters();
   };
 
+  /* ── Gmail Query Keywords handlers ── */
+  const loadGmailKeywords = useCallback(async () => {
+    setGmailKeywordsLoading(true);
+    const res = await fetch("/api/settings/gmail-query");
+    const data = await res.json() as GmailQueryKeyword[];
+    setGmailKeywords(Array.isArray(data) ? data : []);
+    setGmailKeywordsLoading(false);
+  }, []);
+
+  useEffect(() => { void loadGmailKeywords(); }, [loadGmailKeywords]);
+
+  const handleAddKeyword = async () => {
+    if (!newKwValue.trim()) return;
+    setAddingKw(true);
+    await fetch("/api/settings/gmail-query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: newKwType, value: newKwValue.trim() }),
+    });
+    setNewKwValue("");
+    await loadGmailKeywords();
+    setAddingKw(false);
+  };
+
+  const toggleKeyword = async (id: string, isActive: boolean) => {
+    await fetch("/api/settings/gmail-query", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, isActive: !isActive }),
+    });
+    await loadGmailKeywords();
+  };
+
+  const deleteKeyword = async (id: string) => {
+    if (!confirm("Remove this keyword from Gmail query?")) return;
+    await fetch("/api/settings/gmail-query", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await loadGmailKeywords();
+  };
+
+  /* ── Exclusion Rules handlers ── */
+  const loadExclusionRules = useCallback(async () => {
+    setExclusionLoading(true);
+    const res = await fetch("/api/settings/exclusion-rules");
+    const data = await res.json() as ExclusionRule[];
+    setExclusionRules(Array.isArray(data) ? data : []);
+    setExclusionLoading(false);
+  }, []);
+
+  useEffect(() => { void loadExclusionRules(); }, [loadExclusionRules]);
+
+  const handleAddExclusion = async () => {
+    if (!newExValue.trim()) return;
+    setAddingEx(true);
+    await fetch("/api/settings/exclusion-rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: newExType, value: newExValue.trim(), note: newExNote.trim() || undefined }),
+    });
+    setNewExValue(""); setNewExNote("");
+    await loadExclusionRules();
+    setAddingEx(false);
+  };
+
+  const toggleExclusion = async (id: string, isActive: boolean) => {
+    await fetch("/api/settings/exclusion-rules", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, isActive: !isActive }),
+    });
+    await loadExclusionRules();
+  };
+
+  const deleteExclusion = async (id: string) => {
+    if (!confirm("Remove this exclusion rule?")) return;
+    await fetch("/api/settings/exclusion-rules", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await loadExclusionRules();
+  };
+
+  /* ── Sub-Category Taxonomy handlers ── */
+  const loadSubcategories = useCallback(async () => {
+    setSubcatLoading(true);
+    const res = await fetch("/api/settings/subcategories");
+    const data = await res.json() as SubCategoryEntry[];
+    setSubcategories(Array.isArray(data) ? data : []);
+    setSubcatLoading(false);
+  }, []);
+
+  useEffect(() => { void loadSubcategories(); }, [loadSubcategories]);
+
+  const handleAddSubcat = async () => {
+    if (!newSubcatValue.trim()) return;
+    setAddingSubcat(true);
+    await fetch("/api/settings/subcategories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category: newSubcatCategory, subCategory: newSubcatValue.trim() }),
+    });
+    setNewSubcatValue("");
+    await loadSubcategories();
+    setAddingSubcat(false);
+  };
+
+  const deleteSubcat = async (id: string) => {
+    if (!confirm("Remove this sub-category?")) return;
+    const res = await fetch("/api/settings/subcategories", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    if (!res.ok) {
+      const data = await res.json() as { error: string };
+      alert(data.error);
+      return;
+    }
+    await loadSubcategories();
+  };
+
+  /* ── Retro Re-sync ── */
+  const handleRetroSync = async () => {
+    if (!confirm(`This will queue a re-sync of the last ${retroPeriod === "1m" ? "1 month" : retroPeriod === "3m" ? "3 months" : retroPeriod === "6m" ? "6 months" : "12 months"} of emails. Existing transactions are not duplicated. Continue?`)) return;
+    setRetroSyncing(true);
+    setRetroMessage("");
+    try {
+      const res = await fetch("/api/gmail/sync/retro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ period: retroPeriod }),
+      });
+      const data = await res.json() as { jobId?: string; error?: string };
+      if (data.jobId) {
+        setRetroMessage(`Retro sync started (job ${data.jobId.slice(0, 8)}…). Watch the banner at the top of the page.`);
+      } else {
+        setRetroMessage(data.error ?? "Failed to start retro sync.");
+      }
+    } catch {
+      setRetroMessage("Failed to start retro sync.");
+    } finally {
+      setRetroSyncing(false);
+    }
+  };
+
   /* ── Audit ── */
   const [logs, setLogs] = useState<ReconciliationLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
@@ -279,6 +490,12 @@ export default function SettingsPage() {
         .finally(() => setLogsLoading(false));
     }
   }, [tab]);
+
+  /* group subcategories by category */
+  const subcatByCategory = subcategories.reduce<Record<string, SubCategoryEntry[]>>((acc, s) => {
+    (acc[s.category] ??= []).push(s);
+    return acc;
+  }, {});
 
   return (
     <div className="p-6 max-w-4xl">
@@ -544,6 +761,10 @@ export default function SettingsPage() {
               <option value="inserted">Inserted</option>
               <option value="upgraded">Upgraded</option>
               <option value="skipped_duplicate">Skipped (duplicate)</option>
+              <option value="not_transaction">Not a transaction</option>
+              <option value="skipped_exclusion">Skipped (exclusion rule)</option>
+              <option value="parse_failed">Parse failed</option>
+              <option value="insufficient_data">Insufficient data</option>
               <option value="skipped_no_amount">Skipped (no amount)</option>
               <option value="skipped_gemini_null">Skipped (Gemini null)</option>
               <option value="skipped_filter">Skipped (filter)</option>
@@ -687,6 +908,271 @@ export default function SettingsPage() {
           {syncing ? "Starting…" : "Sync now"}
         </button>
         {syncMessage && <p className="text-xs text-gray-500 mt-2">{syncMessage}</p>}
+      </div>
+
+      {/* Gmail Query Keywords */}
+      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">Gmail Query Keywords</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Keywords used to build the Gmail search query. Emails matching any keyword are fetched for processing. Changes take effect on the next sync.
+        </p>
+
+        {/* Add keyword form */}
+        <div className="flex flex-wrap gap-2 items-end mb-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Type</label>
+            <select
+              value={newKwType}
+              onChange={(e) => setNewKwType(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            >
+              <option value="from">From (sender)</option>
+              <option value="subject">Subject keyword</option>
+            </select>
+          </div>
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-xs text-gray-500 mb-1">Value</label>
+            <input
+              type="text"
+              placeholder="e.g. swiggy or ₹"
+              value={newKwValue}
+              onChange={(e) => setNewKwValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleAddKeyword()}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            />
+          </div>
+          <button
+            onClick={() => void handleAddKeyword()}
+            disabled={addingKw || !newKwValue.trim()}
+            className="px-4 py-2 bg-[#5b7cfa] text-white rounded-xl text-sm font-medium hover:bg-[#4a6be8] disabled:opacity-60 transition-colors"
+          >
+            {addingKw ? "Adding…" : "Add"}
+          </button>
+        </div>
+
+        {gmailKeywordsLoading ? (
+          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+        ) : (
+          <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+            {["from", "subject"].map((kwType) => {
+              const group = gmailKeywords.filter((k) => k.type === kwType);
+              if (group.length === 0) return null;
+              return (
+                <div key={kwType}>
+                  <div className="px-4 py-2 bg-gray-50">
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{kwType === "from" ? "From (sender)" : "Subject keyword"}</span>
+                  </div>
+                  {group.map((kw) => (
+                    <div key={kw.id} className={`px-4 py-2 flex items-center gap-3 ${!kw.isActive ? "opacity-50" : ""}`}>
+                      <span className="flex-1 text-sm font-mono text-gray-800">{kw.value}</span>
+                      {kw.isDefault && <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">default</span>}
+                      <button
+                        onClick={() => void toggleKeyword(kw.id, kw.isActive)}
+                        className={`text-xs px-2 py-1 rounded-full font-medium transition-colors ${
+                          kw.isActive ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                        }`}
+                      >
+                        {kw.isActive ? "On" : "Off"}
+                      </button>
+                      <button
+                        onClick={() => void deleteKeyword(kw.id)}
+                        className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+            {gmailKeywords.length === 0 && (
+              <div className="px-4 py-6 text-center text-sm text-gray-400">No keywords configured.</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Exclusion Rules */}
+      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">Exclusion Rules</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Senders or domains excluded from processing entirely (e.g. LinkedIn, job boards). Emails from excluded senders skip the LLM.
+        </p>
+
+        {/* Add exclusion form */}
+        <div className="flex flex-wrap gap-2 items-end mb-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Type</label>
+            <select
+              value={newExType}
+              onChange={(e) => setNewExType(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            >
+              <option value="sender_domain">Sender Domain</option>
+              <option value="sender_email">Sender Email</option>
+            </select>
+          </div>
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-xs text-gray-500 mb-1">Value</label>
+            <input
+              type="text"
+              placeholder="e.g. linkedin.com"
+              value={newExValue}
+              onChange={(e) => setNewExValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleAddExclusion()}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            />
+          </div>
+          <div className="flex-1 min-w-[120px]">
+            <label className="block text-xs text-gray-500 mb-1">Note (optional)</label>
+            <input
+              type="text"
+              placeholder="e.g. Job alerts"
+              value={newExNote}
+              onChange={(e) => setNewExNote(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            />
+          </div>
+          <button
+            onClick={() => void handleAddExclusion()}
+            disabled={addingEx || !newExValue.trim()}
+            className="px-4 py-2 bg-[#5b7cfa] text-white rounded-xl text-sm font-medium hover:bg-[#4a6be8] disabled:opacity-60 transition-colors"
+          >
+            {addingEx ? "Adding…" : "Add"}
+          </button>
+        </div>
+
+        {exclusionLoading ? (
+          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+        ) : (
+          <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+            {exclusionRules.length === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-gray-400">No exclusion rules configured.</div>
+            ) : exclusionRules.map((rule) => (
+              <div key={rule.id} className={`px-4 py-2 flex items-center gap-3 ${!rule.isActive ? "opacity-50" : ""}`}>
+                <span className="text-xs text-gray-400 w-28 shrink-0">{rule.type.replace("_", " ")}</span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-mono text-gray-800">{rule.value}</span>
+                  {rule.note && <span className="text-xs text-gray-400 ml-2">{rule.note}</span>}
+                </div>
+                <button
+                  onClick={() => void toggleExclusion(rule.id, rule.isActive)}
+                  className={`text-xs px-2 py-1 rounded-full font-medium transition-colors ${
+                    rule.isActive ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"
+                  }`}
+                >
+                  {rule.isActive ? "On" : "Off"}
+                </button>
+                <button
+                  onClick={() => void deleteExclusion(rule.id)}
+                  className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Sub-Category Taxonomy */}
+      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">Sub-Category Taxonomy</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Sub-categories used by Gemini to classify transactions. System entries cannot be deleted.
+        </p>
+
+        {/* Add sub-category form */}
+        <div className="flex flex-wrap gap-2 items-end mb-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Category</label>
+            <select
+              value={newSubcatCategory}
+              onChange={(e) => setNewSubcatCategory(e.target.value)}
+              className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            >
+              {VALID_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="flex-1 min-w-[160px]">
+            <label className="block text-xs text-gray-500 mb-1">Sub-category</label>
+            <input
+              type="text"
+              placeholder="e.g. food delivery"
+              value={newSubcatValue}
+              onChange={(e) => setNewSubcatValue(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void handleAddSubcat()}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+            />
+          </div>
+          <button
+            onClick={() => void handleAddSubcat()}
+            disabled={addingSubcat || !newSubcatValue.trim()}
+            className="px-4 py-2 bg-[#5b7cfa] text-white rounded-xl text-sm font-medium hover:bg-[#4a6be8] disabled:opacity-60 transition-colors"
+          >
+            {addingSubcat ? "Adding…" : "Add"}
+          </button>
+        </div>
+
+        {subcatLoading ? (
+          <div className="flex flex-col gap-1.5">{[...Array(4)].map((_, i) => <div key={i} className="h-8 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+        ) : (
+          <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+            {Object.keys(subcatByCategory).length === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-gray-400">No sub-categories configured.</div>
+            ) : Object.entries(subcatByCategory).map(([category, entries]) => (
+              <div key={category}>
+                <div className="px-4 py-2 bg-gray-50">
+                  <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{category}</span>
+                </div>
+                {entries.map((entry) => (
+                  <div key={entry.id} className="px-4 py-2 flex items-center gap-3">
+                    <span className="flex-1 text-sm text-gray-800">{entry.subCategory}</span>
+                    {entry.addedBy === "system" ? (
+                      <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">system</span>
+                    ) : (
+                      <button
+                        onClick={() => void deleteSubcat(entry.id)}
+                        className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Retro Re-sync */}
+      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1">Retro Re-sync</h3>
+        <p className="text-sm text-gray-500 mb-3">
+          Re-process historical emails with current filters and query keywords.
+          Existing transactions are not duplicated.
+        </p>
+        <div className="flex items-center gap-3">
+          <select
+            value={retroPeriod}
+            onChange={(e) => setRetroPeriod(e.target.value as RetroPeriod)}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#5b7cfa]"
+          >
+            <option value="1m">Last 1 month</option>
+            <option value="3m">Last 3 months</option>
+            <option value="6m">Last 6 months</option>
+            <option value="12m">Last 12 months</option>
+          </select>
+          <button
+            onClick={() => void handleRetroSync()}
+            disabled={retroSyncing}
+            className="px-4 py-2 text-sm bg-[#5b7cfa] text-white rounded-lg hover:bg-[#4a6be8] disabled:opacity-50 transition-colors"
+          >
+            {retroSyncing ? "Starting…" : "Start Retro Re-sync"}
+          </button>
+        </div>
+        {retroMessage && <p className="text-xs text-gray-500 mt-2">{retroMessage}</p>}
       </div>
 
       {/* Demo Data */}
