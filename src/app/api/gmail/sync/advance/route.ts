@@ -30,14 +30,20 @@ async function advanceJob(job: {
   });
 
   if (pending.length === 0) {
+    const completedJob = await prisma.syncJob.findUnique({
+      where: { id: job.id },
+      select: { startedAt: true },
+    });
+    const watermark = completedJob?.startedAt ?? new Date();
     const completedAt = new Date();
+
     await prisma.syncJob.update({
       where: { id: job.id },
       data: { status: "complete", completedAt },
     });
     await prisma.user.update({
       where: { id: job.userId },
-      data: { gmailSyncedAt: completedAt },
+      data: { gmailSyncedAt: watermark },
     });
     return { phase: "complete", newTransactions: 0 };
   }
@@ -208,9 +214,14 @@ async function advanceJob(job: {
   });
 
   if (isDone) {
+    const completedJob = await prisma.syncJob.findUnique({
+      where: { id: job.id },
+      select: { startedAt: true },
+    });
+    const watermark = completedJob?.startedAt ?? new Date();
     const completedAt = new Date();
     await prisma.syncJob.update({ where: { id: job.id }, data: { completedAt } });
-    await prisma.user.update({ where: { id: job.userId }, data: { gmailSyncedAt: completedAt } });
+    await prisma.user.update({ where: { id: job.userId }, data: { gmailSyncedAt: watermark } });
     return { phase: "complete", newTransactions, processed: processedCount, total: totalCount };
   }
 
