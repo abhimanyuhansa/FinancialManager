@@ -13,7 +13,6 @@ export async function buildGmailQueryFromDB(fromDate: Date): Promise<string> {
 
   return [
     `after:${afterSeconds}`,
-    `in:inbox`,
     `-category:promotions`,
     `-category:social`,
     `-category:forums`,
