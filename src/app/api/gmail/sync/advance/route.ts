@@ -158,6 +158,7 @@ async function advanceJob(job: {
         senderDomain: email.senderDomain, emailDate: new Date(email.receivedDate),
         bodyLengthRaw: result.bodyLengthRaw, bodyLengthSent: result.bodyLengthSent,
         wasTruncated: result.wasTruncated, batchSize: toProcess.length,
+        ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
       };
 
       if (result.outcome !== "parsed" || !result.transactions.length) {

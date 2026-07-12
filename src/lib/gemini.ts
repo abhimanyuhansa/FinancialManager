@@ -44,6 +44,7 @@ export type GeminiEmailResult = {
   bodyLengthRaw: number;
   bodyLengthSent: number;
   wasTruncated: boolean;
+  errorDetail?: string;
 };
 
 const GEMINI_MODEL = "gemini-2.0-flash";
@@ -148,7 +149,9 @@ export async function parseEmailBatch(
   const res = await callGeminiBatch(batchUserPrompt(prepared), apiKey);
 
   if (!res.ok) {
-    console.error(`[gemini] parseEmailBatch HTTP error: ${res.status}`);
+    const errText = await res.text().catch(() => "");
+    console.error(`[gemini] parseEmailBatch HTTP error: ${res.status}`, errText.slice(0, 200));
+    const errorDetail = `HTTP ${res.status}: ${errText.slice(0, 200)}`;
     return prepared.map((p) => ({
       emailIndex: p.emailIndex,
       isTransaction: false,
@@ -157,6 +160,7 @@ export async function parseEmailBatch(
       bodyLengthRaw: p.bodyLengthRaw,
       bodyLengthSent: p.bodyLengthSent,
       wasTruncated: p.wasTruncated,
+      errorDetail,
     }));
   }
 
