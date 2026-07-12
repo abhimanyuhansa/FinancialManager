@@ -8,6 +8,7 @@ type Transaction = {
   amount: number;
   type: string;
   category: string;
+  subCategory: string | null;
   date: string;
   needsReview: boolean;
   reviewed: boolean;
@@ -201,8 +202,13 @@ export default function TransactionsPage() {
                           {tx.source === "seed" && (
                             <span className="ml-2 text-xs px-1.5 py-0.5 bg-[#F8F8F8] text-[#A1A3AD] rounded">Demo</span>
                           )}
+                          {tx.merchant === "Unknown" && tx.needsReview && tx.tag?.startsWith("vpa:") && (
+                            <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                              Identify
+                            </span>
+                          )}
                         </p>
-                        {tx.needsReview && (
+                        {tx.needsReview && !(tx.merchant === "Unknown" && tx.tag?.startsWith("vpa:")) && (
                           <span className="text-xs text-amber-600">⚠ Needs review</span>
                         )}
                       </div>

@@ -48,6 +48,7 @@ export async function GET(req: Request) {
         amount: true,
         type: true,
         category: true,
+        subCategory: true,
         date: true,
         needsReview: true,
         reviewed: true,
