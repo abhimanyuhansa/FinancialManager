@@ -74,6 +74,122 @@ const filters = [
   { type: "subject_keyword", value: "statement",         sourceRank: 1, note: "Statement keyword (for reconciliation)" },
 ];
 
+const fromKeywords = [
+  "hdfcbank", "icicibank", "axisbank", "sbi", "kotak", "indusind", "yesbank", "paytm", "gpay",
+  "phonepe", "amazonpay", "swiggy", "zomato", "blinkit", "zepto", "bigbasket", "groww",
+  "zerodha", "upstox", "irctc", "indigo", "makemytrip", "goibibo", "ola", "uber", "myntra",
+  "nykaa", "ajio", "noreply", "no-reply", "alert", "alerts", "notify", "notification",
+  "notifications", "billing", "billings", "invoice", "invoices", "statement", "statements",
+  "payment", "payments", "paid", "transaction", "transactions", "receipt", "receipts", "bill",
+  "bills", "debit", "debits", "credit", "credits", "debited", "credited", "charge", "charges",
+  "charged", "purchase", "purchases", "purchased", "order", "orders", "booking", "bookings",
+  "refund", "refunds", "cashback", "amount", "amounts", "emi", "emis", "due", "transfer",
+  "transfers", "upi", "neft", "imps", "rtgs", "reward", "rewards", "dividend", "dividends",
+  "salary", "investment", "investments",
+];
+
+const subjectKeywords = [
+  "payment", "payments", "paid", "transaction", "transactions", "receipt", "receipts",
+  "invoice", "invoices", "bill", "bills", "statement", "statements", "debit", "debits",
+  "credit", "credits", "debited", "credited", "charge", "charges", "charged", "purchase",
+  "purchases", "purchased", "order", "orders", "booking", "bookings", "refund", "refunds",
+  "cashback", "amount", "amounts", "emi", "emis", "due", "transfer", "transfers", "upi", "neft",
+  "imps", "rtgs", "reward", "rewards", "dividend", "dividends", "salary", "investment",
+  "investments", "hdfcbank", "icicibank", "axisbank", "sbi", "kotak", "indusind", "yesbank",
+  "paytm", "gpay", "phonepe", "amazonpay", "swiggy", "zomato", "blinkit", "zepto", "bigbasket",
+  "groww", "zerodha", "upstox", "irctc", "indigo", "makemytrip", "goibibo", "ola", "uber",
+  "myntra", "nykaa", "ajio", "noreply", "no-reply", "alert", "alerts", "notify", "notification",
+  "notifications", "billing", "billings",
+];
+
+const exclusionDomains = [
+  { value: "linkedin.com", note: "LinkedIn job notifications" },
+  { value: "naukri.com", note: "Naukri job alerts" },
+  { value: "simplyhired.com", note: "SimplyHired job alerts" },
+  { value: "indeed.com", note: "Indeed job alerts" },
+  { value: "glassdoor.com", note: "Glassdoor job alerts" },
+  { value: "monster.com", note: "Monster job alerts" },
+  { value: "experteer.com", note: "Experteer job alerts" },
+  { value: "shine.com", note: "Shine job alerts" },
+  { value: "timesjobs.com", note: "TimesJobs job alerts" },
+  { value: "foundit.in", note: "Foundit job alerts" },
+  { value: "zoom.us", note: "Zoom meeting notifications" },
+  { value: "calendly.com", note: "Calendly scheduling notifications" },
+  { value: "medium.com", note: "Medium newsletters" },
+  { value: "substack.com", note: "Substack newsletters" },
+];
+
+const subCategories: { category: string; subCategory: string }[] = [
+  // food
+  { category: "food", subCategory: "restaurants" },
+  { category: "food", subCategory: "food delivery" },
+  { category: "food", subCategory: "grocery" },
+  { category: "food", subCategory: "bakery" },
+  { category: "food", subCategory: "snacks" },
+  { category: "food", subCategory: "alcohol" },
+  { category: "food", subCategory: "hookah" },
+  // transport
+  { category: "transport", subCategory: "cab" },
+  { category: "transport", subCategory: "metro" },
+  { category: "transport", subCategory: "bus" },
+  { category: "transport", subCategory: "train" },
+  { category: "transport", subCategory: "flight" },
+  { category: "transport", subCategory: "fuel" },
+  { category: "transport", subCategory: "parking" },
+  { category: "transport", subCategory: "toll" },
+  // shopping
+  { category: "shopping", subCategory: "clothing" },
+  { category: "shopping", subCategory: "electronics" },
+  { category: "shopping", subCategory: "home" },
+  { category: "shopping", subCategory: "beauty" },
+  { category: "shopping", subCategory: "pharmacy" },
+  { category: "shopping", subCategory: "books" },
+  // entertainment
+  { category: "entertainment", subCategory: "streaming" },
+  { category: "entertainment", subCategory: "gaming" },
+  { category: "entertainment", subCategory: "events" },
+  { category: "entertainment", subCategory: "movies" },
+  { category: "entertainment", subCategory: "sports" },
+  // utilities
+  { category: "utilities", subCategory: "electricity" },
+  { category: "utilities", subCategory: "water" },
+  { category: "utilities", subCategory: "gas" },
+  { category: "utilities", subCategory: "internet" },
+  { category: "utilities", subCategory: "mobile" },
+  { category: "utilities", subCategory: "cable" },
+  // health
+  { category: "health", subCategory: "hospital" },
+  { category: "health", subCategory: "pharmacy" },
+  { category: "health", subCategory: "lab tests" },
+  { category: "health", subCategory: "fitness" },
+  { category: "health", subCategory: "insurance" },
+  // finance
+  { category: "finance", subCategory: "credit card" },
+  { category: "finance", subCategory: "emi" },
+  { category: "finance", subCategory: "investment" },
+  { category: "finance", subCategory: "insurance premium" },
+  { category: "finance", subCategory: "bank charges" },
+  // travel
+  { category: "travel", subCategory: "hotel" },
+  { category: "travel", subCategory: "flight" },
+  { category: "travel", subCategory: "train" },
+  { category: "travel", subCategory: "activities" },
+  // groceries
+  { category: "groceries", subCategory: "vegetables" },
+  { category: "groceries", subCategory: "fruits" },
+  { category: "groceries", subCategory: "dairy" },
+  { category: "groceries", subCategory: "meat" },
+  { category: "groceries", subCategory: "staples" },
+  { category: "groceries", subCategory: "beverages" },
+  // income
+  { category: "income", subCategory: "salary" },
+  { category: "income", subCategory: "freelance" },
+  { category: "income", subCategory: "dividend" },
+  { category: "income", subCategory: "interest" },
+  { category: "income", subCategory: "rental" },
+  { category: "income", subCategory: "refund" },
+];
+
 async function main() {
   console.log("Seeding EmailFilter table...");
 
@@ -94,6 +210,46 @@ async function main() {
   }
 
   console.log(`Done. ${filters.length} filters processed (${created} upserted, ${skipped} skipped).`);
+
+  // ── GmailQueryKeyword ────────────────────────────────────────────────────
+  console.log("Seeding GmailQueryKeyword...");
+  for (const value of fromKeywords) {
+    await prisma.gmailQueryKeyword.upsert({
+      where: { type_value: { type: "from", value } },
+      update: {},
+      create: { type: "from", value, isDefault: true },
+    });
+  }
+  for (const value of subjectKeywords) {
+    await prisma.gmailQueryKeyword.upsert({
+      where: { type_value: { type: "subject", value } },
+      update: {},
+      create: { type: "subject", value, isDefault: true },
+    });
+  }
+  console.log(`GmailQueryKeyword: ${fromKeywords.length} from + ${subjectKeywords.length} subject keywords seeded.`);
+
+  // ── ExclusionRule ────────────────────────────────────────────────────────
+  console.log("Seeding ExclusionRule...");
+  for (const { value, note } of exclusionDomains) {
+    await prisma.exclusionRule.upsert({
+      where: { type_value: { type: "sender_domain", value } },
+      update: {},
+      create: { type: "sender_domain", value, note },
+    });
+  }
+  console.log(`ExclusionRule: ${exclusionDomains.length} noise domains seeded.`);
+
+  // ── SubCategoryMaster ────────────────────────────────────────────────────
+  console.log("Seeding SubCategoryMaster...");
+  for (const { category, subCategory } of subCategories) {
+    await prisma.subCategoryMaster.upsert({
+      where: { category_subCategory: { category, subCategory } },
+      update: {},
+      create: { category, subCategory, isDefault: true, addedBy: "system" },
+    });
+  }
+  console.log(`SubCategoryMaster: ${subCategories.length} entries seeded.`);
 }
 
 main()
