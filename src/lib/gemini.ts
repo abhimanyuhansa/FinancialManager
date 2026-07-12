@@ -47,7 +47,7 @@ export type GeminiEmailResult = {
   errorDetail?: string;
 };
 
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-2.0-flash-lite";
 
 const BATCH_SYSTEM_PROMPT =
   "You are a financial transaction parser. For each email, decide if it is a financial transaction email, then extract ALL transactions.\n\n" +

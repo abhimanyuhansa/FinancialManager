@@ -7,7 +7,7 @@ import { upsertTransactionV2 } from "@/lib/dedup";
 import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
 import { checkGeminiRateLimit, incrementGeminiUsage } from "@/lib/geminiRateLimit";
 
-const CHUNK_SIZE = 50;
+const CHUNK_SIZE = 25;
 const BODY_LIMIT = 1500;
 
 async function advanceJob(job: {
