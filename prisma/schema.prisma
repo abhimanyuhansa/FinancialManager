@@ -78,6 +78,8 @@ model Transaction {
   sourceRank  Int      @default(3)
   reviewed    Boolean  @default(false)
   needsReview Boolean  @default(false)
+  subCategory String?
+  lineItems   Json?
   createdAt   DateTime @default(now())
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -219,4 +221,46 @@ model GeminiUsageLog {
   callCount Int      @default(0)
 
   @@unique([date])
+}
+
+model GmailQueryKeyword {
+  id        String   @id @default(cuid())
+  type      String   // "from" | "subject"
+  value     String
+  isActive  Boolean  @default(true)
+  isDefault Boolean  @default(true)
+  addedAt   DateTime @default(now())
+
+  @@unique([type, value])
+}
+
+model ExclusionRule {
+  id       String   @id @default(cuid())
+  type     String   // "sender_domain" | "sender_email"
+  value    String
+  isActive Boolean  @default(true)
+  note     String?
+  addedAt  DateTime @default(now())
+
+  @@unique([type, value])
+}
+
+model MerchantMaster {
+  id           String   @id @default(cuid())
+  merchantName String   @unique  // normalised lowercase
+  category     String
+  subCategory  String?
+  confidence   Float    @default(0)
+  source       String   // "llm" | "user"
+  updatedAt    DateTime @updatedAt
+}
+
+model SubCategoryMaster {
+  id          String  @id @default(cuid())
+  category    String
+  subCategory String
+  isDefault   Boolean @default(false)
+  addedBy     String  @default("system") // "system" | "user" | "llm"
+
+  @@unique([category, subCategory])
 }
