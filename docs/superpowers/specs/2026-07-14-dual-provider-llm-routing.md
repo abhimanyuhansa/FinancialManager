@@ -493,29 +493,41 @@ model LlmBatchIdempotency {
 
 ### Flow
 
-The idempotency check runs **before** provider selection and quota reservation. Serving a cached result must never consume quota.
+The idempotency gate runs **before** provider selection and quota reservation, and is **not** a read-only check. `acquireIdempotencyKey` performs the atomic upsert in a single DB round-trip: it either returns a cached result, parks the caller while another instance is in-flight, or atomically claims ownership of the key. A separate SELECT followed by a later INSERT would re-introduce the race (two instances both read "not found" and both proceed to provider selection).
+
+```typescript
+// Returns:
+//   { status: "complete", result: EmailParseResult[] }  — cached; skip LLM
+//   { status: "claimed" }                               — this instance owns the key; proceed
+// Never returns "in_flight" — polls internally until claimed or times out
+export async function acquireIdempotencyKey(
+  batchKey: string
+): Promise<{ status: "complete"; result: EmailParseResult[] } | { status: "claimed" }>
+```
+
+Internal steps (all inside `acquireIdempotencyKey`):
 
 ```
-1. Compute batchKey
-2. SELECT WHERE batchKey = ? AND expiresAt > now()
-   - "complete" → return result.Json, skip LLM entirely (no quota consumed)
-   - "in_flight" → poll up to (2 × LLM_TIMEOUT_MS); if still in_flight after expiry → fall through to step 3
-   - not found (or found but expired) → continue
-3. INSERT or take over expired row (atomic upsert):
+1. Attempt atomic upsert:
    INSERT INTO LlmBatchIdempotency (batchKey, status, expiresAt)
    VALUES ($key, 'in_flight', $inFlightExpiry)
    ON CONFLICT (batchKey) DO UPDATE
      SET status = 'in_flight', expiresAt = $inFlightExpiry
      WHERE LlmBatchIdempotency.expiresAt < now()
-   - 0 rows affected: another instance holds a live in_flight → return to step 2
-   - 1 row affected: this instance owns the key → continue
-4. [Now] run provider selection + quota reservation
-5. Call LLM (primary + fallback via orchestration layer)
-6. UPDATE SET status = 'complete', result = $results, expiresAt = $completeExpiry
-     WHERE batchKey = ? AND status = 'in_flight'
-7. Return results for transaction processing
-8. Cron prunes: DELETE WHERE expiresAt < now()
+   - 1 row affected: this instance claimed the key → return { status: "claimed" }
+   - 0 rows affected: a live row exists → read it:
+       · status = "complete" → return { status: "complete", result: row.result }
+       · status = "in_flight" → wait IDEMPOTENCY_POLL_INTERVAL_MS, retry from step 1
+         (eventually the in_flight row either completes or expires and we take it over)
 ```
+
+After a successful LLM call, the caller updates the row:
+```
+UPDATE SET status = 'complete', result = $results, expiresAt = $completeExpiry
+  WHERE batchKey = ? AND status = 'in_flight'
+```
+
+Cron prunes: `DELETE WHERE expiresAt < now()`
 
 Using `ON CONFLICT DO UPDATE WHERE expiresAt < now()` instead of `ON CONFLICT DO NOTHING` ensures that a row stuck at an expired `"in_flight"` state is atomically taken over rather than silently skipped, which would block all future requests for that key forever.
 
@@ -647,12 +659,12 @@ LOCK_RENEWAL_INTERVAL_MS  default: 60000
 ```typescript
 const batchKey = buildBatchKey(job.userId, "sync", sortedMsgIds);
 
-// 1. Idempotency check — may return cached results without any quota consumption
-const cached = await checkIdempotency(batchKey);
-if (cached) {
-  // use cached results directly; no LLM call, no quota reserved
+// Atomically claims the key or returns a cached result — never a read-only check
+const idempotency = await acquireIdempotencyKey(batchKey);
+if (idempotency.status === "complete") {
+  // use idempotency.result directly; no LLM call, no quota reserved
 } else {
-  // 2. Only select + reserve quota after confirming no cached/in-flight result
+  // "claimed" — this instance owns the key; now select provider and call LLM
   const { inputTokens, outputTokens } = estimateBatchTokens(llmCandidates.length);
   const provider = await selectProvider(llmCandidates.length, inputTokens, outputTokens);
   if (!provider) return { phase: "rate_limited", newTransactions: 0, source: "llm" };
@@ -680,8 +692,10 @@ Lock-loss is checked at two points:
 ```typescript
 const batchKey = buildBatchKey(userId, "reconcile", [gmailMsgId]);
 
-const cached = await checkIdempotency(batchKey);
-if (!cached) {
+const idempotency = await acquireIdempotencyKey(batchKey);
+if (idempotency.status === "complete") {
+  // use idempotency.result
+} else {
   const { inputTokens, outputTokens } = estimateStatementTokens(statement.body.length);
   const provider = await selectProvider(1, inputTokens, outputTokens);
   if (!provider) return NextResponse.json({ error: "LLM unavailable" }, { status: 503 });
@@ -701,8 +715,10 @@ if (!cached) {
 ```typescript
 const batchKey = buildBatchKey(userId, "reprocess", [log.gmailMsgId]);
 
-const cached = await checkIdempotency(batchKey);
-if (!cached) {
+const idempotency = await acquireIdempotencyKey(batchKey);
+if (idempotency.status === "complete") {
+  // use idempotency.result
+} else {
   const { inputTokens, outputTokens } = estimateBatchTokens(1);
   const provider = await selectProvider(1, inputTokens, outputTokens);
   if (!provider) return NextResponse.json({ error: "LLM unavailable" }, { status: 503 });
@@ -767,7 +783,7 @@ if (!cached) {
 - `router.ts`: Gemini selected, OpenAI selected, both unavailable, CAS quota race, HALF_OPEN probe ordering (fires after reserve, not before), HALF_OPEN probe loss → `releaseQuota` called + routes to other provider
 - `quota.ts`: RPM/TPM/RPD window math; Gemini TPM uses inputTokens only; OpenAI TPM uses input+output; upsert creates missing bucket on first request; CAS guard on conflict branch rejects over-limit; concurrent reservation race; `releaseQuota` decrements correct windows; boundary-burst note: configure limits at 80% of provider limit
 - `circuitBreaker.ts`: CLOSED→OPEN, OPEN→HALF_OPEN atomic probe (only one winner across concurrent calls), HALF_OPEN→CLOSED, HALF_OPEN→OPEN
-- `idempotency.ts`: complete hit skips quota/LLM entirely (idempotency check runs before `selectProvider`), in_flight wait, separate TTLs (in_flight=90s, complete=24h), concurrent INSERT on expired row → atomic takeover not silent skip
+- `idempotency.ts`: `acquireIdempotencyKey` is a single atomic upsert (not a read + separate insert); complete hit returns cached result and skips quota/LLM entirely; in_flight polling loops internally; separate TTLs (in_flight=90s, complete=24h); concurrent call on expired row → atomic takeover not silent skip
 - `lock.ts`: acquire success, acquire when held (live lock), atomic stale-lock replacement, ownerToken-guarded release, renewal success, renewal failure → sets `lockLost.value = true` (not throws from setInterval), `advanceJob` checks flag before each DB write → throws `LockLostError`
 - `validate.ts`: correct result passes, wrong array length throws, emailIndex set not `{0..n-1}` throws (duplicates, gaps, out-of-range), invalid field type → parse_failed outcome on that item
 
@@ -780,7 +796,7 @@ if (!cached) {
 - `reserveQuota` CAS race mid-selection → flips to other provider
 - Circuit breaker: 3 consecutive Gemini 5xx → OPEN → next tick routes to OpenAI
 - HALF_OPEN probe: two concurrent instances, only one proceeds, loser calls `releaseQuota` and routes to other provider
-- Idempotency check returns "complete" → provider never selected, quota never reserved, LLM never called
+- `acquireIdempotencyKey` returns "complete" → provider never selected, quota never reserved, LLM never called
 - Lock renewal failure mid-chunk → `lockLost.value = true` → `advanceJob` detects before next DB write → throws `LockLostError` → job returns `{ phase: "running" }`
 
 ### Pre-rollout parity smoke test (gates production routing enable)
