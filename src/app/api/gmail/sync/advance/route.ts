@@ -8,6 +8,12 @@ import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
 import { checkGeminiRateLimit, incrementGeminiUsage } from "@/lib/geminiRateLimit";
 import { parseEmailStatic } from "@/lib/staticParser";
 import { autoLearnVpa, resolveVpa } from "@/lib/vpaLookup";
+import {
+  templateHash, preloadTemplates, warmCacheKey, applyTemplate, compareOutputs,
+  deriveExtractors, upsertTemplate, recordHit, recordShadowAgreement,
+  recordShadowDisagreement, recordActiveFailure, type ParseTemplateRow,
+} from "@/lib/parseTemplateCache";
+import { lookupExactCache } from "@/lib/exactResultCache";
 
 const CHUNK_SIZE = 25;
 const BODY_LIMIT = 1500;
@@ -244,68 +250,231 @@ async function advanceJob(job: {
         continue;
       }
 
-      // outcome === "insufficient_data" → queue for Gemini
+      // outcome === "insufficient_data" → queue for three-tier chain
       geminiQueue.push(email);
     }
 
-    // ── Gemini fallback (only for insufficient_data emails) ─────────────────
+    // ── Three-tier chain (Tier 1: exact cache → Tier 2: template → Tier 3: Gemini) ─
     if (geminiQueue.length > 0) {
-      const rateCheck = await checkGeminiRateLimit();
-      if (!rateCheck.allowed) {
-        return { phase: "rate_limited", newTransactions: 0, source: "gemini" };
-      }
-
-      const batchInputs: BatchInput[] = geminiQueue.map((e, idx) => ({
-        emailIndex: idx,
-        body: e.body,
-        senderName: e.senderName,
-        fallbackDate: e.receivedDate,
-      }));
-
-      const results = await parseEmailBatch(batchInputs, apiKey);
-      await incrementGeminiUsage();
-
-      for (const result of results) {
-        const email = geminiQueue[result.emailIndex];
-        if (!email) continue;
-
-        const logBase = {
-          ...buildLogBase(email, job),
-          bodyLengthRaw: result.bodyLengthRaw,
-          bodyLengthSent: result.bodyLengthSent,
-          wasTruncated: result.wasTruncated,
-          batchSize: geminiQueue.length,
-          ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
-        };
-
-        if (result.outcome !== "parsed" || !result.transactions.length) {
-          await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome } });
-          continue;
-        }
-
-        for (const tx of result.transactions) {
-          const { category: resolvedCategory, subCategory: resolvedSubCategory } =
-            await lookupAndUpsertMerchant(tx.merchant, tx.category, tx.subCategory ?? null, tx.confidence ?? 0);
-
-          const upsertResult = await upsertTransactionV2(prisma, {
-            userId: job.userId, gmailMsgId: email.msgId, date: new Date(tx.date),
-            merchant: tx.merchant, amount: tx.amount, type: tx.type,
-            currency: tx.currency, category: resolvedCategory, source: "gmail",
-            sourceRank: 1, confidence: tx.confidence, needsReview: tx.needsReview,
-            subCategory: resolvedSubCategory ?? undefined,
-            lineItems: tx.lineItems ?? undefined,
-          });
-
-          const outcome = upsertResult.action === "inserted" ? "inserted"
-            : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
-          if (outcome === "inserted") newTransactions++;
-
+      // Tier 1: exact result cache — re-use a previously parsed result for the same Gmail message
+      const exactHits = await lookupExactCache(job.userId, geminiQueue.map((e) => e.msgId));
+      const templateQueue: typeof geminiQueue = [];
+      for (const email of geminiQueue) {
+        const cachedTxId = exactHits.get(email.msgId);
+        if (cachedTxId) {
           await prisma.parseLog.create({
             data: {
-              ...logBase, outcome, geminiConfidence: tx.confidence,
-              parsedMerchant: tx.merchant, parsedAmount: tx.amount, transactionId: upsertResult.id,
+              ...buildLogBase(email, job),
+              outcome: "skipped_duplicate",
+              bodyLengthRaw: email.body.length,
+              bodyLengthSent: 0,
+              wasTruncated: false,
+              batchSize: 1,
+              transactionId: cachedTxId,
+              resolvedBy: "exact_cache",
             },
           });
+          continue;
+        }
+        templateQueue.push(email);
+      }
+
+      if (templateQueue.length === 0) {
+        // all resolved by exact cache — fall through to batch mark-processed
+      } else {
+        // Tier 2: template cache — try learned regex extractors
+        const templateKeys = templateQueue.map((e) => ({
+          userId: job.userId,
+          senderDomain: e.senderDomain,
+          hash: templateHash(e.subject, e.body),
+        }));
+        const templateMap = await preloadTemplates(templateKeys);
+        const invocationMap = new Map<string, ParseTemplateRow>(templateMap);
+
+        const geminiNeeded: typeof templateQueue = [];
+
+        for (const email of templateQueue) {
+          const hash = templateHash(email.subject, email.body);
+          const key = warmCacheKey(job.userId, email.senderDomain, hash);
+          const tmpl = invocationMap.get(key);
+
+          if (!tmpl || tmpl.status === "DISABLED") {
+            geminiNeeded.push(email);
+            continue;
+          }
+
+          const applied = applyTemplate(email.body, tmpl.extractors);
+          if (!applied) {
+            // Template failed to extract required fields
+            if (tmpl.status === "ACTIVE") {
+              await recordActiveFailure(tmpl.id, key, invocationMap);
+            } else {
+              await recordShadowDisagreement(tmpl.id, key, tmpl.status, invocationMap);
+            }
+            geminiNeeded.push(email);
+            continue;
+          }
+
+          if (tmpl.status === "ACTIVE") {
+            // Use template result directly
+            const { category: resolvedCategory, subCategory: resolvedSubCategory } =
+              await lookupAndUpsertMerchant(applied.merchant ?? email.senderName, applied.transactionType === "income" ? "income" : "other", null, 0.9);
+
+            const upsertResult = await upsertTransactionV2(prisma, {
+              userId: job.userId, gmailMsgId: email.msgId,
+              date: new Date(applied.date), merchant: applied.merchant ?? email.senderName,
+              amount: applied.amount, type: applied.transactionType,
+              currency: applied.currency, category: resolvedCategory,
+              source: "gmail", sourceRank: 1, confidence: 0.9, needsReview: false,
+              subCategory: resolvedSubCategory ?? undefined,
+            });
+
+            const outcome = upsertResult.action === "inserted" ? "inserted"
+              : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
+            if (outcome === "inserted") newTransactions++;
+
+            await prisma.parseLog.create({
+              data: {
+                ...buildLogBase(email, job),
+                outcome,
+                bodyLengthRaw: email.body.length,
+                bodyLengthSent: email.body.length,
+                wasTruncated: false,
+                batchSize: 1,
+                geminiConfidence: 0.9,
+                parsedMerchant: applied.merchant ?? email.senderName,
+                parsedAmount: applied.amount,
+                transactionId: upsertResult.id,
+                resolvedBy: "template",
+              },
+            });
+
+            await recordHit(tmpl.id, key, invocationMap);
+          } else {
+            // SHADOW or DEGRADED — shadow run: Gemini still runs, compare result
+            geminiNeeded.push(email);
+            // shadow applied result stored on email for comparison after Gemini
+            (email as typeof email & { _shadowApplied?: typeof applied; _shadowKey?: string; _shadowTmplId?: string; _shadowTmplStatus?: string })._shadowApplied = applied;
+            (email as typeof email & { _shadowKey?: string })._shadowKey = key;
+            (email as typeof email & { _shadowTmplId?: string })._shadowTmplId = tmpl.id;
+            (email as typeof email & { _shadowTmplStatus?: string })._shadowTmplStatus = tmpl.status;
+          }
+        }
+
+        // Tier 3: Gemini fallback for emails that need it (includes shadow runs)
+        if (geminiNeeded.length > 0) {
+          const rateCheck = await checkGeminiRateLimit();
+          if (!rateCheck.allowed) {
+            return { phase: "rate_limited", newTransactions: 0, source: "gemini" };
+          }
+
+          const batchInputs: BatchInput[] = geminiNeeded.map((e, idx) => ({
+            emailIndex: idx,
+            body: e.body,
+            senderName: e.senderName,
+            fallbackDate: e.receivedDate,
+          }));
+
+          const results = await parseEmailBatch(batchInputs, apiKey);
+          await incrementGeminiUsage();
+
+          for (const result of results) {
+            const email = geminiNeeded[result.emailIndex];
+            if (!email) continue;
+
+            const logBase = {
+              ...buildLogBase(email, job),
+              bodyLengthRaw: result.bodyLengthRaw,
+              bodyLengthSent: result.bodyLengthSent,
+              wasTruncated: result.wasTruncated,
+              batchSize: geminiNeeded.length,
+              ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
+            };
+
+            const shadowEmail = email as typeof email & {
+              _shadowApplied?: ReturnType<typeof applyTemplate>;
+              _shadowKey?: string;
+              _shadowTmplId?: string;
+              _shadowTmplStatus?: string;
+            };
+
+            if (result.outcome !== "parsed" || !result.transactions.length) {
+              await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome, resolvedBy: "gemini" } });
+
+              // Shadow disagreement: Gemini couldn't parse but template had a result
+              if (shadowEmail._shadowTmplId && shadowEmail._shadowKey) {
+                await recordShadowDisagreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, shadowEmail._shadowTmplStatus ?? "SHADOW", invocationMap);
+              }
+              continue;
+            }
+
+            for (const tx of result.transactions) {
+              const { category: resolvedCategory, subCategory: resolvedSubCategory } =
+                await lookupAndUpsertMerchant(tx.merchant, tx.category, tx.subCategory ?? null, tx.confidence ?? 0);
+
+              const upsertResult = await upsertTransactionV2(prisma, {
+                userId: job.userId, gmailMsgId: email.msgId, date: new Date(tx.date),
+                merchant: tx.merchant, amount: tx.amount, type: tx.type,
+                currency: tx.currency, category: resolvedCategory, source: "gmail",
+                sourceRank: 1, confidence: tx.confidence, needsReview: tx.needsReview,
+                subCategory: resolvedSubCategory ?? undefined,
+                lineItems: tx.lineItems ?? undefined,
+              });
+
+              const outcome = upsertResult.action === "inserted" ? "inserted"
+                : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
+              if (outcome === "inserted") newTransactions++;
+
+              await prisma.parseLog.create({
+                data: {
+                  ...logBase, outcome, geminiConfidence: tx.confidence,
+                  parsedMerchant: tx.merchant, parsedAmount: tx.amount,
+                  transactionId: upsertResult.id, resolvedBy: "gemini",
+                },
+              });
+
+              // Template learning: upsert new template from Gemini result if templates provided
+              if (result.subjectTemplate && result.bodyTemplate && !shadowEmail._shadowTmplId) {
+                const hash = templateHash(email.subject, email.body);
+                const geminiApplied = {
+                  amount: tx.amount,
+                  currency: tx.currency,
+                  date: tx.date,
+                  transactionType: tx.type as "expense" | "income",
+                  ...(tx.merchant ? { merchant: tx.merchant } : {}),
+                };
+                const extractors = deriveExtractors(
+                  email.subject, email.body,
+                  result.bodyTemplate, result.subjectTemplate,
+                  geminiApplied
+                );
+                if (Object.keys(extractors).length >= 2) {
+                  await upsertTemplate(
+                    job.userId, email.senderDomain, hash,
+                    result.subjectTemplate, result.bodyTemplate,
+                    extractors, invocationMap
+                  );
+                }
+              }
+
+              // Shadow run: compare template result with Gemini result
+              if (shadowEmail._shadowApplied && shadowEmail._shadowTmplId && shadowEmail._shadowKey) {
+                const geminiForCompare = {
+                  amount: tx.amount,
+                  currency: tx.currency,
+                  date: tx.date,
+                  transactionType: tx.type as "expense" | "income",
+                  ...(tx.merchant ? { merchant: tx.merchant } : {}),
+                };
+                const agree = compareOutputs(shadowEmail._shadowApplied, geminiForCompare);
+                if (agree) {
+                  await recordShadowAgreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, invocationMap);
+                } else {
+                  await recordShadowDisagreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, shadowEmail._shadowTmplStatus ?? "SHADOW", invocationMap);
+                }
+              }
+            }
+          }
         }
       }
     }
@@ -409,10 +578,13 @@ export async function GET(req: NextRequest) {
     results.push({ jobId: job.id, ...result });
   }
 
-  // Prune old parse logs (cron only)
+  // Prune old parse logs and disabled templates (cron only)
   if (isCron) {
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const pruned = await prisma.parseLog.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    await prisma.parseTemplate.deleteMany({
+      where: { status: "DISABLED", updatedAt: { lt: cutoff } },
+    });
     return NextResponse.json({ jobs: results, pruned: pruned.count });
   }
 
