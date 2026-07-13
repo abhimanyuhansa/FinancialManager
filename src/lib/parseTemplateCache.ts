@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { prisma } from "@/lib/prisma";
 
 export const PARSER_VERSION = "1";
 
@@ -295,4 +296,194 @@ export function deriveExtractors(
   }
 
   return extractors;
+}
+
+// ── Transition helpers ──────────────────────────────────────────────────────
+
+export function shouldPromote(consecutiveSuccesses: number): boolean {
+  return consecutiveSuccesses >= 3;
+}
+
+export function shouldDegrade(consecutiveFailures: number): boolean {
+  return consecutiveFailures >= 2;
+}
+
+export function shouldDisableShadow(consecutiveFailures: number): boolean {
+  return consecutiveFailures >= 3;
+}
+
+// ── DB operations ───────────────────────────────────────────────────────────
+
+export async function preloadTemplates(
+  keys: Array<{ userId: string; senderDomain: string; hash: string }>
+): Promise<Map<string, ParseTemplateRow>> {
+  const map = new Map<string, ParseTemplateRow>();
+  if (keys.length === 0) return map;
+
+  const dbMisses: typeof keys = [];
+  for (const k of keys) {
+    const cacheKey = warmCacheKey(k.userId, k.senderDomain, k.hash);
+    const warm = getWarm(cacheKey);
+    if (warm) {
+      map.set(cacheKey, warm);
+    } else {
+      dbMisses.push(k);
+    }
+  }
+
+  if (dbMisses.length === 0) return map;
+
+  const rows = await prisma.parseTemplate.findMany({
+    where: {
+      OR: dbMisses.map((k) => ({
+        userId: k.userId,
+        senderDomain: k.senderDomain,
+        templateHash: k.hash,
+        parserVersion: PARSER_VERSION,
+        status: { not: "DISABLED" },
+      })),
+    },
+  });
+
+  for (const row of rows) {
+    const cacheKey = warmCacheKey(row.userId, row.senderDomain, row.templateHash);
+    const typed: ParseTemplateRow = {
+      ...row,
+      extractors: row.extractors as ExtractorMap,
+    };
+    map.set(cacheKey, typed);
+    setWarm(cacheKey, typed);
+  }
+
+  return map;
+}
+
+export async function upsertTemplate(
+  userId: string,
+  senderDomain: string,
+  hash: string,
+  subjectTemplate: string,
+  bodyTemplate: string,
+  extractors: ExtractorMap,
+  invocationMap: Map<string, ParseTemplateRow>
+): Promise<void> {
+  const key = warmCacheKey(userId, senderDomain, hash);
+  const row = await prisma.parseTemplate.upsert({
+    where: {
+      userId_senderDomain_templateHash_parserVersion: {
+        userId,
+        senderDomain,
+        templateHash: hash,
+        parserVersion: PARSER_VERSION,
+      },
+    },
+    create: {
+      userId,
+      senderDomain,
+      templateHash: hash,
+      parserVersion: PARSER_VERSION,
+      status: "SHADOW",
+      subjectTemplate,
+      bodyTemplate,
+      extractors,
+    },
+    update: {},
+  });
+
+  const typed: ParseTemplateRow = { ...row, extractors: row.extractors as ExtractorMap };
+  invocationMap.set(key, typed);
+  setWarm(key, typed);
+}
+
+export async function recordHit(
+  templateId: string,
+  key: string,
+  invocationMap: Map<string, ParseTemplateRow>
+): Promise<void> {
+  await prisma.parseTemplate.update({
+    where: { id: templateId },
+    data: { hitCount: { increment: 1 }, consecutiveFailures: 0, lastUsedAt: new Date() },
+  });
+  evictWarm(key);
+  invocationMap.delete(key);
+}
+
+export async function recordShadowAgreement(
+  templateId: string,
+  key: string,
+  invocationMap: Map<string, ParseTemplateRow>
+): Promise<void> {
+  await prisma.parseTemplate.update({
+    where: { id: templateId },
+    data: {
+      consecutiveSuccesses: { increment: 1 },
+      consecutiveFailures: 0,
+      hitCount: { increment: 1 },
+      lastUsedAt: new Date(),
+    },
+  });
+
+  await prisma.parseTemplate.updateMany({
+    where: {
+      id: templateId,
+      consecutiveSuccesses: { gte: 3 },
+      status: { in: ["SHADOW", "DEGRADED"] },
+    },
+    data: { status: "ACTIVE", promotedAt: new Date() },
+  });
+
+  evictWarm(key);
+  invocationMap.delete(key);
+}
+
+export async function recordShadowDisagreement(
+  templateId: string,
+  key: string,
+  currentStatus: string,
+  invocationMap: Map<string, ParseTemplateRow>
+): Promise<void> {
+  await prisma.parseTemplate.update({
+    where: { id: templateId },
+    data: {
+      consecutiveSuccesses: 0,
+      consecutiveFailures: { increment: 1 },
+      failCount: { increment: 1 },
+      lastFailedAt: new Date(),
+    },
+  });
+
+  await prisma.parseTemplate.updateMany({
+    where: {
+      id: templateId,
+      consecutiveFailures: { gte: 3 },
+      status: currentStatus,
+    },
+    data: { status: "DISABLED", disabledReason: "consecutive_shadow_failures" },
+  });
+
+  evictWarm(key);
+  invocationMap.delete(key);
+}
+
+export async function recordActiveFailure(
+  templateId: string,
+  key: string,
+  invocationMap: Map<string, ParseTemplateRow>
+): Promise<void> {
+  await prisma.parseTemplate.update({
+    where: { id: templateId },
+    data: {
+      failCount: { increment: 1 },
+      consecutiveFailures: { increment: 1 },
+      lastFailedAt: new Date(),
+    },
+  });
+
+  await prisma.parseTemplate.updateMany({
+    where: { id: templateId, consecutiveFailures: { gte: 2 }, status: "ACTIVE" },
+    data: { status: "DEGRADED", consecutiveSuccesses: 0, consecutiveFailures: 0 },
+  });
+
+  evictWarm(key);
+  invocationMap.delete(key);
 }

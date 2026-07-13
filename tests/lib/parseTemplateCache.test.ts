@@ -178,3 +178,36 @@ describe("deriveExtractors", () => {
     expect(extractors.date).toBeUndefined();
   });
 });
+
+import { shouldPromote, shouldDegrade, shouldDisableShadow } from "@/lib/parseTemplateCache";
+
+describe("state transitions", () => {
+  describe("shouldPromote", () => {
+    it("returns true when consecutiveSuccesses reaches 3", () => {
+      expect(shouldPromote(3)).toBe(true);
+      expect(shouldPromote(4)).toBe(true);
+    });
+    it("returns false below threshold", () => {
+      expect(shouldPromote(2)).toBe(false);
+      expect(shouldPromote(0)).toBe(false);
+    });
+  });
+
+  describe("shouldDegrade", () => {
+    it("returns true when consecutiveFailures reaches 2", () => {
+      expect(shouldDegrade(2)).toBe(true);
+    });
+    it("returns false below threshold", () => {
+      expect(shouldDegrade(1)).toBe(false);
+    });
+  });
+
+  describe("shouldDisableShadow", () => {
+    it("returns true when consecutiveFailures reaches 3", () => {
+      expect(shouldDisableShadow(3)).toBe(true);
+    });
+    it("returns false below threshold", () => {
+      expect(shouldDisableShadow(2)).toBe(false);
+    });
+  });
+});
