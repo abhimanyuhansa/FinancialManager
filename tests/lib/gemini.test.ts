@@ -260,3 +260,78 @@ describe("parseEmailBatch", () => {
     expect(results[0].bodyLengthSent).toBe(1500);
   });
 });
+
+describe("parseEmailBatch — template fields", () => {
+  it("passes through subjectTemplate and bodyTemplate when Gemini returns them", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify([{
+                emailIndex: 0,
+                isTransaction: true,
+                outcome: "parsed",
+                subjectTemplate: "Alert: Rs. {{AMOUNT}} debited",
+                bodyTemplate: "Rs. {{AMOUNT}} debited on {{DATE}} at {{MERCHANT}}",
+                transactions: [{
+                  merchant: "Swiggy",
+                  amount: 349,
+                  currency: "INR",
+                  date: "2026-07-12",
+                  type: "expense",
+                  category: "food",
+                  subCategory: null,
+                  confidence: 0.95,
+                  needsReview: false,
+                  lineItems: null,
+                }],
+              }]),
+            }],
+          },
+        }],
+      }),
+    });
+
+    const results = await parseEmailBatch(
+      [{ emailIndex: 0, body: "Rs. 349 debited on 12-07-26 at Swiggy", senderName: "HDFC Bank", fallbackDate: "2026-07-12" }],
+      MOCK_API_KEY
+    );
+
+    expect(results[0].subjectTemplate).toBe("Alert: Rs. {{AMOUNT}} debited");
+    expect(results[0].bodyTemplate).toBe("Rs. {{AMOUNT}} debited on {{DATE}} at {{MERCHANT}}");
+  });
+
+  it("subjectTemplate and bodyTemplate are undefined when Gemini omits them", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify([{
+                emailIndex: 0,
+                isTransaction: true,
+                outcome: "parsed",
+                transactions: [{
+                  merchant: "Swiggy", amount: 349, currency: "INR",
+                  date: "2026-07-12", type: "expense", category: "food",
+                  subCategory: null, confidence: 0.95, needsReview: false, lineItems: null,
+                }],
+              }]),
+            }],
+          },
+        }],
+      }),
+    });
+
+    const results = await parseEmailBatch(
+      [{ emailIndex: 0, body: "body", senderName: "HDFC Bank", fallbackDate: "2026-07-12" }],
+      MOCK_API_KEY
+    );
+
+    expect(results[0].subjectTemplate).toBeUndefined();
+    expect(results[0].bodyTemplate).toBeUndefined();
+  });
+});

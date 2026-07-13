@@ -45,6 +45,8 @@ export type GeminiEmailResult = {
   bodyLengthSent: number;
   wasTruncated: boolean;
   errorDetail?: string;
+  subjectTemplate?: string;
+  bodyTemplate?: string;
 };
 
 const GEMINI_MODEL = "gemini-2.0-flash-lite";
@@ -64,6 +66,7 @@ const BATCH_SYSTEM_PROMPT =
   "- confidence: 0.0–1.0\n" +
   "- needsReview: true if amount or merchant is ambiguous\n" +
   "- lineItems: array ONLY when email explicitly itemises charges (grocery list, restaurant bill). null otherwise.\n\n" +
+  "For each successfully parsed transaction email, also return subjectTemplate and bodyTemplate: copies of the subject and body with ALL dynamic values replaced by typed placeholders. Use: {{AMOUNT}}, {{DATE}}, {{MERCHANT}}, {{VPA}}, {{ACCOUNT}}, {{ORDER_ID}}, {{TRANSACTION_ID}}, {{CURRENCY}}. Replace every occurrence of each dynamic value, not just the first. Static text (bank name, fixed labels) stays unchanged.\n\n" +
   "Return a JSON array — one object per input email. Never include explanations — only JSON.";
 
 function batchUserPrompt(
@@ -167,6 +170,8 @@ export async function parseEmailBatch(
   let parsed: Array<{
     emailIndex: number;
     isTransaction?: boolean;
+    subjectTemplate?: string;
+    bodyTemplate?: string;
     transactions?: Array<{
       merchant?: string | null;
       amount?: number | null;
@@ -268,6 +273,8 @@ export async function parseEmailBatch(
       transactions,
       outcome: "parsed" as const,
       ...meta,
+      ...(item.subjectTemplate ? { subjectTemplate: item.subjectTemplate } : {}),
+      ...(item.bodyTemplate ? { bodyTemplate: item.bodyTemplate } : {}),
     };
   });
 }
