@@ -326,3 +326,68 @@ model ParseTemplate {
   @@unique([userId, senderDomain, templateHash, parserVersion])
   @@index([userId, senderDomain, status])
 }
+
+model LlmCallLog {
+  id               String   @id @default(cuid())
+  syncJobId        String?
+  userId           String?
+  batchKey         String?
+  provider         String
+  model            String
+  candidateCount   Int
+  attemptNumber    Int
+  wasFallback      Boolean  @default(false)
+  fallbackReason   String?
+  outcome          String
+  errorDetail      String?
+  latencyMs        Int
+  inputTokens      Int
+  outputTokens     Int
+  estimatedCostUsd Decimal
+  createdAt        DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([syncJobId])
+  @@index([batchKey])
+}
+
+model LlmQuotaWindow {
+  id         String   @id @default(cuid())
+  provider   String
+  windowType String
+  windowKey  String
+  count      Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([provider, windowType, windowKey])
+  @@index([provider, windowType, windowKey])
+}
+
+model LlmCircuitBreaker {
+  provider            String    @id
+  state               String    @default("CLOSED")
+  consecutiveFailures Int       @default(0)
+  lastFailureAt       DateTime?
+  openedAt            DateTime?
+  updatedAt           DateTime  @updatedAt
+}
+
+model LlmBatchIdempotency {
+  id        String   @id @default(cuid())
+  batchKey  String   @unique
+  status    String
+  result    Json?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([expiresAt])
+}
+
+model SyncJobLock {
+  jobId      String   @id
+  ownerToken String
+  lockedAt   DateTime @default(now())
+  expiresAt  DateTime
+
+  @@index([expiresAt])
+}
