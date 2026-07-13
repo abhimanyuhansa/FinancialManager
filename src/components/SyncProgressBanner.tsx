@@ -85,13 +85,14 @@ export function SyncProgressBanner() {
   const handleDismiss = () => { setDismissed(job.id); setDismissedState(true); };
 
   if (advancePhase?.phase === "rate_limited") {
+    const src = advancePhase.source ?? "api";
+    const message = src === "lock_contention"
+      ? "Processing paused — another sync is already running. Will retry automatically."
+      : `Processing paused — daily quota reached (${src}). Resumes automatically at midnight UTC.`;
     return (
       <div className="bg-amber-50 border-b border-amber-200 px-4 py-3">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <span className="text-sm text-amber-800">
-            Processing paused — daily quota reached ({advancePhase.source ?? "api"}).
-            Resumes automatically at midnight UTC.
-          </span>
+          <span className="text-sm text-amber-800">{message}</span>
           <button onClick={handleDismiss} className="ml-4 text-amber-500 hover:text-amber-700 text-sm">✕</button>
         </div>
       </div>
