@@ -44,7 +44,18 @@ async function advanceJob(job: {
 }> {
   const lock = await acquireLock(job.id).catch(() => null);
   if (!lock) {
-    return { phase: "rate_limited", newTransactions: 0, source: "lock_contention" };
+    // Another instance is actively processing — return current progress so the
+    // banner shows a normal progress bar rather than a spurious rate-limit warning.
+    const current = await prisma.syncJob.findUnique({
+      where: { id: job.id },
+      select: { processedEmails: true, totalEmails: true, newTransactions: true },
+    });
+    return {
+      phase: "running",
+      newTransactions: current?.newTransactions ?? 0,
+      processed: current?.processedEmails ?? 0,
+      total: current?.totalEmails ?? 0,
+    };
   }
 
   try {
