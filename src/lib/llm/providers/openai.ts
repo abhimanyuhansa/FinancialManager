@@ -49,7 +49,6 @@ async function callOpenAI(
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      temperature: 0,
     };
     if (jsonSchema) {
       body.response_format = {

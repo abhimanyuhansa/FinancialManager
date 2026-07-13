@@ -403,16 +403,39 @@ async function advanceJobLocked(
             .digest("hex");
           const llmContext = { userId: job.userId, syncJobId: job.id, operationType: "sync" as const };
 
-          const results = await parseEmailBatchLLM(
-            llmCandidates.map((e, idx) => ({
-              emailIndex: idx,
-              body: e.body,
-              senderName: e.senderName,
-              fallbackDate: e.receivedDate,
-            })),
-            batchKey,
-            llmContext
-          );
+          let results: Awaited<ReturnType<typeof parseEmailBatchLLM>>;
+          try {
+            results = await parseEmailBatchLLM(
+              llmCandidates.map((e, idx) => ({
+                emailIndex: idx,
+                body: e.body,
+                senderName: e.senderName,
+                fallbackDate: e.receivedDate,
+              })),
+              batchKey,
+              llmContext
+            );
+          } catch (llmErr) {
+            // LLM batch failed entirely — log each candidate as error so the job
+            // can advance past this chunk rather than looping forever.
+            const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
+            await Promise.all(llmCandidates.map((email) =>
+              prisma.parseLog.create({
+                data: {
+                  ...buildLogBase(email, job),
+                  outcome: "error",
+                  bodyLengthRaw: email.body.length,
+                  bodyLengthSent: email.body.length,
+                  wasTruncated: email.body.length >= BODY_LIMIT,
+                  batchSize: llmCandidates.length,
+                  resolvedBy: "llm",
+                  geminiConfidence: 0,
+                  parsedMerchant: errMsg.slice(0, 200),
+                },
+              })
+            ));
+            results = [];
+          }
 
           for (const result of results) {
             const email = llmCandidates[result.emailIndex];
