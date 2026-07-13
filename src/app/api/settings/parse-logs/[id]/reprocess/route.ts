@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getGmailToken } from "@/lib/gmail";
-import { parseEmailBatch } from "@/lib/gemini";
+import { parseEmailBatchLLM } from "@/lib/llm";
+import { createHash } from "crypto";
 import { upsertTransactionV2 } from "@/lib/dedup";
 import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
 
@@ -57,7 +58,6 @@ export async function POST(_req: Request, { params }: RouteContext) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
-  const apiKey = process.env.GEMINI_API_KEY ?? "";
   const { id } = await params;
 
   const log = await prisma.parseLog.findUnique({
@@ -79,25 +79,25 @@ export async function POST(_req: Request, { params }: RouteContext) {
     return NextResponse.json({ error: "Could not fetch Gmail message" }, { status: 400 });
   }
 
-  const results = await parseEmailBatch(
+  const batchKey = createHash("sha256")
+    .update(`${userId}:reprocess:v1:${log.gmailMsgId}`)
+    .digest("hex");
+  const llmContext = { userId, syncJobId: log.syncJobId ?? undefined, operationType: "reprocess" as const };
+  const results = await parseEmailBatchLLM(
     [{ emailIndex: 0, body: msg.body, senderName: msg.senderName, fallbackDate: msg.receivedDate }],
-    apiKey
+    batchKey,
+    llmContext
   );
 
   const result = results[0];
   if (!result) {
-    return NextResponse.json({ error: "No result from Gemini" }, { status: 500 });
+    return NextResponse.json({ error: "No result from LLM" }, { status: 500 });
   }
 
   if (result.outcome !== "parsed" || !result.transactions.length) {
     await prisma.parseLog.update({
       where: { id: log.id },
-      data: {
-        outcome: result.outcome,
-        bodyLengthRaw: result.bodyLengthRaw,
-        bodyLengthSent: result.bodyLengthSent,
-        wasTruncated: result.wasTruncated,
-      },
+      data: { outcome: result.outcome },
     });
     return NextResponse.json({ outcome: result.outcome });
   }
@@ -136,9 +136,6 @@ export async function POST(_req: Request, { params }: RouteContext) {
       parsedMerchant: tx.merchant,
       parsedAmount: tx.amount,
       transactionId: upsertResult.id ?? undefined,
-      bodyLengthRaw: result.bodyLengthRaw,
-      bodyLengthSent: result.bodyLengthSent,
-      wasTruncated: result.wasTruncated,
     },
   });
 

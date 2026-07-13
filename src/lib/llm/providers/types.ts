@@ -68,8 +68,7 @@ export class ProviderParseError extends LLMError {
   readonly name = "ProviderParseError" as const;
   readonly raw: string;
   constructor(provider: LLMProvider, message: string, raw: string) {
-    super(message);
-    this.provider = provider;
+    super(provider, message);
     this.raw = raw;
     Object.setPrototypeOf(this, new.target.prototype);
   }
