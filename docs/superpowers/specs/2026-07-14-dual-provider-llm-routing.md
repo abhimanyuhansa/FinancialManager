@@ -106,6 +106,12 @@ export class ProviderTimeoutError extends Error {
 export class ProviderParseError extends Error {
   constructor(public provider: LLMProvider) { super(); }
 }
+export class ProviderExhaustedError extends Error {
+  // Both primary and fallback failed — all retriable errors exhausted
+  constructor(public primary: LLMProvider, public fallback: LLMProvider) {
+    super(`Both providers exhausted: ${primary} (primary), ${fallback} (fallback)`);
+  }
+}
 export class LockLostError extends Error {
   constructor(public jobId: string) { super(`Lock lost for job ${jobId}`); }
 }
@@ -272,14 +278,16 @@ async function reserveQuota(
   outputTokens: number
 ): Promise<void>
 ```
-Uses serializable `$transaction` with CAS conditional updates:
+Uses serializable `$transaction` with upsert + CAS conditional update. `UPDATE` alone would silently skip the first request of a new bucket (no row exists yet), so the implementation uses `INSERT ... ON CONFLICT DO UPDATE` with the CAS guard on the conflict branch:
 ```sql
-UPDATE LlmQuotaWindow
-SET count = count + $delta
-WHERE provider = $p AND windowType = $type AND windowKey = $key
-  AND count + $delta <= $limit
+-- For each window (rpm, tpm, rpd):
+INSERT INTO LlmQuotaWindow (provider, windowType, windowKey, count)
+VALUES ($p, $type, $key, $delta)
+ON CONFLICT (provider, windowType, windowKey) DO UPDATE
+  SET count = LlmQuotaWindow.count + $delta
+  WHERE LlmQuotaWindow.count + $delta <= $limit
 ```
-If any CAS guard fails (concurrent instance pushed over limit), throws `ProviderRateLimitError`.
+If the CAS guard on the conflict branch fails (0 rows updated — concurrent instance pushed over limit), throws `ProviderRateLimitError`. New buckets are always created atomically by the first request.
 
 **`releaseQuota`** (negating write — called only when HALF_OPEN probe CAS loses after quota was already reserved):
 ```typescript
@@ -634,30 +642,56 @@ LOCK_RENEWAL_INTERVAL_MS  default: 60000
 - Remove `apiKey`, `checkGeminiRateLimit()`, `parseEmailBatch()`, `incrementGeminiUsage()`
 - Rename `geminiQueue` → `llmQueue`, `geminiNeeded` → `llmCandidates`
 - Acquire lock before `advanceJob()`; release in `finally`; catch `LockLostError` → return `{ phase: "running" }`
-- Tier 3 replacement:
+- Tier 3 replacement (idempotency check runs **before** `selectProvider`):
 
 ```typescript
-const { inputTokens, outputTokens } = estimateBatchTokens(llmCandidates.length);
-const provider = await selectProvider(llmCandidates.length, inputTokens, outputTokens);
-if (!provider) return { phase: "rate_limited", newTransactions: 0, source: "llm" };
-
 const batchKey = buildBatchKey(job.userId, "sync", sortedMsgIds);
-// LlmCallLog rows written inside parseEmailBatchLLM — not here
-const { results, attempts } = await parseEmailBatchLLM(llmCandidates, provider, batchKey);
-const resolvedBy = attempts[attempts.length - 1].provider;
-// use resolvedBy when creating ParseLog rows
+
+// 1. Idempotency check — may return cached results without any quota consumption
+const cached = await checkIdempotency(batchKey);
+if (cached) {
+  // use cached results directly; no LLM call, no quota reserved
+} else {
+  // 2. Only select + reserve quota after confirming no cached/in-flight result
+  const { inputTokens, outputTokens } = estimateBatchTokens(llmCandidates.length);
+  const provider = await selectProvider(llmCandidates.length, inputTokens, outputTokens);
+  if (!provider) return { phase: "rate_limited", newTransactions: 0, source: "llm" };
+
+  // LlmCallLog rows written inside parseEmailBatchLLM — not here
+  const { results, attempts } = await parseEmailBatchLLM(
+    llmCandidates,
+    provider,
+    batchKey,
+    { userId: job.userId, syncJobId: job.id, operationType: "sync" }
+  );
+  const resolvedBy = attempts[attempts.length - 1].provider;
+  // use resolvedBy when creating ParseLog rows
+}
 ```
+
+Lock-loss is checked at two points:
+- After each inter-chunk `await` (existing checkpoint)
+- Immediately **before** each `upsertTransactionV2` / `ParseLog` write within a chunk, to prevent writing partial results after the lock has been silently lost mid-chunk
 
 ---
 
 ## 16. Changes to `reconcile/route.ts`
 
 ```typescript
-const { inputTokens, outputTokens } = estimateStatementTokens(statement.body.length);
-const provider = await selectProvider(1, inputTokens, outputTokens);
-if (!provider) return NextResponse.json({ error: "LLM unavailable" }, { status: 503 });
 const batchKey = buildBatchKey(userId, "reconcile", [gmailMsgId]);
-const { raw, attempts } = await parseStatementLLM(statement.body, provider, batchKey);
+
+const cached = await checkIdempotency(batchKey);
+if (!cached) {
+  const { inputTokens, outputTokens } = estimateStatementTokens(statement.body.length);
+  const provider = await selectProvider(1, inputTokens, outputTokens);
+  if (!provider) return NextResponse.json({ error: "LLM unavailable" }, { status: 503 });
+  const { raw, attempts } = await parseStatementLLM(
+    statement.body,
+    provider,
+    batchKey,
+    { userId, operationType: "reconcile" }
+  );
+}
 ```
 
 ---
@@ -665,11 +699,20 @@ const { raw, attempts } = await parseStatementLLM(statement.body, provider, batc
 ## 17. Changes to `reprocess/route.ts`
 
 ```typescript
-const { inputTokens, outputTokens } = estimateBatchTokens(1);
-const provider = await selectProvider(1, inputTokens, outputTokens);
-if (!provider) return NextResponse.json({ error: "LLM unavailable" }, { status: 503 });
 const batchKey = buildBatchKey(userId, "reprocess", [log.gmailMsgId]);
-const { results, attempts } = await parseEmailBatchLLM([input], provider, batchKey);
+
+const cached = await checkIdempotency(batchKey);
+if (!cached) {
+  const { inputTokens, outputTokens } = estimateBatchTokens(1);
+  const provider = await selectProvider(1, inputTokens, outputTokens);
+  if (!provider) return NextResponse.json({ error: "LLM unavailable" }, { status: 503 });
+  const { results, attempts } = await parseEmailBatchLLM(
+    [input],
+    provider,
+    batchKey,
+    { userId, operationType: "reprocess" }
+  );
+}
 ```
 
 ---
@@ -722,21 +765,23 @@ const { results, attempts } = await parseEmailBatchLLM([input], provider, batchK
 
 ### Unit tests
 - `router.ts`: Gemini selected, OpenAI selected, both unavailable, CAS quota race, HALF_OPEN probe ordering (fires after reserve, not before), HALF_OPEN probe loss → `releaseQuota` called + routes to other provider
-- `quota.ts`: RPM/TPM/RPD window math; Gemini TPM uses inputTokens only; OpenAI TPM uses input+output; serializable CAS guard; concurrent reservation race; `releaseQuota` decrements correct windows; boundary-burst note: configure limits at 80% of provider limit
+- `quota.ts`: RPM/TPM/RPD window math; Gemini TPM uses inputTokens only; OpenAI TPM uses input+output; upsert creates missing bucket on first request; CAS guard on conflict branch rejects over-limit; concurrent reservation race; `releaseQuota` decrements correct windows; boundary-burst note: configure limits at 80% of provider limit
 - `circuitBreaker.ts`: CLOSED→OPEN, OPEN→HALF_OPEN atomic probe (only one winner across concurrent calls), HALF_OPEN→CLOSED, HALF_OPEN→OPEN
-- `idempotency.ts`: complete hit skips quota/LLM entirely, in_flight wait, separate TTLs (in_flight=90s, complete=24h), concurrent INSERT on expired row → atomic takeover not silent skip, idempotency check runs before `selectProvider`
-- `lock.ts`: acquire success, acquire when held (live lock), atomic stale-lock replacement, ownerToken-guarded release, renewal success, renewal failure → sets `lockLost.value = true` (not throws from setInterval), `advanceJob` checks flag at each checkpoint → throws `LockLostError`
+- `idempotency.ts`: complete hit skips quota/LLM entirely (idempotency check runs before `selectProvider`), in_flight wait, separate TTLs (in_flight=90s, complete=24h), concurrent INSERT on expired row → atomic takeover not silent skip
+- `lock.ts`: acquire success, acquire when held (live lock), atomic stale-lock replacement, ownerToken-guarded release, renewal success, renewal failure → sets `lockLost.value = true` (not throws from setInterval), `advanceJob` checks flag before each DB write → throws `LockLostError`
 - `validate.ts`: correct result passes, wrong array length throws, emailIndex set not `{0..n-1}` throws (duplicates, gaps, out-of-range), invalid field type → parse_failed outcome on that item
 
 ### Integration tests (mock HTTP)
 - Gemini 429 → OpenAI called → two `LlmCallLog` rows, `wasFallback=true` on row 2, both rows have `userId` + `syncJobId`
 - OpenAI 401 → no fallback, `ProviderAuthError` thrown, one error `LlmCallLog` row
 - Gemini 400 → no fallback, `ProviderBadRequestError`, one error `LlmCallLog` row
+- Both providers fail retriably → `ProviderExhaustedError` thrown
+- `reserveQuota` first request in minute → new bucket created; second request same minute → incremented; third over limit → `ProviderRateLimitError`
 - `reserveQuota` CAS race mid-selection → flips to other provider
 - Circuit breaker: 3 consecutive Gemini 5xx → OPEN → next tick routes to OpenAI
 - HALF_OPEN probe: two concurrent instances, only one proceeds, loser calls `releaseQuota` and routes to other provider
-- Lock renewal failure mid-job → `lockLost.value = true` → `advanceJob` detects on next checkpoint → throws `LockLostError` → job returns `{ phase: "running" }`
 - Idempotency check returns "complete" → provider never selected, quota never reserved, LLM never called
+- Lock renewal failure mid-chunk → `lockLost.value = true` → `advanceJob` detects before next DB write → throws `LockLostError` → job returns `{ phase: "running" }`
 
 ### Pre-rollout parity smoke test (gates production routing enable)
 Run 10–20 representative real emails (a fixed golden set covering transaction types, non-transactions, and ambiguous cases) through both Gemini and OpenAI independently. Compare outcomes:
