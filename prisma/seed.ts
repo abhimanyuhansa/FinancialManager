@@ -250,6 +250,45 @@ async function main() {
     });
   }
   console.log(`SubCategoryMaster: ${subCategories.length} entries seeded.`);
+
+  // ── Category (default categories) ───────────────────────────────────────
+  console.log("Seeding default categories...");
+
+  // Ensure a system user row exists so FK on Category is satisfied.
+  // This is a sentinel — not a real user account.
+  await prisma.user.upsert({
+    where: { email: "system@internal" },
+    update: {},
+    create: { id: "system", email: "system@internal", name: "System" },
+  });
+
+  const defaultCategories = [
+    { slug: "food",       name: "Food",       icon: "ForkKnife"    },
+    { slug: "cafe",       name: "Cafe",       icon: "Coffee"       },
+    { slug: "transport",  name: "Transport",  icon: "Car"          },
+    { slug: "shopping",   name: "Shopping",   icon: "ShoppingCart" },
+    { slug: "clothing",   name: "Clothing",   icon: "TShirt"       },
+    { slug: "bills",      name: "Bills",      icon: "Lightning"    },
+    { slug: "phone",      name: "Phone",      icon: "Phone"        },
+    { slug: "health",     name: "Health",     icon: "Heart"        },
+    { slug: "learning",   name: "Learning",   icon: "BookOpen"     },
+    { slug: "ott",        name: "OTT",        icon: "Television"   },
+    { slug: "rent",       name: "Rent",       icon: "House"        },
+    { slug: "personal",   name: "Personal",   icon: "User"         },
+    { slug: "investment", name: "Investment", icon: "TrendUp"      },
+    { slug: "work",       name: "Work",       icon: "Briefcase"    },
+    { slug: "income",     name: "Income",     icon: "Wallet"       },
+    { slug: "other",      name: "Other",      icon: "Package"      },
+  ];
+
+  for (const cat of defaultCategories) {
+    await prisma.category.upsert({
+      where: { slug: cat.slug },
+      update: { name: cat.name, icon: cat.icon, isDefault: true },
+      create: { slug: cat.slug, name: cat.name, icon: cat.icon, isDefault: true, userId: "system" },
+    });
+  }
+  console.log(`Seeded ${defaultCategories.length} default categories`);
 }
 
 main()
