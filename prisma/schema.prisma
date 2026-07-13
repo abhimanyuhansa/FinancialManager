@@ -28,6 +28,7 @@ model User {
   parseLogs          ParseLog[]
   vpaMerchantMaps    VpaMerchantMap[]
   subCategories      SubCategory[]
+  parseTemplates     ParseTemplate[]
 }
 
 model Account {
@@ -224,6 +225,7 @@ model ParseLog {
   parsedAmount     Float?
   transactionId    String?
   errorDetail      String?
+  resolvedBy       String?   // "static" | "template" | "gemini" | "exact_cache"
   createdAt        DateTime  @default(now())
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -296,4 +298,31 @@ model VpaMerchantMap {
 
   @@unique([userId, vpa])
   @@index([userId])
+}
+
+model ParseTemplate {
+  id                   String    @id @default(cuid())
+  userId               String
+  senderDomain         String
+  templateHash         String
+  parserVersion        String
+  taxonomyVersion      String    @default("")
+  status               String    // SHADOW | ACTIVE | DEGRADED | DISABLED
+  subjectTemplate      String
+  bodyTemplate         String
+  extractors           Json
+  hitCount             Int       @default(0)
+  failCount            Int       @default(0)
+  consecutiveSuccesses Int       @default(0)
+  consecutiveFailures  Int       @default(0)
+  promotedAt           DateTime?
+  lastUsedAt           DateTime?
+  lastFailedAt         DateTime?
+  disabledReason       String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, senderDomain, templateHash, parserVersion])
+  @@index([userId, senderDomain, status])
 }
