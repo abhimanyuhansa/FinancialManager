@@ -1,5 +1,8 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
+import { CategoryIcon } from "@/components/CategoryIcon";
+import { IconPicker } from "@/components/IconPicker";
+import { invalidateCategoryCache } from "@/hooks/useCategories";
 
 type EmailFilter = {
   id: string;
@@ -101,7 +104,53 @@ const VALID_CATEGORIES = [
 ];
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<"filters" | "audit" | "passwords" | "parse-logs">("filters");
+  const [tab, setTab] = useState<"filters" | "audit" | "passwords" | "parse-logs" | "categories">("filters");
+
+  /* ── Categories ── */
+  type CategoryRow = { id: string; slug: string; name: string; icon: string; isDefault: boolean };
+  const [catList, setCatList] = useState<CategoryRow[]>([]);
+  const [catLoading, setCatLoading] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatIcon, setNewCatIcon] = useState("");
+  const [catAddSaving, setCatAddSaving] = useState(false);
+  const [catAddError, setCatAddError] = useState("");
+
+  const fetchCategories = useCallback(async () => {
+    setCatLoading(true);
+    const res = await fetch("/api/categories");
+    const d = await res.json() as { categories: CategoryRow[] };
+    setCatList(d.categories ?? []);
+    setCatLoading(false);
+  }, []);
+
+  const handleAddCat = async () => {
+    if (!newCatName.trim()) return;
+    const slug = newCatName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    setCatAddSaving(true);
+    setCatAddError("");
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newCatName.trim(), slug, icon: newCatIcon }),
+      });
+      if (res.ok) {
+        invalidateCategoryCache();
+        setNewCatName("");
+        setNewCatIcon("");
+        await fetchCategories();
+      } else {
+        const d = await res.json() as { error?: string };
+        setCatAddError(d.error ?? "Failed to add category");
+      }
+    } finally {
+      setCatAddSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === "categories") void fetchCategories();
+  }, [tab, fetchCategories]);
 
   /* ── Email Filters ── */
   const [filters, setFilters] = useState<EmailFilter[]>([]);
@@ -503,7 +552,7 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-[#E9E9EB]">
-        {(["filters", "audit", "passwords", "parse-logs"] as const).map((t) => (
+        {(["filters", "audit", "passwords", "parse-logs", "categories"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -511,7 +560,7 @@ export default function SettingsPage() {
               tab === t ? "text-[#04B488] border-b-2 border-[#04B488]" : "text-[#7C7E8C] hover:text-[#44475B]"
             }`}
           >
-            {t === "filters" ? "Email Filters" : t === "audit" ? "Reconciliation Audit" : t === "passwords" ? "Statement Passwords" : "Parse Logs"}
+            {t === "filters" ? "Email Filters" : t === "audit" ? "Reconciliation Audit" : t === "passwords" ? "Statement Passwords" : t === "parse-logs" ? "Parse Logs" : "Categories"}
           </button>
         ))}
       </div>
@@ -1220,6 +1269,85 @@ export default function SettingsPage() {
           >
             Advance Sync (dev)
           </button>
+        </div>
+      )}
+
+      {/* ── Categories Tab ── */}
+      {tab === "categories" && (
+        <div>
+          <h2 className="text-lg font-semibold text-[#44475B] mb-1">Categories</h2>
+          <p className="text-sm text-[#7C7E8C] mb-4">
+            Categories are shared across all users. Default categories cannot be removed.
+          </p>
+
+          {/* Add new category form */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-4">
+            <p className="text-sm font-semibold text-[#44475B] mb-3">Add new category</p>
+            <input
+              type="text"
+              placeholder="Category name (e.g. Fitness, Petrol)"
+              value={newCatName}
+              onChange={(e) => setNewCatName(e.target.value)}
+              className="mb-3 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
+            />
+            <p className="text-xs font-semibold text-[#7C7E8C] uppercase tracking-wide mb-2">Choose icon</p>
+            <IconPicker selected={newCatIcon} onSelect={setNewCatIcon} />
+            {newCatIcon && (
+              <div className="flex items-center gap-2 mt-2">
+                <CategoryIcon name={newCatIcon} slug="preview" label={newCatName || "New"} size={20} className="text-[#44475B]" />
+                <span className="text-xs text-[#7C7E8C]">
+                  Preview ·{" "}
+                  <button onClick={() => setNewCatIcon("")} className="text-[#ed5533] hover:underline">Clear</button>
+                </span>
+              </div>
+            )}
+            {catAddError && <p className="text-xs text-red-500 mt-2">{catAddError}</p>}
+            <button
+              onClick={handleAddCat}
+              disabled={!newCatName.trim() || catAddSaving}
+              className="mt-3 px-5 py-2 bg-[#04B488] text-white text-sm font-medium rounded-xl hover:bg-[#03a07a] disabled:opacity-50 transition-colors"
+            >
+              {catAddSaving ? "Saving…" : "Add category"}
+            </button>
+          </div>
+
+          {/* Category list */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+            {catLoading ? (
+              <div className="p-4 flex flex-col gap-2">
+                {[...Array(6)].map((_, i) => <div key={i} className="h-10 bg-gray-50 rounded-xl animate-pulse" />)}
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-50">
+                    <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Icon</th>
+                    <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Name</th>
+                    <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Slug</th>
+                    <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Type</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {catList.map((cat) => (
+                    <tr key={cat.id} className="border-b border-gray-50 last:border-0">
+                      <td className="px-5 py-3">
+                        <CategoryIcon name={cat.icon} slug={cat.slug} label={cat.name} size={20} className="text-[#44475B]" />
+                      </td>
+                      <td className="px-5 py-3 text-sm font-medium text-[#44475B]">{cat.name}</td>
+                      <td className="px-5 py-3 text-xs text-[#A1A3AD] font-mono">{cat.slug}</td>
+                      <td className="px-5 py-3">
+                        {cat.isDefault ? (
+                          <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">Default</span>
+                        ) : (
+                          <span className="text-xs px-2 py-0.5 bg-[#E9FAF3] text-[#04B488] rounded-full">Custom</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
     </div>
