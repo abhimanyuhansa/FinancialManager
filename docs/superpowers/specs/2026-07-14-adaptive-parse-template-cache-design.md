@@ -2,31 +2,55 @@
 
 **Goal:** Eliminate redundant Gemini calls for recurring email formats by learning deterministic extraction templates from successfully parsed emails, while never caching transaction-specific values.
 
-**Architecture:** Four-tier parse chain inside `advanceJob`. Gemini is the teacher: it parses, generates a normalized template, and validates shadow templates. Once a template is promoted, matching emails are parsed locally with zero LLM cost.
+**Architecture:** Three-tier parse chain inside `advanceJob` (Tier 3 sender classification removed from v1 — see Removed from v1 section). Gemini is the teacher: it parses, generates a normalized template, and validates shadow templates. Once a template is promoted, matching emails are parsed locally with zero LLM cost.
 
 **Tech Stack:** Next.js 15 App Router, TypeScript, Prisma 7, Neon PostgreSQL, Gemini 2.0 Flash Lite, Vercel serverless.
 
 ---
 
-## Parse Chain (four tiers)
+## Parse Chain (three tiers)
 
 ```
 Static parser            [existing, unchanged]
   ↓ insufficient_data
-Tier 1: Exact result cache     [new — skip re-parse on retry/reprocess]
+Tier 1: Exact result cache     [new — skip re-parse on reprocessJob retry]
   ↓ miss
 Tier 2: Learned template cache [new — core feature]
   ↓ miss, or template is SHADOW/DEGRADED
-Tier 3: Sender classification  [new — lightweight category/subCategory hint]
-  ↓ always combined with Tier 2 shadow path
-Tier 4: Gemini batch           [existing — fallback + teacher]
+Tier 3: Gemini batch           [existing — fallback + teacher]
 ```
 
 Static parser runs first, unchanged. Only `insufficient_data` emails enter the cache chain. The Gemini batch is one HTTP request regardless of how many emails need it; the tier system only controls which emails are included in that batch.
 
+**Tier 1 use case:** Normal syncs deduplicate by `gmailMsgId` before calling `advanceJob`, so the same message is never re-submitted in a normal flow. The exact cache targets `reprocessJob`: when an operator manually retriggers a failed job, the same `gmailMsgId` set is re-submitted. The exact cache returns the previously resolved transaction without re-invoking Gemini.
+
 ---
 
-## New Prisma Model: `ParseTemplate`
+## Template Hash Normalization Algorithm
+
+The `templateHash` is a SHA-256 of the **canonical normalized form** of the email. The same algorithm must be used during both template learning (after Gemini parse) and template lookup (before DB query). Any divergence causes a cache miss for every email.
+
+**Algorithm (applied to both subject and body separately, then concatenated before hashing):**
+
+```typescript
+function canonicalise(text: string): string {
+  return text
+    .toLowerCase()                         // 1. lowercase
+    .replace(/\r\n/g, "\n")               // 2. normalise line endings
+    .replace(/[ \t]+/g, " ")              // 3. collapse horizontal whitespace
+    .replace(/\n{3,}/g, "\n\n")           // 4. collapse 3+ blank lines → 2
+    .trim();                               // 5. strip leading/trailing whitespace
+}
+
+function templateHash(subject: string, body: string): string {
+  const canonical = canonicalise(subject) + "\n---\n" + canonicalise(body);
+  return crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+```
+
+The separator `\n---\n` between subject and body prevents subject/body boundary confusion.
+
+**Important:** The hash is computed from the **original** subject and body (after canonicalisation), not from the template with placeholders. The hash identifies the structural shape of the raw email, used to find a matching template. The template itself (with placeholders) is stored in `subjectTemplate`/`bodyTemplate`.
 
 ```prisma
 model ParseTemplate {
@@ -106,6 +130,34 @@ Required fields: `amount`, `currency`, `date`, `transactionType`. Optional: `mer
 
 ---
 
+## Extractor Generation (from Gemini Output)
+
+After Gemini returns a successfully parsed result **with** `subjectTemplate` and `bodyTemplate`, the extractors are derived algorithmically — no second LLM call required.
+
+**Algorithm for each dynamic field:**
+
+1. Locate the resolved value in the original body (e.g., `"1,234.56"` for amount).
+2. Find the corresponding placeholder position in `bodyTemplate` (e.g., `{{AMOUNT}}`).
+3. Extract the literal text immediately before the placeholder (up to 20 chars) and immediately after (up to 20 chars) as left/right anchors.
+4. Construct a regex: `{leftAnchor}({capturePattern}){rightAnchor}` where `capturePattern` is field-specific (see table below).
+5. Escape all regex metacharacters in the anchor strings.
+6. Validate the generated regex against the original body — it must match and the capture group must equal the original resolved value. If validation fails, discard the extractor for that field (the template can still be stored if required fields have extractors; optional fields may be absent).
+
+**Capture patterns by field:**
+
+| Field | Capture pattern |
+|---|---|
+| `amount` | `[\d,]+(?:\.\d{1,2})?` |
+| `currency` | static extractor (value from Gemini result) |
+| `date` | `\d{1,4}[-\/]\d{1,2}[-\/]\d{1,2}` or `\d{2}-\d{2}-\d{2}` — try both, use whichever matches |
+| `transactionType` | `debited\|credited` |
+| `merchant` | `[A-Za-z][A-Za-z0-9\s\.\-&']+?` |
+| `vpa` | `[\w.\@\-]+` |
+
+**Regex safety:** Before storing any regex, run it through a safe-regex validator (`safe-regex` npm package or equivalent RE2 check). Any regex that fails the safety check is discarded for that field. A template missing only optional field extractors is still stored; a template missing any required field extractor is not stored (Gemini result is used as-is and no template is written).
+
+---
+
 ## Template Lifecycle
 
 ### States
@@ -131,6 +183,26 @@ DISABLED  (terminal)
 | Admin action | any | → DISABLED with `disabledReason = "manual"`. |
 
 **DISABLED** is terminal. A structurally changed email (bank redesigns template) naturally produces a different `templateHash`, creating a new template under the same sender. Stale DISABLED records are pruned by the existing 30-day parse log cron — add `ParseTemplate` to the same cron using `lastUsedAt`.
+
+### Concurrency Safety
+
+Vercel can run multiple `advance` invocations in parallel. All counter increments and status transitions must use atomic Prisma operations:
+
+```typescript
+// Correct — atomic increment + conditional transition in one query
+await prisma.parseTemplate.updateMany({
+  where: { id: template.id, status: "SHADOW" },  // status guard prevents double-transition
+  data: {
+    consecutiveSuccesses: { increment: 1 },
+    consecutiveFailures: 0,
+  },
+});
+// Follow with a separate updateMany to promote only if threshold is met,
+// using a WHERE consecutiveSuccesses >= 3 guard so only one concurrent
+// caller wins the transition.
+```
+
+Never read-then-write counters in application memory. Always use `{ increment: 1 }` and WHERE guards on status fields so concurrent updates are idempotent.
 
 ---
 
@@ -199,6 +271,8 @@ Inside `advanceJob`, after the static parser pass:
 
 Module-level warm cache (`Map<string, ParseTemplate>`) is populated from the invocationMap after each batch. On the next Vercel invocation (warm start), it seeds step 6 without a DB query. Always treated as best-effort: a cache miss falls back to the DB query.
 
+**Warm cache TTL:** Each entry stores a `cachedAt` timestamp (not persisted — only in the module Map). Before serving an entry from the warm cache, check `Date.now() - entry.cachedAt > 5 * 60 * 1000` (5 minutes). A stale entry is evicted and the lookup falls through to the DB query. This prevents a warm Vercel instance from serving a DISABLED or DEGRADED template that was updated in DB by a concurrent invocation.
+
 ---
 
 ## Data Flow in `advanceJob` (modified)
@@ -266,8 +340,8 @@ This powers future analytics: what percentage of emails are resolved without a G
 
 | File | Responsibility |
 |---|---|
-| `src/lib/parseTemplateCache.ts` | `PARSER_VERSION`, module-level warm cache, `preloadTemplates`, `lookupTemplate`, `applyTemplate`, `normaliseEmailForTemplate`, `compareOutputs`, `upsertTemplate`, `recordHit`, `recordFailure`, state transition helpers |
-| `src/lib/exactResultCache.ts` | Tier 1: batch ParseLog lookup by `gmailMsgId`, returns linked transaction if outcome=parsed |
+| `src/lib/parseTemplateCache.ts` | `PARSER_VERSION`, `templateHash`, `canonicalise`, module-level warm cache (with 5-min TTL), `preloadTemplates`, `lookupTemplate`, `applyTemplate`, `deriveExtractors`, `compareOutputs`, `upsertTemplate`, `recordHit`, `recordFailure`, state transition helpers |
+| `src/lib/exactResultCache.ts` | Tier 1: batch ParseLog lookup by `gmailMsgId` (covers `reprocessJob` reruns), returns linked transaction if outcome=parsed |
 | `prisma/migrations/YYYYMMDD_add_parse_template/migration.sql` | `ParseTemplate` table + indexes |
 
 ## Modified Files
@@ -276,7 +350,7 @@ This powers future analytics: what percentage of emails are resolved without a G
 |---|---|
 | `prisma/schema.prisma` | Add `ParseTemplate` model; add `resolvedBy` to `ParseLog`; add `ParseTemplate[]` relation to `User` |
 | `src/lib/gemini.ts` | Add `subjectTemplate?`, `bodyTemplate?` to `GeminiEmailResult`; extend `BATCH_SYSTEM_PROMPT` |
-| `src/app/api/gmail/sync/advance/route.ts` | Replace two-tier logic with four-tier chain per data flow above |
+| `src/app/api/gmail/sync/advance/route.ts` | Replace two-tier logic with three-tier chain per data flow above |
 
 ---
 
@@ -293,6 +367,8 @@ The following values exist only in individual `Transaction` and `ParseLog` recor
 - Any value extracted from a specific email body
 
 Templates store only structural patterns (regexes, placeholder positions) and classification metadata (category, subCategory). The actual values are always extracted fresh from the current email at match time.
+
+**PII boundary:** The `bodyTemplate` field stores the email body after all dynamic values have been replaced by typed placeholders. The full placeholder set (`{{AMOUNT}}`, `{{DATE}}`, `{{MERCHANT}}`, `{{VPA}}`, `{{ACCOUNT}}`, `{{ORDER_ID}}`, `{{TRANSACTION_ID}}`, `{{CURRENCY}}`) must be complete — if a dynamic value is not covered by a placeholder, the Gemini prompt must be updated to cover it before the template is stored. The `bodyTemplate` must never contain a raw account number, VPA, or transaction ID. The Gemini prompt instruction (see Gemini Schema Extension) is the enforcement point.
 
 ---
 
@@ -315,7 +391,15 @@ await prisma.parseTemplate.deleteMany({
 
 ## Testing Approach
 
-- `parseTemplateCache.ts`: unit tests for `normaliseEmailForTemplate` (placeholder substitution), `applyTemplate` (extractor application), `compareOutputs` (all tolerance rules), and all state transition functions. No DB or Gemini required.
-- `exactResultCache.ts`: unit test with mocked Prisma — hit and miss cases.
-- `advance/route.ts` integration path: existing 76 tests must continue to pass. New tests for the four-tier routing logic using mocked cache and mocked Gemini.
+- `parseTemplateCache.ts`: unit tests for `templateHash` (canonicalisation determinism — same input always produces same hash), `applyTemplate` (extractor application), `compareOutputs` (all tolerance rules), and all state transition functions (including concurrency-safe counter increments). No DB or Gemini required.
+- `exactResultCache.ts`: unit test with mocked Prisma — hit and miss cases, including the `reprocessJob` scenario.
+- `advance/route.ts` integration path: existing 76 tests must continue to pass. New tests for the three-tier routing logic using mocked cache and mocked Gemini.
 - Shadow promotion: test that 3 consecutive agreements promote SHADOW → ACTIVE, and 3 consecutive disagreements in SHADOW → DISABLED.
+- Extractor generation: unit tests for `deriveExtractors` — anchor extraction, regex construction, safety validation, and the case where a required-field extractor fails safety check (template not stored).
+- Warm cache TTL: unit test that an entry older than 5 minutes is evicted and the DB is queried.
+
+---
+
+## Removed from v1
+
+**Tier 3 — Sender classification cache** (category/subCategory defaults per sender domain) was included in the original four-tier design but is removed from v1 due to underspecification: the storage format, lookup path, how classification hints flow into Gemini prompt construction, and the interaction with the existing taxonomy system were not fully resolved. The `ParseTemplate` model's `extractors` JSON field could support a classification-only record (no field extractors, only metadata) as a future extension, but this path is not implemented in v1. Gemini remains solely responsible for category/subCategory assignment in v1.
