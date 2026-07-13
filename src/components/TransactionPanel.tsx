@@ -1,5 +1,8 @@
 "use client";
 import { useState } from "react";
+import { useCategories, invalidateCategoryCache } from "@/hooks/useCategories";
+import { CategoryIcon } from "@/components/CategoryIcon";
+import { IconPicker } from "@/components/IconPicker";
 
 type Transaction = {
   id: string;
@@ -22,25 +25,6 @@ type Props = {
   onVpaLabeled?: () => void;
 };
 
-const CATEGORIES = [
-  { value: "food", label: "Food", icon: "🍔" },
-  { value: "cafe", label: "Cafe", icon: "☕" },
-  { value: "transport", label: "Transport", icon: "🚗" },
-  { value: "shopping", label: "Shopping", icon: "🛍️" },
-  { value: "clothing", label: "Clothing", icon: "👕" },
-  { value: "bills", label: "Bills", icon: "⚡" },
-  { value: "phone", label: "Phone", icon: "📱" },
-  { value: "health", label: "Health", icon: "💊" },
-  { value: "learning", label: "Learning", icon: "📚" },
-  { value: "ott", label: "OTT", icon: "📺" },
-  { value: "rent", label: "Rent", icon: "🏠" },
-  { value: "personal", label: "Personal", icon: "💆" },
-  { value: "investment", label: "Investment", icon: "📈" },
-  { value: "work", label: "Work", icon: "💼" },
-  { value: "income", label: "Income", icon: "💰" },
-  { value: "other", label: "Other", icon: "📦" },
-];
-
 function fmtAmount(amount: number, type: string): string {
   const abs = Math.abs(amount);
   const formatted =
@@ -51,6 +35,7 @@ function fmtAmount(amount: number, type: string): string {
 }
 
 export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, onVpaLabeled }: Props) {
+  const { categories, refetch } = useCategories();
   const [pendingCategory, setPendingCategory] = useState<string | null>(null);
   const [scope, setScope] = useState<"single" | "all_merchant">("single");
   const [saving, setSaving] = useState(false);
@@ -63,6 +48,13 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, 
   const [identifyCategory, setIdentifyCategory] = useState(tx?.category ?? "other");
   const [applyToAll, setApplyToAll] = useState(true);
   const [identifySaving, setIdentifySaving] = useState(false);
+
+  // Add-category inline form state
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatIcon, setNewCatIcon] = useState("");
+  const [addSaving, setAddSaving] = useState(false);
+  const [addError, setAddError] = useState("");
 
   if (!tx) return null;
 
@@ -115,9 +107,35 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, 
     }
   };
 
+  const handleAddCategory = async () => {
+    if (!newCatName.trim()) return;
+    const slug = newCatName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    setAddSaving(true);
+    setAddError("");
+    try {
+      const res = await fetch("/api/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newCatName.trim(), slug, icon: newCatIcon }),
+      });
+      if (res.ok) {
+        invalidateCategoryCache();
+        refetch();
+        setNewCatName("");
+        setNewCatIcon("");
+        setShowAddForm(false);
+      } else {
+        const d = await res.json() as { error?: string };
+        setAddError(d.error ?? "Failed to add category");
+      }
+    } finally {
+      setAddSaving(false);
+    }
+  };
+
   const amountColor = tx.type === "income" ? "text-[#04B488]" : "text-[#ED5533]";
   const displayAmount = fmtAmount(tx.amount, tx.type);
-  const catIcon = CATEGORIES.find((c) => c.value === tx.category)?.icon ?? "📦";
+  const currentCat = categories.find((c) => c.slug === tx.category);
 
   return (
     <>
@@ -129,7 +147,13 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, 
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-[#E9E9EB]">
           <div className="flex items-center gap-3">
-            <span className="text-3xl">{catIcon}</span>
+            <CategoryIcon
+              name={currentCat?.icon ?? ""}
+              slug={tx.category}
+              label={tx.category}
+              size={28}
+              className="text-[#44475B]"
+            />
             <div>
               <h2 className="font-semibold text-[#44475B] text-lg leading-tight">{tx.merchant}</h2>
               <span className="text-xs text-[#A1A3AD] uppercase tracking-wide">{tx.category}</span>
@@ -174,8 +198,8 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, 
                 onChange={(e) => setIdentifyCategory(e.target.value)}
                 className="mb-3 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
               >
-                {CATEGORIES.map((c) => (
-                  <option key={c.value} value={c.value}>{c.icon} {c.label}</option>
+                {categories.map((c) => (
+                  <option key={c.slug} value={c.slug}>{c.name}</option>
                 ))}
               </select>
               <label className="mb-3 flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
@@ -202,56 +226,86 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, 
         <div className="px-5 py-4 border-b border-[#E9E9EB]">
           <p className="text-xs font-semibold text-[#7C7E8C] uppercase tracking-wide mb-3">Category</p>
           <div className="grid grid-cols-4 gap-2">
-            {CATEGORIES.map((cat) => (
+            {categories.map((cat) => (
               <button
-                key={cat.value}
-                onClick={() => handleCategoryClick(cat.value)}
+                key={cat.slug}
+                onClick={() => handleCategoryClick(cat.slug)}
                 className={`flex flex-col items-center gap-1 p-2 rounded-lg text-xs transition-colors ${
-                  (pendingCategory ?? tx.category) === cat.value
+                  (pendingCategory ?? tx.category) === cat.slug
                     ? "bg-[#E9FAF3] text-[#04B488] font-medium"
                     : "hover:bg-[#F8F8F8] text-[#7C7E8C]"
                 }`}
               >
-                <span className="text-xl">{cat.icon}</span>
-                <span className="truncate w-full text-center">{cat.label}</span>
+                <CategoryIcon
+                  name={cat.icon}
+                  slug={cat.slug}
+                  label={cat.name}
+                  size={20}
+                  className={(pendingCategory ?? tx.category) === cat.slug ? "text-[#04B488]" : "text-[#7C7E8C]"}
+                />
+                <span className="truncate w-full text-center">{cat.name}</span>
               </button>
             ))}
+
+            {/* Add new category button */}
+            <button
+              onClick={() => setShowAddForm((v) => !v)}
+              className="flex flex-col items-center gap-1 p-2 rounded-lg text-xs hover:bg-[#F8F8F8] text-[#A1A3AD] border border-dashed border-[#E9E9EB] transition-colors"
+            >
+              <span className="text-xl">+</span>
+              <span className="truncate w-full text-center">Add</span>
+            </button>
           </div>
+
+          {/* Inline add-category form */}
+          {showAddForm && (
+            <div className="mt-3 p-3 bg-[#F8F8F8] rounded-lg">
+              <p className="text-sm font-medium text-[#44475B] mb-2">New category</p>
+              <input
+                type="text"
+                placeholder="Name (e.g. Fitness)"
+                value={newCatName}
+                onChange={(e) => setNewCatName(e.target.value)}
+                className="mb-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+              />
+              <p className="text-xs text-[#7C7E8C] mb-2">Pick an icon (optional)</p>
+              <IconPicker selected={newCatIcon} onSelect={setNewCatIcon} />
+              {addError && <p className="text-xs text-red-500 mt-1">{addError}</p>}
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={handleAddCategory}
+                  disabled={!newCatName.trim() || addSaving}
+                  className="flex-1 py-2 bg-[#04B488] text-white text-sm rounded-lg hover:bg-[#03a07a] disabled:opacity-50"
+                >
+                  {addSaving ? "Saving…" : "Add category"}
+                </button>
+                <button
+                  onClick={() => { setShowAddForm(false); setNewCatName(""); setNewCatIcon(""); setAddError(""); }}
+                  className="px-4 py-2 text-sm text-[#7C7E8C] rounded-lg hover:bg-[#E9E9EB]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Scope selector + confirm — only shown when pending change */}
           {pendingCategory && pendingCategory !== tx.category && (
             <div className="mt-4 p-3 bg-[#F8F8F8] rounded-lg">
               <p className="text-sm text-[#44475B] font-medium mb-2">Apply to:</p>
               <label className="flex items-center gap-2 text-sm text-[#44475B] cursor-pointer mb-1">
-                <input
-                  type="radio"
-                  checked={scope === "single"}
-                  onChange={() => setScope("single")}
-                  className="accent-[#04B488]"
-                />
+                <input type="radio" checked={scope === "single"} onChange={() => setScope("single")} className="accent-[#04B488]" />
                 Just this transaction
               </label>
               <label className="flex items-center gap-2 text-sm text-[#44475B] cursor-pointer">
-                <input
-                  type="radio"
-                  checked={scope === "all_merchant"}
-                  onChange={() => setScope("all_merchant")}
-                  className="accent-[#04B488]"
-                />
+                <input type="radio" checked={scope === "all_merchant"} onChange={() => setScope("all_merchant")} className="accent-[#04B488]" />
                 All <strong className="mx-1">{tx.merchant}</strong> transactions
               </label>
               <div className="flex gap-2 mt-3">
-                <button
-                  onClick={handleConfirm}
-                  disabled={saving}
-                  className="flex-1 py-2 bg-[#04B488] text-white text-sm rounded-lg hover:bg-[#03a07a] disabled:opacity-50"
-                >
+                <button onClick={handleConfirm} disabled={saving} className="flex-1 py-2 bg-[#04B488] text-white text-sm rounded-lg hover:bg-[#03a07a] disabled:opacity-50">
                   {saving ? "Saving…" : "Confirm"}
                 </button>
-                <button
-                  onClick={() => setPendingCategory(null)}
-                  className="px-4 py-2 text-sm text-[#7C7E8C] rounded-lg hover:bg-[#E9E9EB]"
-                >
+                <button onClick={() => setPendingCategory(null)} className="px-4 py-2 text-sm text-[#7C7E8C] rounded-lg hover:bg-[#E9E9EB]">
                   Cancel
                 </button>
               </div>
