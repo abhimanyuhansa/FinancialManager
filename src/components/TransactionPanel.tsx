@@ -19,6 +19,7 @@ type Props = {
   transaction: Transaction | null;
   onClose: () => void;
   onCategoryUpdated: (txId: string, newCategory: string) => void;
+  onVpaLabeled?: () => void;
 };
 
 const CATEGORIES = [
@@ -49,7 +50,7 @@ function fmtAmount(amount: number, type: string): string {
   return type === "income" ? `+${formatted}` : formatted;
 }
 
-export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }: Props) {
+export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, onVpaLabeled }: Props) {
   const [pendingCategory, setPendingCategory] = useState<string | null>(null);
   const [scope, setScope] = useState<"single" | "all_merchant">("single");
   const [saving, setSaving] = useState(false);
@@ -57,8 +58,9 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
   // VPA identification state
   const vpa = tx?.tag?.startsWith("vpa:") ? tx.tag.replace("vpa:", "") : null;
   const isUnknown = tx?.merchant === "Unknown" && !!vpa;
-  const [identifyName, setIdentifyName] = useState("");
-  const [identifyCategory, setIdentifyCategory] = useState("other");
+  const hasVpa = !!vpa;
+  const [identifyName, setIdentifyName] = useState(tx?.merchant === "Unknown" ? "" : (tx?.merchant ?? ""));
+  const [identifyCategory, setIdentifyCategory] = useState(tx?.category ?? "other");
   const [applyToAll, setApplyToAll] = useState(true);
   const [identifySaving, setIdentifySaving] = useState(false);
 
@@ -78,7 +80,11 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
           scope: applyToAll ? "all_vpa" : "single",
         }),
       });
-      onCategoryUpdated(tx.id, identifyCategory);
+      if (applyToAll) {
+        onVpaLabeled?.();
+      } else {
+        onCategoryUpdated(tx.id, identifyCategory);
+      }
       onClose();
     } finally {
       setIdentifySaving(false);
@@ -147,11 +153,11 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated }
         </div>
 
         {/* VPA Identification section */}
-        {isUnknown && (
+        {hasVpa && (
           <div className="px-5 py-4 border-b border-[#E9E9EB]">
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
               <p className="mb-1 text-sm font-semibold text-amber-800">
-                Identify this payment
+                {isUnknown ? "Identify this payment" : "Correct this payment"}
               </p>
               <p className="mb-3 font-mono text-xs text-amber-600 break-all">
                 {vpa}

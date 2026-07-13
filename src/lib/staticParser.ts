@@ -26,52 +26,54 @@ function parseAmount(raw: string | null | undefined): number | null {
   return isNaN(n) || n <= 0 ? null : n;
 }
 
+const MONTH_MAP: Record<string, string> = {
+  january: "01", february: "02", march: "03", april: "04", may: "05",
+  june: "06", july: "07", august: "08", september: "09", october: "10",
+  november: "11", december: "12", jan: "01", feb: "02", mar: "03",
+  apr: "04", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10",
+  nov: "11", dec: "12",
+};
+
+// Returns ISO date string. Includes time component only when found in `raw`.
+// Never pads with midnight — if no time, returns YYYY-MM-DD only.
 function normaliseDate(raw: string, fallback: string): string {
+  // Extract optional trailing time "HH:MM:SS" or "HH:MM"
+  const timeM = raw.match(/\s+(\d{2}:\d{2}(?::\d{2})?)$/);
+  const time = timeM?.[1] ?? null;
+  const datePart = timeM ? raw.slice(0, timeM.index).trim() : raw.trim();
+
+  function withTime(date: string): string {
+    return time ? `${date}T${time}` : date;
+  }
+
   // DD/MM/YY or DD-MM-YY
-  let m = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
-  if (m) return `20${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  let m = datePart.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
+  if (m) return withTime(`20${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`);
 
   // DD-Mon-YY  e.g. 04-Jul-26
-  m = raw.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
+  m = datePart.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/);
   if (m) {
-    const months: Record<string, string> = {
-      jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
-      jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
-    };
-    const mo = months[m[2].toLowerCase()] ?? "01";
-    return `20${m[3]}-${mo}-${m[1].padStart(2, "0")}`;
+    const mo = MONTH_MAP[m[2].toLowerCase()] ?? "01";
+    return withTime(`20${m[3]}-${mo}-${m[1].padStart(2, "0")}`);
   }
 
   // "15 Jan, 2026"
-  m = raw.match(/^(\d{1,2})\s+([A-Za-z]{3,9}),?\s+(\d{4})$/);
+  m = datePart.match(/^(\d{1,2})\s+([A-Za-z]{3,9}),?\s+(\d{4})$/);
   if (m) {
-    const months: Record<string, string> = {
-      january: "01", february: "02", march: "03", april: "04", may: "05",
-      june: "06", july: "07", august: "08", september: "09", october: "10",
-      november: "11", december: "12", jan: "01", feb: "02", mar: "03",
-      apr: "04", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10",
-      nov: "11", dec: "12",
-    };
-    const mo = months[m[2].toLowerCase()] ?? "01";
-    return `${m[3]}-${mo}-${m[1].padStart(2, "0")}`;
+    const mo = MONTH_MAP[m[2].toLowerCase()] ?? "01";
+    return withTime(`${m[3]}-${mo}-${m[1].padStart(2, "0")}`);
   }
 
   // "Jan 15, 2026" or "January 15, 2026"
-  m = raw.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/);
+  m = datePart.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/);
   if (m) {
-    const months: Record<string, string> = {
-      january: "01", february: "02", march: "03", april: "04", may: "05",
-      june: "06", july: "07", august: "08", september: "09", october: "10",
-      november: "11", december: "12", jan: "01", feb: "02", mar: "03",
-      apr: "04", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10",
-      nov: "11", dec: "12",
-    };
-    const mo = months[m[1].toLowerCase()] ?? "01";
-    return `${m[3]}-${mo}-${m[2].padStart(2, "0")}`;
+    const mo = MONTH_MAP[m[1].toLowerCase()] ?? "01";
+    return withTime(`${m[3]}-${mo}-${m[2].padStart(2, "0")}`);
   }
 
-  // YYYY-MM-DD already
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  // YYYY-MM-DD already (with optional time already attached)
+  if (/^\d{4}-\d{2}-\d{2}/.test(datePart)) return withTime(datePart.slice(0, 10));
+
   return fallback;
 }
 
@@ -145,7 +147,7 @@ function parseHdfcUpiAlert(body: string, receivedDate: string): StaticParseResul
     merchant = "Unknown";
   }
 
-  const dateM = body.match(/on\s+(\d{2}-\d{2}-\d{2})\b/i);
+  const dateM = body.match(/on\s+(\d{2}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)\b/i);
   const date  = normaliseDate(dateM?.[1] ?? "", receivedDate);
   const [category, subCategory] = categoryFromVpa(vpa ?? "", merchant);
 
@@ -176,7 +178,7 @@ function parseSbiAlert(body: string, receivedDate: string): StaticParseResult {
   const type = creditM ? "income" : "expense";
   const toM = body.match(/Transferred to\s+((?:Mr\.|Mrs\.|Ms\.)?\s*[A-Z][A-Z\s]+)/i);
   const merchant = toM?.[1]?.trim() ?? "SBI Transfer";
-  const dateM = body.match(/on\s+(\d{2}\/\d{2}\/\d{2})/i);
+  const dateM = body.match(/on\s+(\d{2}\/\d{2}\/\d{2}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)/i);
   const date = normaliseDate(dateM?.[1] ?? "", receivedDate);
   return tx(merchant, amount, type, date, "finance", "bank_transfer");
 }
@@ -190,11 +192,14 @@ function parseDcbBank(body: string, receivedDate: string): StaticParseResult {
   const type = creditM ? "income" : "expense";
   const narM = body.match(/at\s+(?:VS|POS|UPI)\/[\d\w\/]+?\/([A-Z][A-Z\s&.]+?)(?:\s+Available|\s*$)/i);
   const merchant = narM?.[1]?.trim() ?? "DCB Bank";
-  const dateM = body.match(/on\s+(\d{2}-\d{2}-\d{4})/i);
+  const dateM = body.match(/on\s+(\d{2}-\d{2}-\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)/i);
   let date = receivedDate;
   if (dateM) {
-    const parts = dateM[1].split("-");
-    date = `${parts[2]}-${parts[1]}-${parts[0]}`;
+    // DD-MM-YYYY → normaliseDate can't handle this format directly; rewrite to DD/MM/YY then delegate
+    const [dd, mm, yyyy, ...rest] = dateM[1].split(/[-\s]/);
+    const yy = yyyy.slice(2);
+    const timeStr = rest.length ? ` ${rest.join(" ")}` : "";
+    date = normaliseDate(`${dd}/${mm}/${yy}${timeStr}`, receivedDate);
   }
   const [category, subCategory] = categoryFromVpa("", merchant);
   return tx(merchant, amount, type, date, category, subCategory);
@@ -322,7 +327,7 @@ function parseJio(body: string, subject: string, receivedDate: string): StaticPa
   const amtM = body.match(/payment of Rs\.?\s*([\d,]+(?:\.\d{2})?)/i);
   const amount = parseAmount(amtM?.[1]);
   if (!amount) return INSUF;
-  const dateM = body.match(/on\s+(\d{2}-[A-Za-z]{3}-\d{2})/i);
+  const dateM = body.match(/on\s+(\d{2}-[A-Za-z]{3}-\d{2}(?:\s+\d{2}:\d{2}(?::\d{2})?)?)/i);
   const date  = normaliseDate(dateM?.[1] ?? "", receivedDate);
   return tx("Jio", amount, "expense", date, "utilities", "mobile");
 }

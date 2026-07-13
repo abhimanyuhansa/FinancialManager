@@ -265,6 +265,10 @@ export default function TransactionsPage() {
           );
           setSelectedTx((prev) => prev && prev.id === txId ? { ...prev, category: newCategory } : prev);
         }}
+        onVpaLabeled={() => {
+          setSelectedTx(null);
+          fetchTransactions();
+        }}
       />
     </div>
   );
