@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getGmailToken, fetchMessageIdPage, fetchFullMessageBatch, fetchPdfAttachment } from "@/lib/gmail";
-import { parseEmailBatch, type BatchInput } from "@/lib/gemini";
+import { parseEmailBatchLLM } from "@/lib/llm";
+import { acquireLock, LockLostError } from "@/lib/llm/lock";
 import { upsertTransactionV2 } from "@/lib/dedup";
 import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
-import { checkGeminiRateLimit, incrementGeminiUsage } from "@/lib/geminiRateLimit";
 import { parseEmailStatic } from "@/lib/staticParser";
+import { createHash } from "crypto";
 import { autoLearnVpa, resolveVpa } from "@/lib/vpaLookup";
 import {
   templateHash, preloadTemplates, warmCacheKey, applyTemplate, compareOutputs,
@@ -41,7 +42,28 @@ async function advanceJob(job: {
   total?: number;
   source?: string;
 }> {
-  const apiKey = process.env.GEMINI_API_KEY ?? "";
+  const lock = await acquireLock(job.id).catch(() => null);
+  if (!lock) {
+    return { phase: "rate_limited", newTransactions: 0, source: "lock_contention" };
+  }
+
+  try {
+    return await advanceJobLocked(job, lock);
+  } finally {
+    lock.release();
+  }
+}
+
+async function advanceJobLocked(
+  job: { id: string; userId: string },
+  lock: { lockLost: { value: boolean }; release: () => void }
+): Promise<{
+  phase: "running" | "complete" | "rate_limited";
+  newTransactions: number;
+  processed?: number;
+  total?: number;
+  source?: string;
+}> {
 
   const pending = await prisma.syncJobMessage.findMany({
     where: { syncJobId: job.id, processed: false },
@@ -160,9 +182,10 @@ async function advanceJob(job: {
 
   if (toProcess.length > 0) {
     // ── Static parser pass ──────────────────────────────────────────────────
-    const geminiQueue: typeof toProcess = [];
+    const llmQueue: typeof toProcess = [];
 
     for (const email of toProcess) {
+      if (lock.lockLost.value) throw new LockLostError(job.id);
       const staticResult = parseEmailStatic({
         body: email.body,
         senderName: email.senderName,
@@ -251,15 +274,15 @@ async function advanceJob(job: {
       }
 
       // outcome === "insufficient_data" → queue for three-tier chain
-      geminiQueue.push(email);
+      llmQueue.push(email);
     }
 
-    // ── Three-tier chain (Tier 1: exact cache → Tier 2: template → Tier 3: Gemini) ─
-    if (geminiQueue.length > 0) {
+    // ── Three-tier chain (Tier 1: exact cache → Tier 2: template → Tier 3: LLM) ─
+    if (llmQueue.length > 0) {
       // Tier 1: exact result cache — re-use a previously parsed result for the same Gmail message
-      const exactHits = await lookupExactCache(job.userId, geminiQueue.map((e) => e.msgId));
-      const templateQueue: typeof geminiQueue = [];
-      for (const email of geminiQueue) {
+      const exactHits = await lookupExactCache(job.userId, llmQueue.map((e) => e.msgId));
+      const templateQueue: typeof llmQueue = [];
+      for (const email of llmQueue) {
         const cachedTxId = exactHits.get(email.msgId);
         if (cachedTxId) {
           await prisma.parseLog.create({
@@ -291,7 +314,7 @@ async function advanceJob(job: {
         const templateMap = await preloadTemplates(templateKeys);
         const invocationMap = new Map<string, ParseTemplateRow>(templateMap);
 
-        const geminiNeeded: typeof templateQueue = [];
+        const llmCandidates: typeof templateQueue = [];
 
         for (const email of templateQueue) {
           const hash = templateHash(email.subject, email.body);
@@ -299,7 +322,7 @@ async function advanceJob(job: {
           const tmpl = invocationMap.get(key);
 
           if (!tmpl || tmpl.status === "DISABLED") {
-            geminiNeeded.push(email);
+            llmCandidates.push(email);
             continue;
           }
 
@@ -311,7 +334,7 @@ async function advanceJob(job: {
             } else {
               await recordShadowDisagreement(tmpl.id, key, tmpl.status, invocationMap);
             }
-            geminiNeeded.push(email);
+            llmCandidates.push(email);
             continue;
           }
 
@@ -351,8 +374,8 @@ async function advanceJob(job: {
 
             await recordHit(tmpl.id, key, invocationMap);
           } else {
-            // SHADOW or DEGRADED — shadow run: Gemini still runs, compare result
-            geminiNeeded.push(email);
+            // SHADOW or DEGRADED — LLM still runs, compare result
+            llmCandidates.push(email);
             // shadow applied result stored on email for comparison after Gemini
             (email as typeof email & { _shadowApplied?: typeof applied; _shadowKey?: string; _shadowTmplId?: string; _shadowTmplStatus?: string })._shadowApplied = applied;
             (email as typeof email & { _shadowKey?: string })._shadowKey = key;
@@ -361,34 +384,36 @@ async function advanceJob(job: {
           }
         }
 
-        // Tier 3: Gemini fallback for emails that need it (includes shadow runs)
-        if (geminiNeeded.length > 0) {
-          const rateCheck = await checkGeminiRateLimit();
-          if (!rateCheck.allowed) {
-            return { phase: "rate_limited", newTransactions: 0, source: "gemini" };
-          }
+        // Tier 3: LLM fallback for emails that need it (includes shadow runs)
+        if (llmCandidates.length > 0) {
+          if (lock.lockLost.value) throw new LockLostError(job.id);
+          const batchKey = createHash("sha256")
+            .update(`${job.userId}:sync:v1:${llmCandidates.map((e) => e.msgId).sort().join(",")}`)
+            .digest("hex");
+          const llmContext = { userId: job.userId, syncJobId: job.id, operationType: "sync" as const };
 
-          const batchInputs: BatchInput[] = geminiNeeded.map((e, idx) => ({
-            emailIndex: idx,
-            body: e.body,
-            senderName: e.senderName,
-            fallbackDate: e.receivedDate,
-          }));
-
-          const results = await parseEmailBatch(batchInputs, apiKey);
-          await incrementGeminiUsage();
+          const results = await parseEmailBatchLLM(
+            llmCandidates.map((e, idx) => ({
+              emailIndex: idx,
+              body: e.body,
+              senderName: e.senderName,
+              fallbackDate: e.receivedDate,
+            })),
+            batchKey,
+            llmContext
+          );
 
           for (const result of results) {
-            const email = geminiNeeded[result.emailIndex];
+            const email = llmCandidates[result.emailIndex];
             if (!email) continue;
 
+            const bodyLen = email.body.length;
             const logBase = {
               ...buildLogBase(email, job),
-              bodyLengthRaw: result.bodyLengthRaw,
-              bodyLengthSent: result.bodyLengthSent,
-              wasTruncated: result.wasTruncated,
-              batchSize: geminiNeeded.length,
-              ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
+              bodyLengthRaw: bodyLen,
+              bodyLengthSent: bodyLen,
+              wasTruncated: bodyLen >= BODY_LIMIT,
+              batchSize: llmCandidates.length,
             };
 
             const shadowEmail = email as typeof email & {
@@ -399,9 +424,9 @@ async function advanceJob(job: {
             };
 
             if (result.outcome !== "parsed" || !result.transactions.length) {
-              await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome, resolvedBy: "gemini" } });
+              await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome, resolvedBy: "llm" } });
 
-              // Shadow disagreement: Gemini couldn't parse but template had a result
+              // Shadow disagreement: LLM couldn't parse but template had a result
               if (shadowEmail._shadowTmplId && shadowEmail._shadowKey) {
                 await recordShadowDisagreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, shadowEmail._shadowTmplStatus ?? "SHADOW", invocationMap);
               }
@@ -429,7 +454,7 @@ async function advanceJob(job: {
                 data: {
                   ...logBase, outcome, geminiConfidence: tx.confidence,
                   parsedMerchant: tx.merchant, parsedAmount: tx.amount,
-                  transactionId: upsertResult.id, resolvedBy: "gemini",
+                  transactionId: upsertResult.id, resolvedBy: "llm",
                 },
               });
 
