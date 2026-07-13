@@ -22,7 +22,7 @@ function windowKeys(): { rpm: string; tpm: string; rpd: string } {
   return { rpm: minuteKey, tpm: minuteKey, rpd: dayKey };
 }
 
-type WindowRow = { window_type: string; count: number };
+type WindowRow = { windowType: string; count: number };
 
 export async function checkQuota(
   provider: LLMProvider,
@@ -33,18 +33,18 @@ export async function checkQuota(
 
   const rows = await prisma.$queryRaw<WindowRow[]>(
     Prisma.sql`
-      SELECT window_type, count FROM "LlmQuotaWindow"
+      SELECT "windowType", count FROM "LlmQuotaWindow"
       WHERE provider = ${provider}
         AND (
-          (window_type = 'rpm' AND window_key = ${keys.rpm})
-          OR (window_type = 'tpm' AND window_key = ${keys.tpm})
-          OR (window_type = 'rpd' AND window_key = ${keys.rpd})
+          ("windowType" = 'rpm' AND "windowKey" = ${keys.rpm})
+          OR ("windowType" = 'tpm' AND "windowKey" = ${keys.tpm})
+          OR ("windowType" = 'rpd' AND "windowKey" = ${keys.rpd})
         )
     `
   );
 
   const get = (type: string) =>
-    rows.find((r) => r.window_type === type)?.count ?? 0;
+    rows.find((r) => r.windowType === type)?.count ?? 0;
 
   if (get("rpm") + requestCount > limits.rpm)
     return { allowed: false, reason: `rpm limit ${limits.rpm}` };
@@ -71,12 +71,12 @@ export async function reserveQuota(
   for (const w of windows) {
     const result = await prisma.$queryRaw<Array<{ affected: number }>>(
       Prisma.sql`
-        INSERT INTO "LlmQuotaWindow" (id, provider, window_type, window_key, count, updated_at)
+        INSERT INTO "LlmQuotaWindow" (id, provider, "windowType", "windowKey", count, "updatedAt")
         VALUES (gen_random_uuid(), ${provider}, ${w.type}, ${w.key}, ${w.delta}, NOW())
-        ON CONFLICT (provider, window_type, window_key)
+        ON CONFLICT (provider, "windowType", "windowKey")
         DO UPDATE SET
           count = "LlmQuotaWindow".count + ${w.delta},
-          updated_at = NOW()
+          "updatedAt" = NOW()
         WHERE "LlmQuotaWindow".count + ${w.delta} <= ${w.limit}
         RETURNING 1 AS affected
       `
@@ -105,10 +105,10 @@ export async function releaseQuota(
       await prisma.$queryRaw(
         Prisma.sql`
           UPDATE "LlmQuotaWindow"
-          SET count = GREATEST(0, count - ${w.delta}), updated_at = NOW()
+          SET count = GREATEST(0, count - ${w.delta}), "updatedAt" = NOW()
           WHERE provider = ${provider}
-            AND window_type = ${w.type}
-            AND window_key = ${w.key}
+            AND "windowType" = ${w.type}
+            AND "windowKey" = ${w.key}
         `
       );
     }

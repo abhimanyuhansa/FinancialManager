@@ -35,19 +35,19 @@ export async function acquireLock(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const result = await prisma.$queryRaw<Array<{ acquired: boolean }>>(
       Prisma.sql`
-        INSERT INTO "SyncJobLock" (job_id, owner_token, locked_at, expires_at)
+        INSERT INTO "SyncJobLock" ("jobId", "ownerToken", "lockedAt", "expiresAt")
         VALUES (
           ${jobId},
           ${ownerToken},
           NOW(),
           NOW() + (${LOCK_DURATION_MS}::bigint * INTERVAL '1 millisecond')
         )
-        ON CONFLICT (job_id)
+        ON CONFLICT ("jobId")
         DO UPDATE SET
-          owner_token = ${ownerToken},
-          locked_at = NOW(),
-          expires_at = NOW() + (${LOCK_DURATION_MS}::bigint * INTERVAL '1 millisecond')
-        WHERE "SyncJobLock".expires_at < NOW()
+          "ownerToken" = ${ownerToken},
+          "lockedAt" = NOW(),
+          "expiresAt" = NOW() + (${LOCK_DURATION_MS}::bigint * INTERVAL '1 millisecond')
+        WHERE "SyncJobLock"."expiresAt" < NOW()
         RETURNING TRUE AS acquired
       `
     );
@@ -58,8 +58,8 @@ export async function acquireLock(
           const renewed = await prisma.$queryRaw<Array<{ renewed: boolean }>>(
             Prisma.sql`
               UPDATE "SyncJobLock"
-              SET expires_at = NOW() + (${LOCK_DURATION_MS}::bigint * INTERVAL '1 millisecond')
-              WHERE job_id = ${jobId} AND owner_token = ${ownerToken}
+              SET "expiresAt" = NOW() + (${LOCK_DURATION_MS}::bigint * INTERVAL '1 millisecond')
+              WHERE "jobId" = ${jobId} AND "ownerToken" = ${ownerToken}
               RETURNING TRUE AS renewed
             `
           );
@@ -94,7 +94,7 @@ export async function releaseLock(jobId: string, ownerToken: string): Promise<vo
     await prisma.$queryRaw(
       Prisma.sql`
         DELETE FROM "SyncJobLock"
-        WHERE job_id = ${jobId} AND owner_token = ${ownerToken}
+        WHERE "jobId" = ${jobId} AND "ownerToken" = ${ownerToken}
       `
     );
   } catch {

@@ -49,11 +49,11 @@ export async function tryAcquireHalfOpenProbe(provider: LLMProvider): Promise<bo
   const result = await prisma.$queryRaw<Array<{ affected: number }>>(
     Prisma.sql`
       UPDATE "LlmCircuitBreaker"
-      SET state = 'PROBING', updated_at = NOW()
+      SET state = 'PROBING', "updatedAt" = NOW()
       WHERE provider = ${provider}
         AND state = 'OPEN'
-        AND opened_at IS NOT NULL
-        AND EXTRACT(EPOCH FROM (NOW() - opened_at)) * 1000 >= ${HALF_OPEN_AFTER_MS}
+        AND "openedAt" IS NOT NULL
+        AND EXTRACT(EPOCH FROM (NOW() - "openedAt")) * 1000 >= ${HALF_OPEN_AFTER_MS}
       RETURNING 1 AS affected
     `
   );

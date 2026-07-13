@@ -22,15 +22,15 @@ export async function acquireIdempotencyKey(batchKey: string): Promise<Idempoten
   // winning row's status+result so we know whether we claimed or hit a cache.
   const rows = await prisma.$queryRaw<Array<{ status: string; result: unknown }>>(
     Prisma.sql`
-      INSERT INTO "LlmBatchIdempotency" (id, batch_key, status, result, created_at, expires_at)
+      INSERT INTO "LlmBatchIdempotency" (id, "batchKey", status, result, "createdAt", "expiresAt")
       VALUES (${id}, ${batchKey}, 'in_flight', NULL, NOW(), ${inFlightExpiry}::timestamptz)
-      ON CONFLICT (batch_key)
+      ON CONFLICT ("batchKey")
       DO UPDATE SET
         id = ${id},
         status = 'in_flight',
         result = NULL,
-        expires_at = ${inFlightExpiry}::timestamptz
-      WHERE "LlmBatchIdempotency".expires_at < NOW()
+        "expiresAt" = ${inFlightExpiry}::timestamptz
+      WHERE "LlmBatchIdempotency"."expiresAt" < NOW()
       RETURNING status, result
     `
   );
@@ -54,7 +54,7 @@ async function pollForCompletion(batchKey: string): Promise<IdempotencyResult> {
     const rows = await prisma.$queryRaw<Array<{ status: string; result: unknown }>>(
       Prisma.sql`
         SELECT status, result FROM "LlmBatchIdempotency"
-        WHERE batch_key = ${batchKey}
+        WHERE "batchKey" = ${batchKey}
       `
     );
     if (!rows.length) {
@@ -83,8 +83,8 @@ export async function completeIdempotencyKey(
         SET
           status = 'complete',
           result = ${JSON.stringify(result)}::jsonb,
-          expires_at = ${completeExpiry}::timestamptz
-        WHERE batch_key = ${batchKey} AND status = 'in_flight'
+          "expiresAt" = ${completeExpiry}::timestamptz
+        WHERE "batchKey" = ${batchKey} AND status = 'in_flight'
       `
     );
   } catch {
