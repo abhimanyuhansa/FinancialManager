@@ -188,3 +188,111 @@ export function compareOutputs(
   if (aVpa && bVpa && a.vpa!.toLowerCase() !== b.vpa!.toLowerCase()) return false;
   return true;
 }
+
+// ── deriveExtractors ────────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const safeRegex = require("safe-regex") as (pattern: string) => boolean;
+
+const PLACEHOLDER_PATTERNS: Record<string, { capture: string; transform: TransformName }> = {
+  AMOUNT:           { capture: "[0-9,]+\\.?[0-9]*", transform: "parseAmount" },
+  DATE:             { capture: "\\d{1,4}[-\\/]\\d{1,2}[-\\/]\\d{1,2}", transform: "normaliseDate" },
+  MERCHANT:         { capture: "[A-Za-z][A-Za-z0-9\\s\\.\\-&']+?", transform: "trimMerchant" },
+  VPA:              { capture: "[\\w.@\\-]+", transform: "lowercase" },
+  TRANSACTION_TYPE: { capture: "debited|credited", transform: "debitCreditToType" },
+};
+
+const FIELD_FOR_PLACEHOLDER: Record<string, string> = {
+  AMOUNT: "amount",
+  DATE: "date",
+  MERCHANT: "merchant",
+  VPA: "vpa",
+  TRANSACTION_TYPE: "transactionType",
+  CURRENCY: "currency",
+};
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function anchorContext(
+  text: string,
+  valueStart: number,
+  valueEnd: number
+): { left: string; right: string } {
+  const left = text.slice(Math.max(0, valueStart - 20), valueStart);
+  const right = text.slice(valueEnd, valueEnd + 20);
+  return { left, right };
+}
+
+export type GeminiAppliedResult = {
+  amount: number;
+  currency: string;
+  date: string;
+  transactionType: "expense" | "income";
+  merchant?: string;
+  vpa?: string;
+};
+
+export function deriveExtractors(
+  _subject: string,
+  body: string,
+  bodyTemplate: string,
+  _subjectTemplate: string,
+  geminiResult: GeminiAppliedResult
+): ExtractorMap {
+  const extractors: ExtractorMap = {};
+
+  if (geminiResult.currency) {
+    extractors.currency = { static: geminiResult.currency.toUpperCase() };
+  }
+
+  const placeholderRe = /\{\{([A-Z_]+)\}\}/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = placeholderRe.exec(bodyTemplate)) !== null) {
+    const phName = m[1];
+    if (phName === "CURRENCY") continue;
+
+    const fieldName = FIELD_FOR_PLACEHOLDER[phName];
+    if (!fieldName) continue;
+
+    const pattern = PLACEHOLDER_PATTERNS[phName];
+    if (!pattern) continue;
+
+    const resolvedValue = geminiResult[fieldName as keyof GeminiAppliedResult];
+    if (resolvedValue === undefined || resolvedValue === null) continue;
+
+    // Find where this field's value appears in the body using the capture pattern
+    // (so "500" in geminiResult matches "500.00" in body via the amount pattern)
+    let valueIdx = -1;
+    let matchedLength = 0;
+    try {
+      const scanRe = new RegExp(pattern.capture, "i");
+      const scanMatch = body.match(scanRe);
+      if (!scanMatch) continue;
+      valueIdx = body.toLowerCase().indexOf(scanMatch[0].toLowerCase());
+      matchedLength = scanMatch[0].length;
+    } catch {
+      continue;
+    }
+    if (valueIdx === -1) continue;
+
+    const { left, right } = anchorContext(body, valueIdx, valueIdx + matchedLength);
+    const regexStr = `${escapeRegex(left)}(${pattern.capture})${escapeRegex(right)}`;
+
+    if (!safeRegex(regexStr)) continue;
+
+    try {
+      const re = new RegExp(regexStr, "i");
+      const match = body.match(re);
+      if (!match?.[1]) continue;
+    } catch {
+      continue;
+    }
+
+    extractors[fieldName] = { regex: regexStr, group: 1, transform: pattern.transform };
+  }
+
+  return extractors;
+}

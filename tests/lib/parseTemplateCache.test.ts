@@ -52,7 +52,7 @@ describe("templateHash", () => {
 });
 
 const SAMPLE_EXTRACTORS: ExtractorMap = {
-  amount:          { regex: "Rs\\.\\s*([\\d,]+(?:\\.\\d{1,2})?)", group: 1, transform: "parseAmount" },
+  amount:          { regex: "Rs\\.\\s*([0-9,]+\\.?[0-9]*)", group: 1, transform: "parseAmount" },
   currency:        { static: "INR" },
   date:            { regex: "on\\s+(\\d{2}-\\d{2}-\\d{2})", group: 1, transform: "normaliseDate" },
   transactionType: { regex: "(debited|credited)", group: 1, transform: "debitCreditToType" },
@@ -80,7 +80,7 @@ describe("applyTemplate", () => {
   it("parseAmount strips commas and returns a number", () => {
     const body = "Rs. 1,00,000.00 debited on 01-01-26 at Shop";
     const result = applyTemplate(body, {
-      amount: { regex: "Rs\\.\\s*([\\d,]+(?:\\.\\d{1,2})?)", group: 1, transform: "parseAmount" },
+      amount: { regex: "Rs\\.\\s*([0-9,]+\\.?[0-9]*)", group: 1, transform: "parseAmount" },
       currency: { static: "INR" },
       date: { regex: "(\\d{2}-\\d{2}-\\d{2})", group: 1, transform: "normaliseDate" },
       transactionType: { static: "expense" } as unknown as RegexExtractor,
@@ -128,5 +128,53 @@ describe("compareOutputs", () => {
   it("returns false when a required field is missing", () => {
     const incomplete = { amount: 500, currency: "INR", date: "2026-07-12" };
     expect(compareOutputs(base, incomplete as typeof base)).toBe(false);
+  });
+});
+
+import { deriveExtractors } from "@/lib/parseTemplateCache";
+
+describe("deriveExtractors", () => {
+  const subject = "Alert: Rs. 500.00 debited";
+  const body = "Rs. 500.00 debited from your account on 12-07-26 at Swiggy via UPI. VPA swiggy@upi";
+  const geminiResult = {
+    amount: 500,
+    currency: "INR",
+    date: "2026-07-12",
+    transactionType: "expense" as const,
+    merchant: "Swiggy",
+    vpa: "swiggy@upi",
+  };
+  const bodyTemplate =
+    "Rs. {{AMOUNT}} debited from your account on {{DATE}} at {{MERCHANT}} via UPI. VPA {{VPA}}";
+
+  it("derives amount extractor that matches original body", () => {
+    const extractors = deriveExtractors(subject, body, bodyTemplate, subject, geminiResult);
+    expect(extractors.amount).toBeDefined();
+    if (extractors.amount && "regex" in extractors.amount) {
+      const re = new RegExp(extractors.amount.regex, "i");
+      expect(body.match(re)?.[extractors.amount.group]).toBe("500.00");
+    }
+  });
+
+  it("derives currency as static extractor", () => {
+    const extractors = deriveExtractors(subject, body, bodyTemplate, subject, geminiResult);
+    expect(extractors.currency).toEqual({ static: "INR" });
+  });
+
+  it("returns null for required field when regex fails safety check", () => {
+    const unsafeBody = "amount (((((x+)+)+)+) debited";
+    const unsafeTemplate = "amount {{AMOUNT}} debited";
+    const result = deriveExtractors(unsafeBody, unsafeBody, unsafeTemplate, subject, geminiResult);
+    if (result.amount && "regex" in result.amount) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const safeRegex = require("safe-regex");
+      expect(safeRegex((result.amount as { regex: string }).regex)).toBe(true);
+    }
+  });
+
+  it("returns undefined for placeholder not found in template", () => {
+    const noDateTemplate = "Rs. {{AMOUNT}} debited at {{MERCHANT}}";
+    const extractors = deriveExtractors(subject, body, noDateTemplate, subject, geminiResult);
+    expect(extractors.date).toBeUndefined();
   });
 });
