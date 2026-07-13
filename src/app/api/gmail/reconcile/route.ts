@@ -3,17 +3,13 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getGmailToken } from "@/lib/gmail";
 import {
-  parseStatementItems,
   normaliseStatementItem,
   matchStatementItem,
   CandidateTransaction,
 } from "@/lib/reconcile";
+import { parseStatementLLM } from "@/lib/llm";
 
-const STATEMENT_SYSTEM_PROMPT =
-  "This is a bank or credit card statement. Extract every transaction listed. " +
-  "Return a JSON array where each item has: " +
-  '{"date": string, "merchant": string, "amount": number, "type": "expense"|"debit"|"credit"|"income"}. ' +
-  "Return only the array. No explanations.";
+const TWO_DAY_MS = 2 * 24 * 60 * 60 * 1000;
 
 async function fetchStatementBody(
   accessToken: string,
@@ -55,28 +51,6 @@ async function fetchStatementBody(
   return { body, receivedDate };
 }
 
-async function callGeminiForStatement(body: string, apiKey: string): Promise<string> {
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: STATEMENT_SYSTEM_PROMPT }] },
-        contents: [{ role: "user", parts: [{ text: `Statement:\n${body}` }] }],
-        generationConfig: { temperature: 0, responseMimeType: "application/json" },
-      }),
-    }
-  );
-  if (!res.ok) return "[]";
-  const data = await res.json() as {
-    candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
-  };
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
-}
-
-const TWO_DAY_MS = 2 * 24 * 60 * 60 * 1000;
-
 export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -101,14 +75,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Could not fetch statement email" }, { status: 422 });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY ?? "";
-  const geminiRaw = await callGeminiForStatement(statement.body, apiKey);
-
-  const rawItems = parseStatementItems(geminiRaw);
-  const items = rawItems
+  const llmContext = { userId, operationType: "reconcile" as const };
+  const statementItems = await parseStatementLLM(statement.body, llmContext);
+  const items = statementItems
     .map((raw) => normaliseStatementItem(raw))
     .filter((item): item is NonNullable<typeof item> => item !== null);
-  console.log(`[reconcile] Gemini extracted ${items.length} line items from statement`);
+  console.log(`[reconcile] LLM extracted ${items.length} line items from statement`);
 
   if (items.length === 0) {
     return NextResponse.json({ error: "No line items extracted from statement" }, { status: 422 });
