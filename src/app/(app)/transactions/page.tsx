@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { TransactionPanel } from "@/components/TransactionPanel";
+import { useCategories } from "@/hooks/useCategories";
+import { CategoryIcon } from "@/components/CategoryIcon";
 
 type Transaction = {
   id: string;
@@ -16,17 +18,6 @@ type Transaction = {
   tag: string | null;
   gmailMsgId: string | null;
 };
-
-const CATEGORY_ICONS: Record<string, string> = {
-  food: "🍔", cafe: "☕", transport: "🚗", shopping: "🛍️", clothing: "👕",
-  bills: "⚡", phone: "📱", health: "💊", learning: "📚", ott: "📺",
-  rent: "🏠", personal: "💆", investment: "📈", work: "💼", income: "💰", other: "📦",
-};
-
-const CATEGORIES = [
-  "food", "cafe", "transport", "shopping", "clothing", "bills", "phone",
-  "health", "learning", "ott", "rent", "personal", "investment", "work", "income", "other",
-];
 
 function fmtAmount(amount: number, type: string): string {
   const abs = Math.abs(amount);
@@ -48,6 +39,8 @@ export default function TransactionsPage() {
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
+  const { categories } = useCategories();
+  const categoryMap = Object.fromEntries(categories.map((c) => [c.slug, c]));
 
   const fetchTransactions = useCallback(() => {
     setLoading(true);
@@ -135,8 +128,8 @@ export default function TransactionsPage() {
           className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
         >
           <option value="">All categories</option>
-          {CATEGORIES.map((c) => (
-            <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+          {categories.map((c) => (
+            <option key={c.slug} value={c.slug}>{c.name}</option>
           ))}
         </select>
         <input
@@ -195,7 +188,13 @@ export default function TransactionsPage() {
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-base">{CATEGORY_ICONS[tx.category] ?? "📦"}</span>
+                      <CategoryIcon
+                        name={categoryMap[tx.category]?.icon ?? ""}
+                        slug={tx.category}
+                        label={categoryMap[tx.category]?.name ?? tx.category}
+                        size={18}
+                        className="text-[#7C7E8C]"
+                      />
                       <div>
                         <p className="text-sm font-medium text-[#44475B]">
                           {tx.merchant}
