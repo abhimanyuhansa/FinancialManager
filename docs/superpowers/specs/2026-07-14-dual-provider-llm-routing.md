@@ -1,7 +1,7 @@
 # Dual-Provider LLM Routing — Design Spec
 
 **Date:** 2026-07-14  
-**Status:** Awaiting user approval  
+**Status:** Approved — implementation plan pending  
 **Scope:** Replace direct Gemini calls with a provider-routing layer that uses OpenAI (`gpt-5-nano`) as primary or fallback depending on LLM candidate count and estimated token usage, with circuit breaker, quota tracking, structured per-attempt logging, and idempotency guarantees.
 
 ---
@@ -187,10 +187,10 @@ export function validateProviderResults(
 
 Validation rules:
 1. `raw` is an array with length === `candidateCount` — if not, throw `ProviderParseError`
-2. Each item has `emailIndex: number` in range `[0, candidateCount)`
+2. Each item has `emailIndex: number`; the set of all `emailIndex` values must be exactly `{0, 1, …, candidateCount-1}` — no duplicates, no gaps, no out-of-range values. If violated, throw `ProviderParseError`.
 3. Each item has `isTransaction: boolean`, `outcome: string` (one of valid values), `transactions: array`
 4. Each transaction has `amount: number > 0`, `merchant: string`, `date: string`, `type: "expense"|"income"`
-5. Items that fail field validation get `outcome: "parse_failed"` and empty `transactions` — they do not throw; only structural failures (wrong count, missing `emailIndex`) throw `ProviderParseError`
+5. Items that fail field validation get `outcome: "parse_failed"` and empty `transactions` — they do not throw; only structural failures (wrong count, bad `emailIndex` set) throw `ProviderParseError`
 
 ---
 
@@ -199,7 +199,7 @@ Validation rules:
 ### Gemini (`providers/gemini.ts`)
 
 - Model: `process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite"` — fixes the outage
-- JSON mode: both `responseMimeType: "application/json"` AND `response_schema: EMAIL_JSON_SCHEMA` in `generationConfig` — MIME type alone does not enforce schema shape
+- JSON mode: `generationConfig.responseMimeType: "application/json"` AND `generationConfig.responseSchema: EMAIL_JSON_SCHEMA` (camelCase field, v1beta REST API). MIME type alone does not enforce schema shape. The SDK uses a different surface (`responseFormat.text.mimeType/schema`) — since the codebase uses raw `fetch`, use the REST API field names directly.
 - `temperature: 0`
 - Response path: `candidates[0].content.parts[0].text`
 - Timeout: `Number(process.env.LLM_TIMEOUT_MS ?? 30000)`
@@ -226,7 +226,9 @@ Validation rules:
 
 ## 8. Quota Tracking (`quota.ts`)
 
-Tracks RPM, TPM, and RPD per provider using DB sliding windows shared across all Vercel instances.
+Tracks RPM, TPM, and RPD per provider using DB fixed time buckets shared across all Vercel instances.
+
+> **Note:** This implementation uses fixed minute/day buckets, not true sliding windows. A burst at :59 and :00 can momentarily double the effective RPM. This is an accepted tradeoff — true sliding windows require per-request timestamps and are expensive. The configured limits should be set conservatively (e.g. 80% of the actual provider limit) to absorb boundary bursts.
 
 **Provider-specific token accounting:**
 - Gemini TPM: counts `inputTokens` only (free tier measures prompt tokens)
@@ -241,7 +243,7 @@ model LlmQuotaWindow {
   id          String   @id @default(cuid())
   provider    String   // "gemini" | "openai"
   windowType  String   // "rpm" | "tpm" | "rpd"
-  windowKey   String   // "2026-07-14T10:23" (minute) | "2026-07-14" (day)
+  windowKey   String   // "2026-07-14T10:23" (minute bucket) | "2026-07-14" (day bucket)
   count       Int      @default(0)
   updatedAt   DateTime @updatedAt
 
@@ -278,6 +280,16 @@ WHERE provider = $p AND windowType = $type AND windowKey = $key
   AND count + $delta <= $limit
 ```
 If any CAS guard fails (concurrent instance pushed over limit), throws `ProviderRateLimitError`.
+
+**`releaseQuota`** (negating write — called only when HALF_OPEN probe CAS loses after quota was already reserved):
+```typescript
+async function releaseQuota(
+  provider: LLMProvider,
+  inputTokens: number,
+  outputTokens: number
+): Promise<void>
+```
+Decrements the same windows that `reserveQuota` incremented. Best-effort (no CAS guard — the count can only go down). Called synchronously inside `selectProvider` before routing to the other provider.
 
 ### Environment variables
 
@@ -361,7 +373,7 @@ Decision tree — all reads first, then single atomic reserve+probe:
       → if throws ProviderRateLimitError: flip to the other provider, reserveQuota again
       → if both fail: return null
    b. If provider was OPEN-with-cooldown: attempt HALF_OPEN CAS
-      → 0 rows updated: another instance won the probe → treat as OPEN → try other provider
+      → 0 rows updated: another instance won the probe → **release the quota just reserved** (reserveQuota negates the delta), treat as OPEN → try other provider (reserve other provider quota)
       → 1 row updated: this instance holds the probe slot → proceed
 
 8. return selected provider
@@ -374,6 +386,23 @@ Decision tree — all reads first, then single atomic reserve+probe:
 ## 11. Fallback Orchestration & Logging (`index.ts`)
 
 `LlmCallLog` rows are written **inside `parseEmailBatchLLM`**, on every exit path including thrown errors. The calling route never writes call logs directly.
+
+`parseEmailBatchLLM` accepts full context for complete logging:
+
+```typescript
+export async function parseEmailBatchLLM(
+  inputs: BatchInput[],
+  provider: LLMProvider,
+  batchKey: string,
+  context: {
+    userId: string;
+    syncJobId?: string;
+    operationType: "sync" | "reprocess" | "reconcile";
+  }
+): Promise<{ results: EmailParseResult[]; attempts: LLMAttemptMeta[] }>
+```
+
+Every `LlmCallLog` row written inside this function includes `userId`, `syncJobId`, and `batchKey` from the `context` argument — callers must pass this; they may not post-fill it.
 
 ```
 attempt 1 (primary, attemptNumber=1, wasFallback=false):
@@ -428,13 +457,16 @@ batchKey = sha256(
 
 `syncJobId` is excluded — reprocess and reconcile have no `syncJobId`. Including `userId` prevents cross-user collisions. Including `SCHEMA_VERSION` prevents stale cached results being reused after a schema update.
 
-### In-flight expiry
+### In-flight expiry and complete expiry
+
+Two separate TTLs:
+- `"in_flight"` expiry: `now + (2 × LLM_TIMEOUT_MS) + 30_000` — covers primary timeout + fallback timeout + overhead. Default `LLM_TIMEOUT_MS = 30000` → expires in 90s.
+- `"complete"` expiry: `now + 86_400_000` (24 hours) — keeps result available for dedup across polling ticks within the same day.
 
 ```
-expiresAt = now + (2 × LLM_TIMEOUT_MS) + 30_000
+expiresAt (in_flight) = now + (2 × LLM_TIMEOUT_MS) + 30_000
+expiresAt (complete)  = now + 86_400_000
 ```
-
-Covers: primary timeout + fallback timeout + 30s overhead. Default `LLM_TIMEOUT_MS = 30000` → `expiresAt = now + 90s`.
 
 ### DB model
 
@@ -453,20 +485,31 @@ model LlmBatchIdempotency {
 
 ### Flow
 
+The idempotency check runs **before** provider selection and quota reservation. Serving a cached result must never consume quota.
+
 ```
 1. Compute batchKey
 2. SELECT WHERE batchKey = ? AND expiresAt > now()
-   - "complete" → return result.Json, skip LLM
+   - "complete" → return result.Json, skip LLM entirely (no quota consumed)
    - "in_flight" → poll up to (2 × LLM_TIMEOUT_MS); if still in_flight after expiry → fall through to step 3
-   - not found → continue
-3. INSERT { batchKey, status: "in_flight", expiresAt: now + (2 × LLM_TIMEOUT_MS) + 30s }
-   ON CONFLICT (batchKey) DO NOTHING
-   - 0 rows → another instance raced → return to step 2
-4. Call LLM (primary + fallback via orchestration layer)
-5. UPDATE SET status = "complete", result = $results WHERE batchKey = ? AND status = "in_flight"
-6. Return results for transaction processing
-7. Cron prunes: DELETE WHERE expiresAt < now()
+   - not found (or found but expired) → continue
+3. INSERT or take over expired row (atomic upsert):
+   INSERT INTO LlmBatchIdempotency (batchKey, status, expiresAt)
+   VALUES ($key, 'in_flight', $inFlightExpiry)
+   ON CONFLICT (batchKey) DO UPDATE
+     SET status = 'in_flight', expiresAt = $inFlightExpiry
+     WHERE LlmBatchIdempotency.expiresAt < now()
+   - 0 rows affected: another instance holds a live in_flight → return to step 2
+   - 1 row affected: this instance owns the key → continue
+4. [Now] run provider selection + quota reservation
+5. Call LLM (primary + fallback via orchestration layer)
+6. UPDATE SET status = 'complete', result = $results, expiresAt = $completeExpiry
+     WHERE batchKey = ? AND status = 'in_flight'
+7. Return results for transaction processing
+8. Cron prunes: DELETE WHERE expiresAt < now()
 ```
+
+Using `ON CONFLICT DO UPDATE WHERE expiresAt < now()` instead of `ON CONFLICT DO NOTHING` ensures that a row stuck at an expired `"in_flight"` state is atomically taken over rather than silently skipped, which would block all future requests for that key forever.
 
 ---
 
@@ -528,7 +571,7 @@ Uses `INSERT ... ON CONFLICT DO UPDATE` with an expiry guard so a stale crashed-
 ```typescript
 async function acquireLock(
   jobId: string
-): Promise<{ ownerToken: string; intervalHandle: NodeJS.Timeout } | null> {
+): Promise<{ ownerToken: string; intervalHandle: NodeJS.Timeout; lockLost: { value: boolean } } | null> {
   const ownerToken = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + LOCK_LEASE_MS);
   const rows = await prisma.$executeRaw`
@@ -540,23 +583,27 @@ async function acquireLock(
   `;
   if (rows === 0) return null;  // live lock held by another instance
 
+  // Shared mutable flag — the interval callback sets it; advanceJob checks it
+  const lockLost = { value: false };
   const intervalHandle = setInterval(async () => {
     const renewed = await prisma.syncJobLock.updateMany({
       where: { jobId, ownerToken },
       data: { expiresAt: new Date(Date.now() + LOCK_LEASE_MS) },
     });
     if (renewed.count === 0) {
-      // Lock was lost (instance evicted, DB issue, or stale replacement)
+      // Lock was lost — set the shared flag; advanceJob will notice on the next await
       clearInterval(intervalHandle);
-      throw new LockLostError(jobId);
+      lockLost.value = true;
     }
   }, LOCK_RENEWAL_INTERVAL_MS);
 
-  return { ownerToken, intervalHandle };
+  return { ownerToken, intervalHandle, lockLost };
 }
 ```
 
-`LockLostError` propagates out of `advanceJob`. The calling request handler catches it and returns `{ phase: "running" }` (another instance will pick up the job on the next tick).
+`advanceJob` checks `lockLost.value` at each `await` checkpoint (after each email chunk is processed). When `true`, it throws `LockLostError(jobId)` itself rather than relying on the error to propagate from `setInterval`. This is necessary because errors thrown inside `setInterval` callbacks are swallowed by the event loop and will not abort the caller.
+
+The calling request handler catches `LockLostError` and returns `{ phase: "running" }` (another instance will pick up the job on the next tick).
 
 ### Release (ownerToken-guarded)
 
@@ -571,7 +618,7 @@ async function releaseLock(
 }
 ```
 
-Called in `finally` block.
+Called in `finally` block. `lockLost` flag does not need to be passed — release is always safe even if the lock was already lost.
 
 ### Environment variables
 
@@ -674,21 +721,22 @@ const { results, attempts } = await parseEmailBatchLLM([input], provider, batchK
 ## 20. Testing Plan
 
 ### Unit tests
-- `router.ts`: Gemini selected, OpenAI selected, both unavailable, CAS quota race, HALF_OPEN probe ordering (fires after reserve, not before)
-- `quota.ts`: RPM/TPM/RPD window math; Gemini TPM uses inputTokens only; OpenAI TPM uses input+output; serializable CAS guard; concurrent reservation race
+- `router.ts`: Gemini selected, OpenAI selected, both unavailable, CAS quota race, HALF_OPEN probe ordering (fires after reserve, not before), HALF_OPEN probe loss → `releaseQuota` called + routes to other provider
+- `quota.ts`: RPM/TPM/RPD window math; Gemini TPM uses inputTokens only; OpenAI TPM uses input+output; serializable CAS guard; concurrent reservation race; `releaseQuota` decrements correct windows; boundary-burst note: configure limits at 80% of provider limit
 - `circuitBreaker.ts`: CLOSED→OPEN, OPEN→HALF_OPEN atomic probe (only one winner across concurrent calls), HALF_OPEN→CLOSED, HALF_OPEN→OPEN
-- `idempotency.ts`: complete hit, in-flight wait, expiry covers 2×timeout, concurrent INSERT race, batchKey includes schemaVersion
-- `lock.ts`: acquire success, acquire when held (live lock), atomic stale-lock replacement, ownerToken-guarded release, renewal success, renewal failure → LockLostError
-- `validate.ts`: correct result passes, wrong array length throws, missing emailIndex throws, invalid field type → parse_failed outcome on that item
+- `idempotency.ts`: complete hit skips quota/LLM entirely, in_flight wait, separate TTLs (in_flight=90s, complete=24h), concurrent INSERT on expired row → atomic takeover not silent skip, idempotency check runs before `selectProvider`
+- `lock.ts`: acquire success, acquire when held (live lock), atomic stale-lock replacement, ownerToken-guarded release, renewal success, renewal failure → sets `lockLost.value = true` (not throws from setInterval), `advanceJob` checks flag at each checkpoint → throws `LockLostError`
+- `validate.ts`: correct result passes, wrong array length throws, emailIndex set not `{0..n-1}` throws (duplicates, gaps, out-of-range), invalid field type → parse_failed outcome on that item
 
 ### Integration tests (mock HTTP)
-- Gemini 429 → OpenAI called → two `LlmCallLog` rows, `wasFallback=true` on row 2
+- Gemini 429 → OpenAI called → two `LlmCallLog` rows, `wasFallback=true` on row 2, both rows have `userId` + `syncJobId`
 - OpenAI 401 → no fallback, `ProviderAuthError` thrown, one error `LlmCallLog` row
 - Gemini 400 → no fallback, `ProviderBadRequestError`, one error `LlmCallLog` row
 - `reserveQuota` CAS race mid-selection → flips to other provider
 - Circuit breaker: 3 consecutive Gemini 5xx → OPEN → next tick routes to OpenAI
-- HALF_OPEN probe: two concurrent instances, only one proceeds, other treats provider as OPEN
-- Lock renewal failure mid-job → `LockLostError` → job returns `{ phase: "running" }`
+- HALF_OPEN probe: two concurrent instances, only one proceeds, loser calls `releaseQuota` and routes to other provider
+- Lock renewal failure mid-job → `lockLost.value = true` → `advanceJob` detects on next checkpoint → throws `LockLostError` → job returns `{ phase: "running" }`
+- Idempotency check returns "complete" → provider never selected, quota never reserved, LLM never called
 
 ### Pre-rollout parity smoke test (gates production routing enable)
 Run 10–20 representative real emails (a fixed golden set covering transaction types, non-transactions, and ambiguous cases) through both Gemini and OpenAI independently. Compare outcomes:
