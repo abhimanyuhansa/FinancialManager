@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { IconPicker } from "@/components/IconPicker";
-import { invalidateCategoryCache } from "@/hooks/useCategories";
+import { invalidateCategoryCache, invalidateSubCategoryCache } from "@/hooks/useCategories";
 
 type EmailFilter = {
   id: string;
@@ -152,6 +152,139 @@ export default function SettingsPage() {
     if (tab === "categories") void fetchCategories();
   }, [tab, fetchCategories]);
 
+  /* ── Category edit/delete ── */
+  type SubCatRow = { id: string; slug: string; name: string; icon: string; parentSlug: string; isDefault: boolean };
+  const [editCatId, setEditCatId] = useState<string | null>(null);
+  const [editCatName, setEditCatName] = useState("");
+  const [editCatIcon, setEditCatIcon] = useState("");
+  const [editCatSaving, setEditCatSaving] = useState(false);
+  const [editCatError, setEditCatError] = useState("");
+  const [deletingCatId, setDeletingCatId] = useState<string | null>(null);
+  const [catDeleteError, setCatDeleteError] = useState<Record<string, string>>({});
+
+  const handleEditCatSave = async (id: string) => {
+    if (!editCatName.trim()) return;
+    setEditCatSaving(true);
+    setEditCatError("");
+    try {
+      const res = await fetch(`/api/categories/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editCatName.trim(), icon: editCatIcon }),
+      });
+      if (res.ok) {
+        invalidateCategoryCache();
+        setEditCatId(null);
+        await fetchCategories();
+      } else {
+        const d = await res.json() as { error?: string };
+        setEditCatError(d.error ?? "Failed to save");
+      }
+    } finally {
+      setEditCatSaving(false);
+    }
+  };
+
+  const handleDeleteCat = async (id: string) => {
+    if (!confirm("Delete this category? All transactions using it must be re-categorised first.")) return;
+    setDeletingCatId(id);
+    setCatDeleteError((prev) => ({ ...prev, [id]: "" }));
+    try {
+      const res = await fetch(`/api/categories/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        invalidateCategoryCache();
+        await fetchCategories();
+      } else {
+        const d = await res.json() as { error?: string };
+        setCatDeleteError((prev) => ({ ...prev, [id]: d.error ?? "Cannot delete" }));
+      }
+    } finally {
+      setDeletingCatId(null);
+    }
+  };
+
+  /* ── Sub-category management in categories tab ── */
+  const [expandedCatSlug, setExpandedCatSlug] = useState<string | null>(null);
+  const [subCatMap, setSubCatMap] = useState<Record<string, SubCatRow[]>>({});
+  const [subCatLoading, setSubCatLoading] = useState<Record<string, boolean>>({});
+  const [showAddSubCat, setShowAddSubCat] = useState<Record<string, boolean>>({});
+  const [newSubCatName, setNewSubCatName] = useState<Record<string, string>>({});
+  const [newSubCatIcon, setNewSubCatIcon] = useState<Record<string, string>>({});
+  const [addSubCatSaving, setAddSubCatSaving] = useState<Record<string, boolean>>({});
+  const [addSubCatError, setAddSubCatError] = useState<Record<string, string>>({});
+  const [editSubCatId, setEditSubCatId] = useState<string | null>(null);
+  const [editSubCatName, setEditSubCatName] = useState("");
+  const [editSubCatIcon, setEditSubCatIcon] = useState("");
+  const [editSubCatSaving, setEditSubCatSaving] = useState(false);
+
+  const fetchSubCats = useCallback(async (parentSlug: string) => {
+    setSubCatLoading((prev) => ({ ...prev, [parentSlug]: true }));
+    const res = await fetch(`/api/subcategories?parent=${encodeURIComponent(parentSlug)}`);
+    const d = await res.json() as { subCategories: SubCatRow[] };
+    setSubCatMap((prev) => ({ ...prev, [parentSlug]: d.subCategories ?? [] }));
+    setSubCatLoading((prev) => ({ ...prev, [parentSlug]: false }));
+  }, []);
+
+  const handleToggleExpand = (slug: string) => {
+    if (expandedCatSlug === slug) { setExpandedCatSlug(null); return; }
+    setExpandedCatSlug(slug);
+    if (!subCatMap[slug]) void fetchSubCats(slug);
+  };
+
+  const handleAddSubCat = async (parentSlug: string) => {
+    const name = newSubCatName[parentSlug] ?? "";
+    if (!name.trim()) return;
+    setAddSubCatSaving((prev) => ({ ...prev, [parentSlug]: true }));
+    setAddSubCatError((prev) => ({ ...prev, [parentSlug]: "" }));
+    try {
+      const res = await fetch("/api/subcategories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), parentSlug, icon: newSubCatIcon[parentSlug] ?? "" }),
+      });
+      if (res.ok) {
+        invalidateSubCategoryCache(parentSlug);
+        setNewSubCatName((prev) => ({ ...prev, [parentSlug]: "" }));
+        setNewSubCatIcon((prev) => ({ ...prev, [parentSlug]: "" }));
+        setShowAddSubCat((prev) => ({ ...prev, [parentSlug]: false }));
+        await fetchSubCats(parentSlug);
+      } else {
+        const d = await res.json() as { error?: string };
+        setAddSubCatError((prev) => ({ ...prev, [parentSlug]: d.error ?? "Failed to add" }));
+      }
+    } finally {
+      setAddSubCatSaving((prev) => ({ ...prev, [parentSlug]: false }));
+    }
+  };
+
+  const handleEditSubCatSave = async (id: string, parentSlug: string) => {
+    if (!editSubCatName.trim()) return;
+    setEditSubCatSaving(true);
+    try {
+      const res = await fetch(`/api/subcategories/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editSubCatName.trim(), icon: editSubCatIcon }),
+      });
+      if (res.ok) {
+        invalidateSubCategoryCache(parentSlug);
+        setEditSubCatId(null);
+        await fetchSubCats(parentSlug);
+      }
+    } finally {
+      setEditSubCatSaving(false);
+    }
+  };
+
+  const handleDeleteSubCat = async (id: string, parentSlug: string) => {
+    if (!confirm("Delete this sub-category? Transactions will have sub-category cleared.")) return;
+    const res = await fetch(`/api/subcategories/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      invalidateSubCategoryCache(parentSlug);
+      await fetchSubCats(parentSlug);
+    }
+  };
+
   /* ── Email Filters ── */
   const [filters, setFilters] = useState<EmailFilter[]>([]);
   const [filtersLoading, setFiltersLoading] = useState(true);
@@ -245,6 +378,7 @@ export default function SettingsPage() {
   const [parseLogsLoading, setParseLogsLoading] = useState(false);
   const [parseOutcomeFilter, setParseOutcomeFilter] = useState("");
   const [parseDomainFilter, setParseDomainFilter] = useState("");
+  const [parseMerchantFilter, setParseMerchantFilter] = useState("");
   const [reprocessingId, setReprocessingId] = useState<string | null>(null);
 
   const loadParseLogs = async (page = 1) => {
@@ -252,6 +386,7 @@ export default function SettingsPage() {
     const params = new URLSearchParams({ page: String(page) });
     if (parseOutcomeFilter) params.set("outcome", parseOutcomeFilter);
     if (parseDomainFilter) params.set("domain", parseDomainFilter);
+    if (parseMerchantFilter) params.set("merchant", parseMerchantFilter);
     const res = await fetch(`/api/settings/parse-logs?${params}`);
     const data = await res.json() as { logs: ParseLogEntry[]; total: number };
     setParseLogs(data.logs ?? []);
@@ -345,7 +480,7 @@ export default function SettingsPage() {
   useEffect(() => { if (tab === "filters") fetchFilters(); }, [tab]);
   useEffect(() => { if (tab === "passwords") { void loadPasswords(); } }, [tab]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (tab === "parse-logs") { void loadParseLogs(1); } }, [tab, parseOutcomeFilter, parseDomainFilter]);
+  useEffect(() => { if (tab === "parse-logs") { void loadParseLogs(1); } }, [tab, parseOutcomeFilter, parseDomainFilter, parseMerchantFilter]);
 
   const handleAddFilter = async () => {
     if (!newValue.trim()) { setAddError("Value is required"); return; }
@@ -826,6 +961,13 @@ export default function SettingsPage() {
               placeholder="Filter by domain…"
               value={parseDomainFilter}
               onChange={(e) => setParseDomainFilter(e.target.value)}
+              className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488] w-48"
+            />
+            <input
+              type="text"
+              placeholder="Search merchant…"
+              value={parseMerchantFilter}
+              onChange={(e) => setParseMerchantFilter(e.target.value)}
               className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488] w-48"
             />
           </div>
@@ -1318,34 +1460,212 @@ export default function SettingsPage() {
                 {[...Array(6)].map((_, i) => <div key={i} className="h-10 bg-gray-50 rounded-xl animate-pulse" />)}
               </div>
             ) : (
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-gray-50">
-                    <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Icon</th>
-                    <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Name</th>
-                    <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Slug</th>
-                    <th className="text-left text-xs font-semibold text-gray-400 px-5 py-3 uppercase tracking-wide">Type</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {catList.map((cat) => (
-                    <tr key={cat.id} className="border-b border-gray-50 last:border-0">
-                      <td className="px-5 py-3">
+              <div className="divide-y divide-gray-50">
+                {catList.map((cat) => (
+                  <div key={cat.id}>
+                    {/* Category row */}
+                    {editCatId === cat.id ? (
+                      <div className="px-5 py-3 bg-[#F8F8F8]">
+                        <div className="flex items-center gap-2 mb-2">
+                          <input
+                            type="text"
+                            value={editCatName}
+                            onChange={(e) => setEditCatName(e.target.value)}
+                            className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
+                            autoFocus
+                          />
+                        </div>
+                        <IconPicker selected={editCatIcon} onSelect={setEditCatIcon} />
+                        {editCatError && <p className="text-xs text-red-500 mt-1">{editCatError}</p>}
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={() => void handleEditCatSave(cat.id)}
+                            disabled={!editCatName.trim() || editCatSaving}
+                            className="px-4 py-1.5 bg-[#04B488] text-white text-sm rounded-lg hover:bg-[#03a07a] disabled:opacity-50"
+                          >
+                            {editCatSaving ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            onClick={() => { setEditCatId(null); setEditCatError(""); }}
+                            className="px-4 py-1.5 text-sm text-[#7C7E8C] rounded-lg hover:bg-[#E9E9EB]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3 px-5 py-3 group">
+                        <button
+                          onClick={() => handleToggleExpand(cat.slug)}
+                          className="text-[#A1A3AD] hover:text-[#7C7E8C] text-xs mr-1"
+                          title={expandedCatSlug === cat.slug ? "Collapse" : "Expand sub-categories"}
+                        >
+                          {expandedCatSlug === cat.slug ? "▾" : "▸"}
+                        </button>
                         <CategoryIcon name={cat.icon} slug={cat.slug} label={cat.name} size={20} className="text-[#44475B]" />
-                      </td>
-                      <td className="px-5 py-3 text-sm font-medium text-[#44475B]">{cat.name}</td>
-                      <td className="px-5 py-3 text-xs text-[#A1A3AD] font-mono">{cat.slug}</td>
-                      <td className="px-5 py-3">
+                        <span className="flex-1 text-sm font-medium text-[#44475B]">{cat.name}</span>
+                        <span className="text-xs font-mono text-[#A1A3AD] mr-2">{cat.slug}</span>
                         {cat.isDefault ? (
                           <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">Default</span>
                         ) : (
                           <span className="text-xs px-2 py-0.5 bg-[#E9FAF3] text-[#04B488] rounded-full">Custom</span>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                          <button
+                            onClick={() => { setEditCatId(cat.id); setEditCatName(cat.name); setEditCatIcon(cat.icon); setEditCatError(""); }}
+                            className="p-1 rounded text-[#7C7E8C] hover:text-[#44475B] hover:bg-gray-100"
+                            title="Edit"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                            </svg>
+                          </button>
+                          {!cat.isDefault && (
+                            <button
+                              onClick={() => void handleDeleteCat(cat.id)}
+                              disabled={deletingCatId === cat.id}
+                              className="p-1 rounded text-[#A1A3AD] hover:text-[#ED5533] hover:bg-red-50 disabled:opacity-40"
+                              title="Delete"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                <path d="M10 11v6M14 11v6" />
+                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {catDeleteError[cat.id] && (
+                      <p className="px-5 pb-2 text-xs text-[#ED5533]">{catDeleteError[cat.id]}</p>
+                    )}
+
+                    {/* Sub-categories expandable section */}
+                    {expandedCatSlug === cat.slug && (
+                      <div className="bg-[#FAFAFA] border-t border-gray-50 px-5 py-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-xs font-semibold text-[#A1A3AD] uppercase tracking-wide">Sub-categories</p>
+                          <button
+                            onClick={() => setShowAddSubCat((prev) => ({ ...prev, [cat.slug]: !prev[cat.slug] }))}
+                            className="text-xs text-[#04B488] hover:underline"
+                          >
+                            + Add
+                          </button>
+                        </div>
+
+                        {subCatLoading[cat.slug] ? (
+                          <p className="text-xs text-[#A1A3AD]">Loading…</p>
+                        ) : (subCatMap[cat.slug] ?? []).length === 0 && !showAddSubCat[cat.slug] ? (
+                          <p className="text-xs text-[#A1A3AD]">No sub-categories yet.</p>
+                        ) : (
+                          <div className="flex flex-col gap-1">
+                            {(subCatMap[cat.slug] ?? []).map((sub) => (
+                              <div key={sub.id}>
+                                {editSubCatId === sub.id ? (
+                                  <div className="p-2 rounded-lg border border-[#04B488] bg-[#E9FAF3]">
+                                    <input
+                                      type="text"
+                                      value={editSubCatName}
+                                      onChange={(e) => setEditSubCatName(e.target.value)}
+                                      className="w-full text-sm border border-gray-200 rounded px-2 py-1 mb-2 focus:outline-none focus:ring-1 focus:ring-[#04B488]"
+                                      autoFocus
+                                    />
+                                    <IconPicker selected={editSubCatIcon} onSelect={setEditSubCatIcon} />
+                                    <div className="flex gap-2 mt-2">
+                                      <button
+                                        onClick={() => void handleEditSubCatSave(sub.id, cat.slug)}
+                                        disabled={editSubCatSaving || !editSubCatName.trim()}
+                                        className="px-3 py-1 bg-[#04B488] text-white text-xs rounded-lg hover:bg-[#03a07a] disabled:opacity-50"
+                                      >
+                                        {editSubCatSaving ? "Saving…" : "Save"}
+                                      </button>
+                                      <button
+                                        onClick={() => setEditSubCatId(null)}
+                                        className="px-3 py-1 text-xs text-[#7C7E8C] rounded-lg hover:bg-[#E9E9EB]"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2 py-1 group/sub">
+                                    <CategoryIcon name={sub.icon} slug={sub.slug} label={sub.name} size={16} className="text-[#7C7E8C]" />
+                                    <span className="flex-1 text-sm text-[#44475B]">{sub.name}</span>
+                                    <span className="text-xs font-mono text-[#A1A3AD]">{sub.slug}</span>
+                                    <div className="flex gap-1 opacity-0 group-hover/sub:opacity-100 transition-opacity">
+                                      <button
+                                        onClick={() => { setEditSubCatId(sub.id); setEditSubCatName(sub.name); setEditSubCatIcon(sub.icon); }}
+                                        className="p-0.5 rounded text-[#7C7E8C] hover:text-[#44475B] hover:bg-gray-200"
+                                        title="Edit"
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                        </svg>
+                                      </button>
+                                      {!sub.isDefault && (
+                                        <button
+                                          onClick={() => void handleDeleteSubCat(sub.id, cat.slug)}
+                                          className="p-0.5 rounded text-[#A1A3AD] hover:text-[#ED5533] hover:bg-red-50"
+                                          title="Delete"
+                                        >
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                            <polyline points="3 6 5 6 21 6" />
+                                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                            <path d="M10 11v6M14 11v6" />
+                                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                                          </svg>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {showAddSubCat[cat.slug] && (
+                          <div className="mt-2 p-3 bg-white rounded-lg border border-gray-100">
+                            <input
+                              type="text"
+                              placeholder="Sub-category name"
+                              value={newSubCatName[cat.slug] ?? ""}
+                              onChange={(e) => setNewSubCatName((prev) => ({ ...prev, [cat.slug]: e.target.value }))}
+                              className="mb-2 w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
+                            />
+                            <IconPicker
+                              selected={newSubCatIcon[cat.slug] ?? ""}
+                              onSelect={(icon) => setNewSubCatIcon((prev) => ({ ...prev, [cat.slug]: icon }))}
+                            />
+                            {addSubCatError[cat.slug] && (
+                              <p className="text-xs text-red-500 mt-1">{addSubCatError[cat.slug]}</p>
+                            )}
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                onClick={() => void handleAddSubCat(cat.slug)}
+                                disabled={!(newSubCatName[cat.slug] ?? "").trim() || addSubCatSaving[cat.slug]}
+                                className="px-4 py-1.5 bg-[#04B488] text-white text-sm rounded-lg hover:bg-[#03a07a] disabled:opacity-50"
+                              >
+                                {addSubCatSaving[cat.slug] ? "Saving…" : "Add"}
+                              </button>
+                              <button
+                                onClick={() => setShowAddSubCat((prev) => ({ ...prev, [cat.slug]: false }))}
+                                className="px-4 py-1.5 text-sm text-[#7C7E8C] rounded-lg hover:bg-[#E9E9EB]"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>

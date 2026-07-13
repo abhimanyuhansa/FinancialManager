@@ -16,12 +16,14 @@ export async function GET(req: Request) {
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
   const outcome = searchParams.get("outcome") ?? "";
   const domain = searchParams.get("domain") ?? "";
+  const merchant = searchParams.get("merchant") ?? "";
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
 
   const where: Prisma.ParseLogWhereInput = { userId };
   if (outcome) where.outcome = outcome;
   if (domain) where.senderDomain = { contains: domain, mode: "insensitive" };
+  if (merchant) where.parsedMerchant = { contains: merchant, mode: "insensitive" };
   if (from || to) {
     where.createdAt = {};
     if (from) (where.createdAt as Prisma.DateTimeFilter).gte = new Date(from);

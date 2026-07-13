@@ -27,6 +27,7 @@ model User {
   statementPasswords StatementPassword[]
   parseLogs          ParseLog[]
   vpaMerchantMaps    VpaMerchantMap[]
+  subCategories      SubCategory[]
 }
 
 model Account {
@@ -102,14 +103,28 @@ model Asset {
 }
 
 model Category {
-  id        String   @id @default(cuid())
-  userId    String
-  name      String
-  slug      String   @unique
-  icon      String   @default("")
-  isDefault Boolean  @default(false)
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String        @id @default(cuid())
+  userId        String
+  name          String
+  slug          String        @unique
+  icon          String        @default("")
+  isDefault     Boolean       @default(false)
+  createdAt     DateTime      @default(now())
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subCategories SubCategory[]
+}
+
+model SubCategory {
+  id         String   @id @default(cuid())
+  userId     String
+  name       String
+  slug       String   @unique
+  icon       String   @default("")
+  isDefault  Boolean  @default(false)
+  parentSlug String
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent     Category @relation(fields: [parentSlug], references: [slug], onDelete: Cascade)
 }
 
 model EmailFilter {

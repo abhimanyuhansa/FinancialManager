@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { useCategories, invalidateCategoryCache } from "@/hooks/useCategories";
+import { useCategories, useSubCategories, invalidateCategoryCache, invalidateSubCategoryCache } from "@/hooks/useCategories";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { IconPicker } from "@/components/IconPicker";
 
@@ -55,6 +55,20 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, 
   const [newCatIcon, setNewCatIcon] = useState("");
   const [addSaving, setAddSaving] = useState(false);
   const [addError, setAddError] = useState("");
+
+  // Sub-category state
+  const activeCategory = pendingCategory ?? tx?.category ?? null;
+  const { subCategories, refetch: refetchSubs } = useSubCategories(activeCategory);
+  const [subCatSaving, setSubCatSaving] = useState(false);
+  const [showAddSubForm, setShowAddSubForm] = useState(false);
+  const [newSubName, setNewSubName] = useState("");
+  const [newSubIcon, setNewSubIcon] = useState("");
+  const [addSubSaving, setAddSubSaving] = useState(false);
+  const [addSubError, setAddSubError] = useState("");
+  const [editingSubId, setEditingSubId] = useState<string | null>(null);
+  const [editSubName, setEditSubName] = useState("");
+  const [editSubIcon, setEditSubIcon] = useState("");
+  const [editSubSaving, setEditSubSaving] = useState(false);
 
   if (!tx) return null;
 
@@ -130,6 +144,74 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, 
       }
     } finally {
       setAddSaving(false);
+    }
+  };
+
+  const handleSubCatSelect = async (slug: string) => {
+    const newSlug = slug === tx.subCategory ? null : slug;
+    setSubCatSaving(true);
+    try {
+      await fetch(`/api/transactions/${tx.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subCategory: newSlug }),
+      });
+      tx.subCategory = newSlug;
+    } finally {
+      setSubCatSaving(false);
+    }
+  };
+
+  const handleAddSubCategory = async () => {
+    if (!newSubName.trim() || !activeCategory) return;
+    setAddSubSaving(true);
+    setAddSubError("");
+    try {
+      const res = await fetch("/api/subcategories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newSubName.trim(), parentSlug: activeCategory, icon: newSubIcon }),
+      });
+      if (res.ok) {
+        invalidateSubCategoryCache(activeCategory);
+        refetchSubs();
+        setNewSubName("");
+        setNewSubIcon("");
+        setShowAddSubForm(false);
+      } else {
+        const d = await res.json() as { error?: string };
+        setAddSubError(d.error ?? "Failed to add sub-category");
+      }
+    } finally {
+      setAddSubSaving(false);
+    }
+  };
+
+  const handleEditSubSave = async (id: string) => {
+    if (!editSubName.trim()) return;
+    setEditSubSaving(true);
+    try {
+      const res = await fetch(`/api/subcategories/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editSubName.trim(), icon: editSubIcon }),
+      });
+      if (res.ok && activeCategory) {
+        invalidateSubCategoryCache(activeCategory);
+        refetchSubs();
+        setEditingSubId(null);
+      }
+    } finally {
+      setEditSubSaving(false);
+    }
+  };
+
+  const handleDeleteSub = async (id: string, parentSlug: string) => {
+    if (!confirm("Delete this sub-category? Transactions will have sub-category cleared.")) return;
+    const res = await fetch(`/api/subcategories/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      invalidateSubCategoryCache(parentSlug);
+      refetchSubs();
     }
   };
 
@@ -310,6 +392,156 @@ export function TransactionPanel({ transaction: tx, onClose, onCategoryUpdated, 
                 </button>
               </div>
             </div>
+          )}
+        </div>
+
+        {/* Sub-category picker */}
+        <div className="px-5 py-4 border-b border-[#E9E9EB]">
+          <p className="text-xs font-semibold text-[#7C7E8C] uppercase tracking-wide mb-3">Sub-category</p>
+
+          {subCategories.length === 0 && !showAddSubForm ? (
+            <p className="text-xs text-[#A1A3AD] mb-2">No sub-categories yet for this category.</p>
+          ) : (
+            <div className="grid grid-cols-4 gap-2 mb-2">
+              {subCategories.map((sub) => (
+                <div key={sub.id} className="relative group">
+                  {editingSubId === sub.id ? (
+                    <div className="p-2 rounded-lg border border-[#04B488] bg-[#E9FAF3]">
+                      <input
+                        type="text"
+                        value={editSubName}
+                        onChange={(e) => setEditSubName(e.target.value)}
+                        className="w-full text-xs border border-gray-200 rounded px-1 py-0.5 mb-1"
+                        autoFocus
+                      />
+                      <IconPicker selected={editSubIcon} onSelect={setEditSubIcon} />
+                      <div className="flex gap-1 mt-1">
+                        <button
+                          onClick={() => void handleEditSubSave(sub.id)}
+                          disabled={editSubSaving}
+                          className="flex-1 text-xs py-1 bg-[#04B488] text-white rounded"
+                        >
+                          {editSubSaving ? "…" : "Save"}
+                        </button>
+                        <button
+                          onClick={() => setEditingSubId(null)}
+                          className="text-xs px-2 py-1 text-[#7C7E8C] rounded hover:bg-[#E9E9EB]"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { if (!subCatSaving) void handleSubCatSelect(sub.slug); }}
+                      disabled={subCatSaving}
+                      className={`w-full flex flex-col items-center gap-1 p-2 rounded-lg text-xs transition-colors ${
+                        tx.subCategory === sub.slug
+                          ? "bg-[#E9FAF3] text-[#04B488] font-medium"
+                          : "hover:bg-[#F8F8F8] text-[#7C7E8C]"
+                      }`}
+                    >
+                      <CategoryIcon
+                        name={sub.icon}
+                        slug={sub.slug}
+                        label={sub.name}
+                        size={20}
+                        className={tx.subCategory === sub.slug ? "text-[#04B488]" : "text-[#7C7E8C]"}
+                      />
+                      <span className="truncate w-full text-center">{sub.name}</span>
+                    </button>
+                  )}
+                  {/* Edit/delete on hover */}
+                  {editingSubId !== sub.id && (
+                    <div className="absolute top-0.5 right-0.5 hidden group-hover:flex gap-0.5">
+                      <button
+                        onClick={() => { setEditingSubId(sub.id); setEditSubName(sub.name); setEditSubIcon(sub.icon); }}
+                        className="p-0.5 rounded text-[#7C7E8C] hover:text-[#44475B] hover:bg-white"
+                        title="Edit"
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                      </button>
+                      {!sub.isDefault && (
+                        <button
+                          onClick={() => void handleDeleteSub(sub.id, sub.parentSlug)}
+                          className="p-0.5 rounded text-[#A1A3AD] hover:text-[#ED5533] hover:bg-white"
+                          title="Delete"
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                            <path d="M10 11v6M14 11v6" />
+                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Add sub-category button */}
+              <button
+                onClick={() => setShowAddSubForm((v) => !v)}
+                className="flex flex-col items-center gap-1 p-2 rounded-lg text-xs hover:bg-[#F8F8F8] text-[#A1A3AD] border border-dashed border-[#E9E9EB] transition-colors"
+              >
+                <span className="text-xl">+</span>
+                <span className="truncate w-full text-center">Add</span>
+              </button>
+            </div>
+          )}
+
+          {subCategories.length === 0 && !showAddSubForm && (
+            <button
+              onClick={() => setShowAddSubForm(true)}
+              className="text-xs text-[#04B488] hover:underline"
+            >
+              + Add sub-category
+            </button>
+          )}
+
+          {/* Inline add sub-category form */}
+          {showAddSubForm && (
+            <div className="mt-2 p-3 bg-[#F8F8F8] rounded-lg">
+              <p className="text-sm font-medium text-[#44475B] mb-2">New sub-category</p>
+              <input
+                type="text"
+                placeholder="Name (e.g. Fast Food)"
+                value={newSubName}
+                onChange={(e) => setNewSubName(e.target.value)}
+                className="mb-2 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm"
+              />
+              <p className="text-xs text-[#7C7E8C] mb-2">Pick an icon (optional)</p>
+              <IconPicker selected={newSubIcon} onSelect={setNewSubIcon} />
+              {addSubError && <p className="text-xs text-red-500 mt-1">{addSubError}</p>}
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={() => void handleAddSubCategory()}
+                  disabled={!newSubName.trim() || addSubSaving}
+                  className="flex-1 py-2 bg-[#04B488] text-white text-sm rounded-lg hover:bg-[#03a07a] disabled:opacity-50"
+                >
+                  {addSubSaving ? "Saving…" : "Add"}
+                </button>
+                <button
+                  onClick={() => { setShowAddSubForm(false); setNewSubName(""); setNewSubIcon(""); setAddSubError(""); }}
+                  className="px-4 py-2 text-sm text-[#7C7E8C] rounded-lg hover:bg-[#E9E9EB]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tx.subCategory && (
+            <button
+              onClick={() => { if (!subCatSaving) void handleSubCatSelect(tx.subCategory!); }}
+              className="mt-2 text-xs text-[#A1A3AD] hover:text-[#7C7E8C]"
+            >
+              Clear sub-category
+            </button>
           )}
         </div>
 
