@@ -102,13 +102,14 @@ model Asset {
 }
 
 model Category {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    String
   name      String
-  icon      String
-  color     String
-  isDefault Boolean @default(false)
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug      String   @unique
+  icon      String   @default("")
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model EmailFilter {
