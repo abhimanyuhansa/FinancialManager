@@ -57,7 +57,7 @@ async function logAttempt(
         model:
           selected.provider === "gemini"
             ? (process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite")
-            : (process.env.OPENAI_MODEL ?? "gpt-5-nano-2025-08-07"),
+            : (process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
         candidateCount: 0,
         attemptNumber,
         wasFallback,

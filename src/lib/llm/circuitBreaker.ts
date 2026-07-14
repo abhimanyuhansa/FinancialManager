@@ -10,6 +10,9 @@ export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 export async function getCircuitBreakerState(provider: LLMProvider): Promise<CircuitState> {
   const row = await prisma.llmCircuitBreaker.findUnique({ where: { provider } });
   if (!row || row.state === "CLOSED") return "CLOSED";
+  // PROBING = a half-open probe is in flight; treat as HALF_OPEN so the caller
+  // sees it as contested and does NOT try to acquire another probe.
+  if (row.state === "PROBING") return "HALF_OPEN";
   if (row.state === "OPEN" && row.openedAt) {
     const elapsed = Date.now() - row.openedAt.getTime();
     if (elapsed >= HALF_OPEN_AFTER_MS) return "HALF_OPEN";

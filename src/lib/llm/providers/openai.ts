@@ -37,7 +37,7 @@ async function callOpenAI(
   apiKey: string,
   jsonSchema?: Record<string, unknown>,
 ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
-  const openaiModel = process.env.OPENAI_MODEL ?? "gpt-5-nano-2025-08-07";
+  const openaiModel = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
 
@@ -45,6 +45,7 @@ async function callOpenAI(
   try {
     const body: Record<string, unknown> = {
       model: openaiModel,
+      temperature: 0,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
