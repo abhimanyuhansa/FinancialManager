@@ -20,11 +20,12 @@ export const EMAIL_JSON_SCHEMA = {
             date: { type: "string" },
             type: { type: "string", enum: ["expense", "income"] },
             category: { type: "string" },
-            subCategory: { type: ["string", "null"] },
+            subCategory: { type: "string", nullable: true },
             confidence: { type: "number" },
             needsReview: { type: "boolean" },
             lineItems: {
-              type: ["array", "null"],
+              type: "array",
+              nullable: true,
               items: {
                 type: "object",
                 properties: {
