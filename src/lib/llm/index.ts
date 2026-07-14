@@ -133,7 +133,14 @@ export async function parseEmailBatchLLM(
         fallbackReason, "error", latencyMs, 0, 0, errDetail
       );
 
-      if (!isRetryableError(err)) throw err;
+      if (!isRetryableError(err)) {
+        // Non-retryable (400, 401, 403): still need to clean up probe state if this was a half-open probe
+        if (currentSelected.isHalfOpenProbe) {
+          await recordFailure(currentSelected.provider);
+          await releaseHalfOpenProbe(currentSelected.provider);
+        }
+        throw err;
+      }
 
       await recordFailure(currentSelected.provider);
       if (currentSelected.isHalfOpenProbe) {

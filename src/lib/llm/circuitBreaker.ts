@@ -40,7 +40,8 @@ export async function recordFailure(provider: LLMProvider): Promise<void> {
   if (row && row.consecutiveFailures >= FAILURE_THRESHOLD) {
     await prisma.llmCircuitBreaker.update({
       where: { provider },
-      data: { state: "OPEN", openedAt: new Date() },
+      // Reset consecutiveFailures so the next CLOSED period needs FAILURE_THRESHOLD fresh failures
+      data: { state: "OPEN", openedAt: new Date(), consecutiveFailures: 0 },
     });
   }
 }
@@ -63,6 +64,7 @@ export async function tryAcquireHalfOpenProbe(provider: LLMProvider): Promise<bo
 export async function releaseHalfOpenProbe(provider: LLMProvider): Promise<void> {
   await prisma.llmCircuitBreaker.updateMany({
     where: { provider, state: "PROBING" },
-    data: { state: "OPEN" },
+    // Reset consecutiveFailures so the OPEN→HALF_OPEN cycle starts fresh next time
+    data: { state: "OPEN", consecutiveFailures: 0 },
   });
 }
