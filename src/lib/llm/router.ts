@@ -14,9 +14,10 @@ export type SelectedProvider = {
   reservedOutputTokens: number;
 };
 
-function getPrimaryProvider(candidateCount: number): LLMProvider {
-  const threshold = Number(process.env.LLM_CANDIDATE_THRESHOLD ?? 10);
-  return candidateCount <= threshold ? "gemini" : "openai";
+function getPrimaryProvider(_candidateCount: number): LLMProvider {
+  // Gemini (gemini-3.1-flash-lite) is always primary: 2-10s vs gpt-4o-mini's 5-35s for our batch sizes.
+  // OpenAI is the fallback. Override with LLM_PRIMARY_PROVIDER env var if needed.
+  return (process.env.LLM_PRIMARY_PROVIDER as LLMProvider | undefined) ?? "gemini";
 }
 
 function getFallbackProvider(primary: LLMProvider): LLMProvider {
