@@ -21,7 +21,8 @@ import {
 } from "../prompts";
 
 const PROVIDER: LLMProvider = "openai";
-const OPENAI_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 50_000);
+// gpt-4o-mini is the fallback; give it more time since we only reach it when Gemini fails.
+const OPENAI_TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS ?? 40_000);
 const OPENAI_API_BASE = "https://api.openai.com/v1";
 
 function throwForStatus(status: number, detail: string): never {

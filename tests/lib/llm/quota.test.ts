@@ -14,9 +14,9 @@ describe("checkQuota", () => {
 
   it("returns allowed=true when all windows have capacity", async () => {
     mockQuery.mockResolvedValue([
-      { window_type: "rpm", count: 5 },
-      { window_type: "tpm", count: 100 },
-      { window_type: "rpd", count: 50 },
+      { windowType: "rpm", count: 5 },
+      { windowType: "tpm", count: 100 },
+      { windowType: "rpd", count: 50 },
     ]);
     const result = await checkQuota("gemini", 5);
     expect(result.allowed).toBe(true);
@@ -24,9 +24,9 @@ describe("checkQuota", () => {
 
   it("returns allowed=false with reason when RPM exceeded", async () => {
     mockQuery.mockResolvedValue([
-      { window_type: "rpm", count: 1000 },
-      { window_type: "tpm", count: 100 },
-      { window_type: "rpd", count: 50 },
+      { windowType: "rpm", count: 1000 },
+      { windowType: "tpm", count: 100 },
+      { windowType: "rpd", count: 50 },
     ]);
     const result = await checkQuota("gemini", 5);
     expect(result.allowed).toBe(false);

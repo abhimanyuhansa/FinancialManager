@@ -10,6 +10,17 @@ import {
 global.fetch = jest.fn();
 const mockFetch = global.fetch as jest.Mock;
 
+// OpenAI email batch expects { results: [...] } wrapper (json_schema format)
+const makeOpenAIEmailResponse = (items: unknown[]) => ({
+  ok: true,
+  status: 200,
+  json: async () => ({
+    choices: [{ message: { content: JSON.stringify({ results: items }) } }],
+    usage: { prompt_tokens: 80, completion_tokens: 40 },
+  }),
+});
+
+// OpenAI statement returns a plain array
 const makeOpenAIResponse = (items: unknown[]) => ({
   ok: true,
   status: 200,
@@ -30,7 +41,7 @@ describe("callOpenAIEmailBatch", () => {
 
   it("returns parsed items and token counts on success", async () => {
     const item = { emailIndex: 0, isTransaction: false, transactions: [], outcome: "not_transaction" };
-    mockFetch.mockResolvedValueOnce(makeOpenAIResponse([item]));
+    mockFetch.mockResolvedValueOnce(makeOpenAIEmailResponse([item]));
 
     const result = await callOpenAIEmailBatch(
       [{ emailIndex: 0, body: "test", senderName: "S", fallbackDate: "2026-07-14" }],
