@@ -2,6 +2,26 @@ export const SCHEMA_VERSION = "v1";
 
 const CHARS_PER_TOKEN = 4;
 
+const EMAIL_ITEM_PROPERTIES = {
+  merchant: { type: "string" },
+  amount: { type: "number" },
+  currency: { type: "string" },
+  date: { type: "string" },
+  type: { type: "string", enum: ["expense", "income"] },
+  category: { type: "string" },
+  confidence: { type: "number" },
+  needsReview: { type: "boolean" },
+} as const;
+
+const EMAIL_ITEM_REQUIRED = [
+  "merchant", "amount", "currency", "date", "type", "category",
+  "subCategory", "confidence", "needsReview", "lineItems",
+] as const;
+
+const EMAIL_RESULT_REQUIRED = ["emailIndex", "isTransaction", "transactions", "outcome"] as const;
+const OPENAI_EMAIL_RESULT_REQUIRED = ["emailIndex", "isTransaction", "transactions", "outcome", "subjectTemplate", "bodyTemplate"] as const;
+
+// Gemini responseSchema — uses nullable:true (proto-based, no union types)
 export const EMAIL_JSON_SCHEMA = {
   type: "array",
   items: {
@@ -14,15 +34,8 @@ export const EMAIL_JSON_SCHEMA = {
         items: {
           type: "object",
           properties: {
-            merchant: { type: "string" },
-            amount: { type: "number" },
-            currency: { type: "string" },
-            date: { type: "string" },
-            type: { type: "string", enum: ["expense", "income"] },
-            category: { type: "string" },
+            ...EMAIL_ITEM_PROPERTIES,
             subCategory: { type: "string", nullable: true },
-            confidence: { type: "number" },
-            needsReview: { type: "boolean" },
             lineItems: {
               type: "array",
               nullable: true,
@@ -36,18 +49,69 @@ export const EMAIL_JSON_SCHEMA = {
               },
             },
           },
-          required: [
-            "merchant", "amount", "currency", "date", "type", "category",
-            "subCategory", "confidence", "needsReview", "lineItems",
-          ],
+          required: EMAIL_ITEM_REQUIRED,
         },
       },
       outcome: { type: "string", enum: ["parsed", "not_transaction", "parse_failed", "insufficient_data"] },
       subjectTemplate: { type: "string" },
       bodyTemplate: { type: "string" },
     },
-    required: ["emailIndex", "isTransaction", "transactions", "outcome"],
+    required: EMAIL_RESULT_REQUIRED,
   },
+} as const;
+
+// OpenAI json_schema — uses anyOf for nullable, requires top-level object wrapper
+export const OPENAI_EMAIL_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          emailIndex: { type: "integer" },
+          isTransaction: { type: "boolean" },
+          transactions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                ...EMAIL_ITEM_PROPERTIES,
+                subCategory: { anyOf: [{ type: "string" }, { type: "null" }] },
+                lineItems: {
+                  anyOf: [
+                    {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          name: { type: "string" },
+                          amount: { type: "number" },
+                          subCategory: { type: "string" },
+                        },
+                        required: ["name", "amount", "subCategory"],
+                        additionalProperties: false,
+                      },
+                    },
+                    { type: "null" },
+                  ],
+                },
+              },
+              required: EMAIL_ITEM_REQUIRED,
+              additionalProperties: false,
+            },
+          },
+          outcome: { type: "string", enum: ["parsed", "not_transaction", "parse_failed", "insufficient_data"] },
+          subjectTemplate: { type: "string" },
+          bodyTemplate: { type: "string" },
+        },
+        required: OPENAI_EMAIL_RESULT_REQUIRED,
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["results"],
+  additionalProperties: false,
 } as const;
 
 export const BATCH_SYSTEM_PROMPT =

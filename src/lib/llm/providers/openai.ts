@@ -16,6 +16,7 @@ import {
   buildBatchUserPrompt,
   STATEMENT_SYSTEM_PROMPT,
   buildStatementUserPrompt,
+  OPENAI_EMAIL_JSON_SCHEMA,
   EmailInput,
 } from "../prompts";
 
@@ -34,6 +35,7 @@ async function callOpenAI(
   systemPrompt: string,
   userPrompt: string,
   apiKey: string,
+  jsonSchema?: Record<string, unknown>,
 ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
   const openaiModel = process.env.OPENAI_MODEL ?? "gpt-5-nano-2025-08-07";
   const controller = new AbortController();
@@ -48,6 +50,17 @@ async function callOpenAI(
         { role: "user", content: userPrompt },
       ],
     };
+
+    if (jsonSchema) {
+      body.response_format = {
+        type: "json_schema",
+        json_schema: {
+          name: "email_parse",
+          strict: true,
+          schema: jsonSchema,
+        },
+      };
+    }
 
     res = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
       method: "POST",
@@ -101,12 +114,14 @@ export async function callOpenAIEmailBatch(
   const { text, inputTokens, outputTokens } = await callOpenAI(
     BATCH_SYSTEM_PROMPT,
     buildBatchUserPrompt(inputs),
-    apiKey
+    apiKey,
+    OPENAI_EMAIL_JSON_SCHEMA as unknown as Record<string, unknown>,
   );
 
-  const raw = parseJsonText<ParsedEmailItem[]>(text);
+  const parsed = parseJsonText<{ results: ParsedEmailItem[] }>(text);
+  const raw = parsed?.results;
   if (!Array.isArray(raw)) {
-    throw new ProviderParseError(PROVIDER, "Response is not an array", text.slice(0, 300));
+    throw new ProviderParseError(PROVIDER, "Response missing results array", text.slice(0, 300));
   }
 
   return { items: raw, inputTokens, outputTokens };
