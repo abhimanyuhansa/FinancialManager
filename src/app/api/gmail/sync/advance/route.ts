@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { getGmailToken, fetchMessageIdPage, fetchFullMessageBatch, fetchPdfAttachment } from "@/lib/gmail";
 import { parseEmailBatchLLM } from "@/lib/llm";
 
@@ -77,6 +78,33 @@ async function advanceJobLocked(
   total?: number;
   source?: string;
 }> {
+
+  // Reset any error-outcome messages that haven't been retried yet so they
+  // get picked up in this or a subsequent advance() call. Only resets messages
+  // with exactly one error ParseLog (i.e., first-attempt failures) to prevent
+  // infinite retry loops on consistently failing emails.
+  await prisma.$executeRaw`
+    UPDATE "SyncJobMessage" sjm
+    SET processed = false
+    FROM (
+      SELECT sjm2.id
+      FROM "SyncJobMessage" sjm2
+      WHERE sjm2."syncJobId" = ${job.id} AND sjm2.processed = true
+        AND (
+          SELECT COUNT(*) FROM "ParseLog" pl
+          WHERE pl."gmailMsgId" = sjm2."gmailMsgId"
+            AND pl."syncJobId" = ${job.id}
+            AND pl.outcome = 'error'
+        ) = 1
+        AND NOT EXISTS (
+          SELECT 1 FROM "ParseLog" pl2
+          WHERE pl2."gmailMsgId" = sjm2."gmailMsgId"
+            AND pl2."syncJobId" = ${job.id}
+            AND pl2.outcome != 'error'
+        )
+    ) retryable
+    WHERE sjm.id = retryable.id
+  `;
 
   const pending = await prisma.syncJobMessage.findMany({
     where: { syncJobId: job.id, processed: false },
@@ -192,6 +220,9 @@ async function advanceJobLocked(
   }
 
   let newTransactions = 0;
+  // Batch ParseLog writes — flushed once after all serial DB work completes,
+  // avoiding dozens of individual round-trips before the LLM call.
+  const pendingLogs: Prisma.ParseLogCreateManyInput[] = [];
 
   if (toProcess.length > 0) {
     // ── Static parser pass ──────────────────────────────────────────────────
@@ -209,15 +240,13 @@ async function advanceJobLocked(
       });
 
       if (staticResult.outcome === "not_transaction") {
-        await prisma.parseLog.create({
-          data: {
-            ...buildLogBase(email, job),
-            outcome: "not_transaction",
-            bodyLengthRaw: email.body.length,
-            bodyLengthSent: 0,
-            wasTruncated: false,
-            batchSize: 1,
-          },
+        pendingLogs.push({
+          ...buildLogBase(email, job),
+          outcome: "not_transaction",
+          bodyLengthRaw: email.body.length,
+          bodyLengthSent: 0,
+          wasTruncated: false,
+          batchSize: 1,
         });
         continue;
       }
@@ -268,19 +297,17 @@ async function advanceJobLocked(
             : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
           if (outcome === "inserted") newTransactions++;
 
-          await prisma.parseLog.create({
-            data: {
-              ...buildLogBase(email, job),
-              outcome,
-              bodyLengthRaw: email.body.length,
-              bodyLengthSent: email.body.length,
-              wasTruncated: false,
-              batchSize: 1,
-              geminiConfidence: tx.confidence,
-              parsedMerchant: resolvedMerchant,
-              parsedAmount: tx.amount,
-              transactionId: upsertResult.id,
-            },
+          pendingLogs.push({
+            ...buildLogBase(email, job),
+            outcome,
+            bodyLengthRaw: email.body.length,
+            bodyLengthSent: email.body.length,
+            wasTruncated: false,
+            batchSize: 1,
+            geminiConfidence: tx.confidence,
+            parsedMerchant: resolvedMerchant,
+            parsedAmount: tx.amount,
+            transactionId: upsertResult.id,
           });
         }
         continue;
@@ -298,17 +325,15 @@ async function advanceJobLocked(
       for (const email of llmQueue) {
         const cachedTxId = exactHits.get(email.msgId);
         if (cachedTxId) {
-          await prisma.parseLog.create({
-            data: {
-              ...buildLogBase(email, job),
-              outcome: "skipped_duplicate",
-              bodyLengthRaw: email.body.length,
-              bodyLengthSent: 0,
-              wasTruncated: false,
-              batchSize: 1,
-              transactionId: cachedTxId,
-              resolvedBy: "exact_cache",
-            },
+          pendingLogs.push({
+            ...buildLogBase(email, job),
+            outcome: "skipped_duplicate",
+            bodyLengthRaw: email.body.length,
+            bodyLengthSent: 0,
+            wasTruncated: false,
+            batchSize: 1,
+            transactionId: cachedTxId,
+            resolvedBy: "exact_cache",
           });
           continue;
         }
@@ -369,20 +394,18 @@ async function advanceJobLocked(
               : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
             if (outcome === "inserted") newTransactions++;
 
-            await prisma.parseLog.create({
-              data: {
-                ...buildLogBase(email, job),
-                outcome,
-                bodyLengthRaw: email.body.length,
-                bodyLengthSent: email.body.length,
-                wasTruncated: false,
-                batchSize: 1,
-                geminiConfidence: 0.9,
-                parsedMerchant: applied.merchant ?? email.senderName,
-                parsedAmount: applied.amount,
-                transactionId: upsertResult.id,
-                resolvedBy: "template",
-              },
+            pendingLogs.push({
+              ...buildLogBase(email, job),
+              outcome,
+              bodyLengthRaw: email.body.length,
+              bodyLengthSent: email.body.length,
+              wasTruncated: false,
+              batchSize: 1,
+              geminiConfidence: 0.9,
+              parsedMerchant: applied.merchant ?? email.senderName,
+              parsedAmount: applied.amount,
+              transactionId: upsertResult.id,
+              resolvedBy: "template",
             });
 
             await recordHit(tmpl.id, key, invocationMap);
@@ -421,21 +444,19 @@ async function advanceJobLocked(
             // LLM batch failed entirely — log each candidate as error so the job
             // can advance past this chunk rather than looping forever.
             const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
-            await Promise.all(llmCandidates.map((email) =>
-              prisma.parseLog.create({
-                data: {
-                  ...buildLogBase(email, job),
-                  outcome: "error",
-                  bodyLengthRaw: email.body.length,
-                  bodyLengthSent: email.body.length,
-                  wasTruncated: email.body.length >= BODY_LIMIT,
-                  batchSize: llmCandidates.length,
-                  resolvedBy: "llm",
-                  geminiConfidence: 0,
-                  parsedMerchant: errMsg.slice(0, 200),
-                },
-              })
-            ));
+            for (const email of llmCandidates) {
+              pendingLogs.push({
+                ...buildLogBase(email, job),
+                outcome: "error",
+                bodyLengthRaw: email.body.length,
+                bodyLengthSent: email.body.length,
+                wasTruncated: email.body.length >= BODY_LIMIT,
+                batchSize: llmCandidates.length,
+                resolvedBy: "llm",
+                geminiConfidence: 0,
+                parsedMerchant: errMsg.slice(0, 200),
+              });
+            }
             results = [];
           }
 
@@ -460,7 +481,7 @@ async function advanceJobLocked(
             };
 
             if (result.outcome !== "parsed" || !result.transactions.length) {
-              await prisma.parseLog.create({ data: { ...logBase, outcome: result.outcome, resolvedBy: "llm" } });
+              pendingLogs.push({ ...logBase, outcome: result.outcome, resolvedBy: "llm" });
 
               // Shadow disagreement: LLM couldn't parse but template had a result
               if (shadowEmail._shadowTmplId && shadowEmail._shadowKey) {
@@ -486,12 +507,10 @@ async function advanceJobLocked(
                 : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
               if (outcome === "inserted") newTransactions++;
 
-              await prisma.parseLog.create({
-                data: {
-                  ...logBase, outcome, geminiConfidence: tx.confidence,
-                  parsedMerchant: tx.merchant, parsedAmount: tx.amount,
-                  transactionId: upsertResult.id, resolvedBy: "llm",
-                },
+              pendingLogs.push({
+                ...logBase, outcome, geminiConfidence: tx.confidence,
+                parsedMerchant: tx.merchant, parsedAmount: tx.amount,
+                transactionId: upsertResult.id, resolvedBy: "llm",
               });
 
               // Template learning: upsert new template from Gemini result if templates provided
@@ -539,6 +558,11 @@ async function advanceJobLocked(
         }
       }
     }
+  }
+
+  // Flush all accumulated ParseLog writes in one batch
+  if (pendingLogs.length > 0) {
+    await prisma.parseLog.createMany({ data: pendingLogs });
   }
 
   await prisma.syncJobMessage.updateMany({
