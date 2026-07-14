@@ -21,7 +21,7 @@ import {
 } from "../prompts";
 
 const PROVIDER: LLMProvider = "openai";
-const OPENAI_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 30_000);
+const OPENAI_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 50_000);
 const OPENAI_API_BASE = "https://api.openai.com/v1";
 
 function throwForStatus(status: number, detail: string): never {

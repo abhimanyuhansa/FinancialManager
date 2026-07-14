@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getGmailToken, fetchMessageIdPage, fetchFullMessageBatch, fetchPdfAttachment } from "@/lib/gmail";
 import { parseEmailBatchLLM } from "@/lib/llm";
+
+export const maxDuration = 60;
 import { acquireLock, LockLostError } from "@/lib/llm/lock";
 import { upsertTransactionV2 } from "@/lib/dedup";
 import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";

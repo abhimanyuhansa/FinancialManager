@@ -21,7 +21,7 @@ import {
 } from "../prompts";
 
 const PROVIDER: LLMProvider = "gemini";
-const GEMINI_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 30_000);
+const GEMINI_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 50_000);
 
 function throwForStatus(status: number, body: string): never {
   if (status === 400) throw new ProviderBadRequestError(PROVIDER, `400: ${body.slice(0, 100)}`);

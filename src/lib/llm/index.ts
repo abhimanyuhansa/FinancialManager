@@ -24,10 +24,12 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
 
 function isRetryableError(err: unknown): boolean {
+  // Timeout is NOT retryable: we're already at the end of the function budget.
+  // Attempting a fallback call after a 30s+ timeout would immediately hit the
+  // Vercel 60s limit, trip both circuit breakers, and cause "both exhausted".
   return (
     err instanceof ProviderRateLimitError ||
     err instanceof ProviderServerError ||
-    err instanceof ProviderTimeoutError ||
     err instanceof ProviderParseError
   );
 }
@@ -134,9 +136,10 @@ export async function parseEmailBatchLLM(
       );
 
       if (!isRetryableError(err)) {
-        // Non-retryable (400, 401, 403): still need to clean up probe state if this was a half-open probe
+        // Non-retryable (400, 401, 403, timeout): record failure and clean up probe, then throw.
+        // Timeout specifically must NOT attempt fallback — the Vercel 60s budget is already consumed.
+        await recordFailure(currentSelected.provider);
         if (currentSelected.isHalfOpenProbe) {
-          await recordFailure(currentSelected.provider);
           await releaseHalfOpenProbe(currentSelected.provider);
         }
         throw err;
