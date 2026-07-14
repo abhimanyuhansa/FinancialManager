@@ -10,7 +10,7 @@ type AdvanceResponse =
 
 type SyncJob = {
   id: string;
-  status: "scanning" | "running" | "complete" | "failed" | "cancelled";
+  status: "scanning" | "running" | "paused" | "complete" | "failed" | "cancelled";
   totalEmails: number;
   processedEmails: number;
   newTransactions: number;
@@ -36,10 +36,10 @@ export function SyncProgressBanner() {
   const [job, setJob] = useState<SyncJob | null>(null);
   const [advancePhase, setAdvancePhase] = useState<AdvanceResponse | null>(null);
   const [dismissed, setDismissedState] = useState(false);
+  const [pausePending, setPausePending] = useState(false);
 
   const tick = useCallback(async () => {
     try {
-      // First check if there's an active job
       const statusRes = await fetch("/api/gmail/sync/active");
       if (!statusRes.ok) return;
       const jobData: SyncJob | null = await statusRes.json();
@@ -48,7 +48,6 @@ export function SyncProgressBanner() {
       setJob(jobData);
       setDismissedState(false);
 
-      // If job is active, drive the advance endpoint
       if (jobData.status === "scanning" || jobData.status === "running") {
         const advRes = await fetch("/api/gmail/sync/advance");
         if (advRes.ok) {
@@ -79,6 +78,28 @@ export function SyncProgressBanner() {
     }
   }, [job]);
 
+  const handlePause = async () => {
+    if (!job || pausePending) return;
+    setPausePending(true);
+    try {
+      await fetch("/api/gmail/sync/pause", { method: "POST" });
+      await tick();
+    } finally {
+      setPausePending(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!job || pausePending) return;
+    setPausePending(true);
+    try {
+      await fetch("/api/gmail/sync/pause?resume", { method: "POST" });
+      await tick();
+    } finally {
+      setPausePending(false);
+    }
+  };
+
   if (!job || dismissed) return null;
 
   const pct = job.totalEmails > 0 ? Math.round((job.processedEmails / job.totalEmails) * 100) : 0;
@@ -99,16 +120,52 @@ export function SyncProgressBanner() {
     );
   }
 
+  if (job.status === "paused") {
+    return (
+      <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-3">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div>
+            <span className="text-sm text-yellow-800 font-medium">
+              Sync paused — {job.processedEmails.toLocaleString()} / {job.totalEmails.toLocaleString()} emails processed
+            </span>
+            <p className="text-xs text-yellow-600 mt-0.5">{job.newTransactions} new transactions found so far</p>
+          </div>
+          <div className="flex items-center gap-2 ml-4">
+            <button
+              onClick={handleResume}
+              disabled={pausePending}
+              className="text-xs px-3 py-1 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white rounded font-medium"
+            >
+              {pausePending ? "..." : "Resume"}
+            </button>
+            <button onClick={handleDismiss} className="text-yellow-500 hover:text-yellow-700 text-sm">✕</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (job.status === "scanning") {
     const scanned = advancePhase?.phase === "scanning" ? advancePhase.scanned : job.totalEmails;
     return (
       <div className="bg-blue-50 border-b border-blue-200 px-4 py-3">
         <div className="max-w-4xl mx-auto">
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm text-blue-800 font-medium">
-              Scanning your Gmail… {scanned > 0 ? `${scanned.toLocaleString()} emails found so far` : ""}
-            </span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm text-blue-800 font-medium">
+                Scanning your Gmail… {scanned > 0 ? `${scanned.toLocaleString()} emails found so far` : ""}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handlePause}
+                disabled={pausePending}
+                className="text-xs px-2 py-0.5 border border-blue-400 hover:bg-blue-100 disabled:opacity-50 text-blue-700 rounded"
+              >
+                {pausePending ? "..." : "Pause"}
+              </button>
+            </div>
           </div>
           <p className="text-xs text-blue-600 mt-1">This runs in the background — you can navigate freely</p>
         </div>
@@ -128,7 +185,16 @@ export function SyncProgressBanner() {
             <span className="text-sm text-blue-800 font-medium">
               Importing Gmail transactions… {processed.toLocaleString()} / {total.toLocaleString()}
             </span>
-            <span className="text-sm text-blue-600 font-semibold">{livePct}%</span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-blue-600 font-semibold">{livePct}%</span>
+              <button
+                onClick={handlePause}
+                disabled={pausePending}
+                className="text-xs px-2 py-0.5 border border-blue-400 hover:bg-blue-100 disabled:opacity-50 text-blue-700 rounded"
+              >
+                {pausePending ? "..." : "Pause"}
+              </button>
+            </div>
           </div>
           <div className="h-1.5 bg-blue-200 rounded-full">
             <div className="h-full bg-blue-600 rounded-full transition-all duration-300" style={{ width: `${livePct}%` }} />

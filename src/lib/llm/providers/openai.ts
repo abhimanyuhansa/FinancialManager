@@ -16,7 +16,6 @@ import {
   buildBatchUserPrompt,
   STATEMENT_SYSTEM_PROMPT,
   buildStatementUserPrompt,
-  EMAIL_JSON_SCHEMA,
   EmailInput,
 } from "../prompts";
 
@@ -35,7 +34,6 @@ async function callOpenAI(
   systemPrompt: string,
   userPrompt: string,
   apiKey: string,
-  jsonSchema?: unknown
 ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
   const openaiModel = process.env.OPENAI_MODEL ?? "gpt-5-nano-2025-08-07";
   const controller = new AbortController();
@@ -50,12 +48,6 @@ async function callOpenAI(
         { role: "user", content: userPrompt },
       ],
     };
-    if (jsonSchema) {
-      body.response_format = {
-        type: "json_schema",
-        json_schema: { name: "email_parse", schema: jsonSchema, strict: true },
-      };
-    }
 
     res = await fetch(`${OPENAI_API_BASE}/chat/completions`, {
       method: "POST",
@@ -109,8 +101,7 @@ export async function callOpenAIEmailBatch(
   const { text, inputTokens, outputTokens } = await callOpenAI(
     BATCH_SYSTEM_PROMPT,
     buildBatchUserPrompt(inputs),
-    apiKey,
-    EMAIL_JSON_SCHEMA
+    apiKey
   );
 
   const raw = parseJsonText<ParsedEmailItem[]>(text);
