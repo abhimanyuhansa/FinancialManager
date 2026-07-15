@@ -1,4 +1,4 @@
-import { ParsedEmailItem, LLMProvider, ProviderParseError } from "./providers/types";
+import { ParsedEmailItem, LLMProvider, ProviderContractError } from "./providers/types";
 
 const VALID_CATEGORIES = [
   "food", "transport", "shopping", "entertainment", "utilities",
@@ -11,27 +11,24 @@ export function validateProviderResults(
   provider: LLMProvider
 ): ParsedEmailItem[] {
   if (raw.length !== candidateCount) {
-    throw new ProviderParseError(
+    throw new ProviderContractError(
       provider,
-      `Expected ${candidateCount} results, got ${raw.length}`,
-      JSON.stringify(raw).slice(0, 200)
+      `Expected ${candidateCount} results, got ${raw.length}`
     );
   }
 
   const indices = new Set<number>();
   for (const item of raw) {
     if (item.emailIndex < 0 || item.emailIndex >= candidateCount) {
-      throw new ProviderParseError(
+      throw new ProviderContractError(
         provider,
-        `emailIndex ${item.emailIndex} out of range [0,${candidateCount})`,
-        JSON.stringify(item).slice(0, 200)
+        `emailIndex ${item.emailIndex} out of range [0,${candidateCount})`
       );
     }
     if (indices.has(item.emailIndex)) {
-      throw new ProviderParseError(
+      throw new ProviderContractError(
         provider,
-        `Duplicate emailIndex ${item.emailIndex}`,
-        JSON.stringify(item).slice(0, 200)
+        `Duplicate emailIndex ${item.emailIndex}`
       );
     }
     indices.add(item.emailIndex);
@@ -39,10 +36,9 @@ export function validateProviderResults(
 
   for (let i = 0; i < candidateCount; i++) {
     if (!indices.has(i)) {
-      throw new ProviderParseError(
+      throw new ProviderContractError(
         provider,
-        `Missing emailIndex ${i}`,
-        JSON.stringify(raw).slice(0, 200)
+        `Missing emailIndex ${i}`
       );
     }
   }
