@@ -6,6 +6,8 @@ import {
   ProviderTimeoutError,
   ProviderParseError,
   ProviderExhaustedError,
+  ProviderContractError,
+  isAvailabilityError,
 } from "../../../src/lib/llm/providers/types";
 
 describe("LLM error classes", () => {
@@ -48,5 +50,49 @@ describe("LLM error classes", () => {
     expect(err.name).toBe("ProviderExhaustedError");
     expect(err.primary).toBe("openai");
     expect(err.fallback).toBe("gemini");
+  });
+});
+
+describe("error class hierarchy", () => {
+  it("ProviderTimeoutError is an availability error", () => {
+    const e = new ProviderTimeoutError("gemini", "timed out");
+    expect(isAvailabilityError(e)).toBe(true);
+  });
+
+  it("ProviderRateLimitError is an availability error", () => {
+    const e = new ProviderRateLimitError("gemini", "429");
+    expect(isAvailabilityError(e)).toBe(true);
+  });
+
+  it("ProviderServerError is an availability error", () => {
+    const e = new ProviderServerError("openai", "500");
+    expect(isAvailabilityError(e)).toBe(true);
+  });
+
+  it("ProviderBadRequestError is NOT an availability error", () => {
+    const e = new ProviderBadRequestError("openai", "400");
+    expect(isAvailabilityError(e)).toBe(false);
+  });
+
+  it("ProviderParseError is NOT an availability error", () => {
+    const e = new ProviderParseError("gemini", "bad json", "raw");
+    expect(isAvailabilityError(e)).toBe(false);
+  });
+
+  it("ProviderContractError is NOT an availability error", () => {
+    const e = new ProviderContractError("openai", "missing ids");
+    expect(isAvailabilityError(e)).toBe(false);
+  });
+
+  it("ProviderAuthError is NOT an availability error (invalid key is not transient)", () => {
+    const e = new ProviderAuthError("openai", "401");
+    expect(isAvailabilityError(e)).toBe(false);
+  });
+
+  it("ProviderContractError has provider and message", () => {
+    const e = new ProviderContractError("gemini", "Expected 5 got 2");
+    expect(e.provider).toBe("gemini");
+    expect(e.message).toBe("Expected 5 got 2");
+    expect(e.name).toBe("ProviderContractError");
   });
 });

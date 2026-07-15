@@ -73,6 +73,10 @@ export class ProviderParseError extends LLMError {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+// Contract error: schema/count violations — batch-specific, not transient, do NOT trip circuit breaker
+export class ProviderContractError extends LLMError {
+  readonly name = "ProviderContractError" as const;
+}
 export class ProviderExhaustedError extends Error {
   readonly name = "ProviderExhaustedError" as const;
   readonly primary: LLMProvider;
@@ -90,3 +94,13 @@ export type LlmCallContext = {
   syncJobId?: string;
   operationType: string;
 };
+
+// Availability errors: transient, affect provider health → trip circuit breaker
+// Non-availability: ProviderBadRequestError, ProviderAuthError, ProviderParseError, ProviderContractError
+export function isAvailabilityError(err: unknown): boolean {
+  return (
+    err instanceof ProviderTimeoutError ||
+    err instanceof ProviderRateLimitError ||
+    err instanceof ProviderServerError
+  );
+}
