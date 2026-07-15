@@ -1,7 +1,7 @@
 import postgres from "postgres";
 
-const DB_URL =
-  "REDACTED_DATABASE_URL";
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) throw new Error("DATABASE_URL env var is required");
 
 const sql = postgres(DB_URL, { ssl: "require" });
 

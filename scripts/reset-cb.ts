@@ -1,5 +1,7 @@
 import postgres from "postgres";
-const sql = postgres("REDACTED_DATABASE_URL", { ssl: "require" });
+const DB_URL = process.env.DATABASE_URL;
+if (!DB_URL) throw new Error("DATABASE_URL env var is required");
+const sql = postgres(DB_URL, { ssl: "require" });
 async function main() {
   await sql`
     UPDATE "LlmCircuitBreaker"
