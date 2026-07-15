@@ -31,6 +31,7 @@ export type ProviderCallResult = {
   items: ParsedEmailItem[];
   inputTokens: number;
   outputTokens: number;
+  finishReason?: string;
 };
 
 export type StatementCallResult = {

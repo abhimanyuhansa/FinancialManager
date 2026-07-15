@@ -24,7 +24,8 @@ async function logAttempt(
   latencyMs: number,
   inputTokens: number,
   outputTokens: number,
-  errorDetail: string | null
+  errorDetail: string | null,
+  finishReason?: string
 ): Promise<void> {
   try {
     await prisma.llmCallLog.create({
@@ -43,6 +44,8 @@ async function logAttempt(
         fallbackReason: null,
         outcome,
         errorDetail,
+        finishReason: finishReason ?? null,
+        effectiveTimeoutMs: selected.effectiveTimeoutMs,
         latencyMs,
         inputTokens,
         outputTokens,
@@ -86,7 +89,7 @@ export async function parseEmailBatchLLM(
     const validated = validateProviderResults(callResult.items, inputs.length, selected.provider);
     const latencyMs = Date.now() - start;
 
-    await logAttempt(ctx, batchKey, selected, "success", latencyMs, callResult.inputTokens, callResult.outputTokens, null);
+    await logAttempt(ctx, batchKey, selected, "success", latencyMs, callResult.inputTokens, callResult.outputTokens, null, callResult.finishReason);
     await recordSuccess(selected.provider);
     await completeIdempotencyKey(batchKey, validated);
     return validated;

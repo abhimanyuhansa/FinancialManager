@@ -142,7 +142,7 @@ export async function callOpenAIEmailBatch(
     throw new ProviderParseError(PROVIDER, "Response missing results array", text.slice(0, 300));
   }
 
-  return { items: raw, inputTokens, outputTokens };
+  return { items: raw, inputTokens, outputTokens, finishReason };
 }
 
 export async function callOpenAIStatement(
