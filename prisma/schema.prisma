@@ -340,6 +340,8 @@ model LlmCallLog {
   fallbackReason   String?
   outcome          String
   errorDetail      String?
+  finishReason     String?
+  effectiveTimeoutMs Int?
   latencyMs        Int
   inputTokens      Int
   outputTokens     Int
@@ -364,12 +366,13 @@ model LlmQuotaWindow {
 }
 
 model LlmCircuitBreaker {
-  provider            String    @id
-  state               String    @default("CLOSED")
-  consecutiveFailures Int       @default(0)
-  lastFailureAt       DateTime?
-  openedAt            DateTime?
-  updatedAt           DateTime  @updatedAt
+  provider             String    @id
+  state                String    @default("CLOSED")
+  consecutiveFailures  Int       @default(0)
+  lastFailureAt        DateTime?
+  openedAt             DateTime?
+  probeLeaseExpiresAt  DateTime?
+  updatedAt            DateTime  @updatedAt
 }
 
 model LlmBatchIdempotency {

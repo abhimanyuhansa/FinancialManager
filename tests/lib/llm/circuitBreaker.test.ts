@@ -67,7 +67,7 @@ describe("tryAcquireHalfOpenProbe", () => {
   });
 
   it("returns false when CAS update affects 0 rows", async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
+    mockQueryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     const got = await tryAcquireHalfOpenProbe("gemini");
     expect(got).toBe(false);
   });
@@ -93,5 +93,58 @@ describe("recordFailure", () => {
     mockFindUnique.mockResolvedValueOnce({ consecutiveFailures: 1 });
     await recordFailure("gemini");
     expect(mockUpsert).toHaveBeenCalled();
+  });
+});
+
+describe("tryAcquireHalfOpenProbe — with lease", () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it("sets probeLeaseExpiresAt in the SQL (verifies updated CAS query shape)", async () => {
+    mockQueryRaw.mockResolvedValueOnce([{ affected: 1 }]);
+    const got = await tryAcquireHalfOpenProbe("gemini");
+    expect(got).toBe(true);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns true when expired PROBING lease is reclaimed", async () => {
+    mockQueryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ affected: 1 }]);
+    const got = await tryAcquireHalfOpenProbe("gemini");
+    expect(got).toBe(true);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns false when both CAS attempts fail", async () => {
+    mockQueryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const got = await tryAcquireHalfOpenProbe("gemini");
+    expect(got).toBe(false);
+    expect(mockQueryRaw).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("getCircuitBreakerState — PROBING with expired lease", () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it("treats PROBING with expired lease as HALF_OPEN (available for reclaim)", async () => {
+    mockFindUnique.mockResolvedValueOnce({
+      state: "PROBING",
+      openedAt: new Date(Date.now() - 120_000),
+      probeLeaseExpiresAt: new Date(Date.now() - 5_000),
+    });
+    const state = await getCircuitBreakerState("gemini");
+    expect(state).toBe("HALF_OPEN");
+  });
+
+  it("treats PROBING with active lease as HALF_OPEN (contested — block other probers)", async () => {
+    mockFindUnique.mockResolvedValueOnce({
+      state: "PROBING",
+      openedAt: new Date(Date.now() - 120_000),
+      probeLeaseExpiresAt: new Date(Date.now() + 30_000),
+    });
+    const state = await getCircuitBreakerState("gemini");
+    expect(state).toBe("HALF_OPEN");
   });
 });
