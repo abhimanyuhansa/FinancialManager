@@ -61,7 +61,7 @@ async function callProvider(
   if (selected.provider === "gemini") {
     return callGeminiEmailBatch(inputs, GEMINI_API_KEY);
   }
-  return callOpenAIEmailBatch(inputs, OPENAI_API_KEY);
+  return callOpenAIEmailBatch(inputs, OPENAI_API_KEY, inputs.length, selected.effectiveTimeoutMs);
 }
 
 export async function parseEmailBatchLLM(

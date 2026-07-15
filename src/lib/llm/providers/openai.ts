@@ -10,13 +10,14 @@ import {
   ProviderServerError,
   ProviderTimeoutError,
   ProviderParseError,
+  ProviderContractError,
 } from "./types";
 import {
   BATCH_SYSTEM_PROMPT,
   buildBatchUserPrompt,
   STATEMENT_SYSTEM_PROMPT,
   buildStatementUserPrompt,
-  OPENAI_EMAIL_JSON_SCHEMA,
+  buildOpenAIEmailJsonSchema,
   EmailInput,
 } from "../prompts";
 
@@ -36,10 +37,11 @@ async function callOpenAI(
   userPrompt: string,
   apiKey: string,
   jsonSchema?: Record<string, unknown>,
-): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+  timeoutMs: number = OPENAI_TIMEOUT_MS,
+): Promise<{ text: string; inputTokens: number; outputTokens: number; finishReason: string }> {
   const openaiModel = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let res: Response;
   try {
@@ -75,7 +77,7 @@ async function callOpenAI(
   } catch (e: unknown) {
     clearTimeout(timer);
     if (e instanceof Error && e.name === "AbortError") {
-      throw new ProviderTimeoutError(PROVIDER, `Timed out after ${OPENAI_TIMEOUT_MS}ms`);
+      throw new ProviderTimeoutError(PROVIDER, `Timed out after ${timeoutMs}ms`);
     }
     throw e;
   }
@@ -89,14 +91,16 @@ async function callOpenAI(
   }
 
   const data = (await res.json()) as {
-    choices?: Array<{ message: { content: string } }>;
+    choices?: Array<{ message: { content: string }; finish_reason?: string }>;
     usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
 
-  const text = data.choices?.[0]?.message?.content ?? "";
+  const choice = data.choices?.[0];
+  const finishReason = choice?.finish_reason ?? "stop";
+  const text = choice?.message?.content ?? "";
   const inputTokens = data.usage?.prompt_tokens ?? 0;
   const outputTokens = data.usage?.completion_tokens ?? 0;
-  return { text, inputTokens, outputTokens };
+  return { text, inputTokens, outputTokens, finishReason };
 }
 
 function parseJsonText<T>(text: string): T {
@@ -110,14 +114,27 @@ function parseJsonText<T>(text: string): T {
 
 export async function callOpenAIEmailBatch(
   inputs: EmailInput[],
-  apiKey: string
+  apiKey: string,
+  candidateCount?: number,
+  timeoutMs?: number,
 ): Promise<ProviderCallResult> {
-  const { text, inputTokens, outputTokens } = await callOpenAI(
+  const count = candidateCount ?? inputs.length;
+  const schema = buildOpenAIEmailJsonSchema(count);
+
+  const { text, inputTokens, outputTokens, finishReason } = await callOpenAI(
     BATCH_SYSTEM_PROMPT,
     buildBatchUserPrompt(inputs),
     apiKey,
-    OPENAI_EMAIL_JSON_SCHEMA as unknown as Record<string, unknown>,
+    schema,
+    timeoutMs,
   );
+
+  if (finishReason === "length") {
+    throw new ProviderContractError(PROVIDER, `Output truncated (finish_reason=length) for batch of ${count}`);
+  }
+  if (finishReason === "content_filter" || finishReason === "refusal") {
+    throw new ProviderContractError(PROVIDER, `Response blocked (finish_reason=${finishReason})`);
+  }
 
   const parsed = parseJsonText<{ results: ParsedEmailItem[] }>(text);
   const raw = parsed?.results;
@@ -130,12 +147,15 @@ export async function callOpenAIEmailBatch(
 
 export async function callOpenAIStatement(
   body: string,
-  apiKey: string
+  apiKey: string,
+  timeoutMs?: number,
 ): Promise<StatementCallResult> {
   const { text, inputTokens, outputTokens } = await callOpenAI(
     STATEMENT_SYSTEM_PROMPT,
     buildStatementUserPrompt(body),
-    apiKey
+    apiKey,
+    undefined,
+    timeoutMs,
   );
 
   const raw = parseJsonText<StatementItem[]>(text);

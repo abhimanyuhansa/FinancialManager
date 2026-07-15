@@ -60,59 +60,63 @@ export const EMAIL_JSON_SCHEMA = {
   },
 } as const;
 
-// OpenAI json_schema — uses anyOf for nullable, requires top-level object wrapper
-export const OPENAI_EMAIL_JSON_SCHEMA = {
-  type: "object",
-  properties: {
-    results: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          emailIndex: { type: "integer" },
-          isTransaction: { type: "boolean" },
-          transactions: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                ...EMAIL_ITEM_PROPERTIES,
-                subCategory: { anyOf: [{ type: "string" }, { type: "null" }] },
-                lineItems: {
-                  anyOf: [
-                    {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          name: { type: "string" },
-                          amount: { type: "number" },
-                          subCategory: { type: "string" },
+// OpenAI json_schema — generated per batch so minItems/maxItems can enforce exact count
+export function buildOpenAIEmailJsonSchema(candidateCount: number): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      results: {
+        type: "array",
+        minItems: candidateCount,
+        maxItems: candidateCount,
+        items: {
+          type: "object",
+          properties: {
+            emailIndex: { type: "integer" },
+            isTransaction: { type: "boolean" },
+            transactions: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  ...EMAIL_ITEM_PROPERTIES,
+                  subCategory: { anyOf: [{ type: "string" }, { type: "null" }] },
+                  lineItems: {
+                    anyOf: [
+                      {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            name: { type: "string" },
+                            amount: { type: "number" },
+                            subCategory: { type: "string" },
+                          },
+                          required: ["name", "amount", "subCategory"],
+                          additionalProperties: false,
                         },
-                        required: ["name", "amount", "subCategory"],
-                        additionalProperties: false,
                       },
-                    },
-                    { type: "null" },
-                  ],
+                      { type: "null" },
+                    ],
+                  },
                 },
+                required: EMAIL_ITEM_REQUIRED,
+                additionalProperties: false,
               },
-              required: EMAIL_ITEM_REQUIRED,
-              additionalProperties: false,
             },
+            outcome: { type: "string", enum: ["parsed", "not_transaction", "parse_failed", "insufficient_data"] },
+            subjectTemplate: { type: "string" },
+            bodyTemplate: { type: "string" },
           },
-          outcome: { type: "string", enum: ["parsed", "not_transaction", "parse_failed", "insufficient_data"] },
-          subjectTemplate: { type: "string" },
-          bodyTemplate: { type: "string" },
+          required: OPENAI_EMAIL_RESULT_REQUIRED,
+          additionalProperties: false,
         },
-        required: OPENAI_EMAIL_RESULT_REQUIRED,
-        additionalProperties: false,
       },
     },
-  },
-  required: ["results"],
-  additionalProperties: false,
-} as const;
+    required: ["results"],
+    additionalProperties: false,
+  };
+}
 
 export const BATCH_SYSTEM_PROMPT =
   "You are a financial transaction parser. For each email, decide if it is a financial transaction email, then extract ALL transactions.\n\n" +

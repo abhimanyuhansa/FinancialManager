@@ -12,6 +12,7 @@ export type SelectedProvider = {
   isHalfOpenProbe: boolean;
   reservedInputTokens: number;
   reservedOutputTokens: number;
+  effectiveTimeoutMs: number;
 };
 
 function getPrimaryProvider(_candidateCount: number): LLMProvider {
@@ -23,6 +24,8 @@ function getPrimaryProvider(_candidateCount: number): LLMProvider {
 function getFallbackProvider(primary: LLMProvider): LLMProvider {
   return primary === "gemini" ? "openai" : "gemini";
 }
+
+const DEFAULT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 30_000);
 
 async function tryReserve(
   provider: LLMProvider,
@@ -46,7 +49,7 @@ async function tryReserve(
     return null;
   }
 
-  return { provider, isHalfOpenProbe, reservedInputTokens: inputTokens, reservedOutputTokens: outputTokens };
+  return { provider, isHalfOpenProbe, reservedInputTokens: inputTokens, reservedOutputTokens: outputTokens, effectiveTimeoutMs: DEFAULT_TIMEOUT_MS };
 }
 
 export async function selectProvider(

@@ -118,3 +118,79 @@ describe("callOpenAIStatement", () => {
     await expect(callOpenAIStatement("body", "key")).rejects.toThrow(ProviderServerError);
   });
 });
+
+describe("callOpenAIEmailBatch — finish_reason handling", () => {
+  afterEach(() => mockFetch.mockReset());
+
+  const makeResponseWithFinishReason = (items: unknown[], finishReason: string) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      choices: [{ message: { content: JSON.stringify({ results: items }) }, finish_reason: finishReason }],
+      usage: { prompt_tokens: 100, completion_tokens: 20 },
+    }),
+  });
+
+  it("throws ProviderContractError when finish_reason is length (output truncated)", async () => {
+    const { ProviderContractError } = await import("../../../src/lib/llm/providers/types");
+    const item = { emailIndex: 0, isTransaction: false, transactions: [], outcome: "not_transaction" };
+    mockFetch.mockResolvedValueOnce(makeResponseWithFinishReason([item], "length"));
+    await expect(
+      callOpenAIEmailBatch(
+        [{ emailIndex: 0, body: "t", senderName: "S", fallbackDate: "2026-07-14" }],
+        "key",
+        1
+      )
+    ).rejects.toThrow(ProviderContractError);
+  });
+
+  it("throws ProviderContractError when finish_reason is content_filter", async () => {
+    const { ProviderContractError } = await import("../../../src/lib/llm/providers/types");
+    mockFetch.mockResolvedValueOnce(makeResponseWithFinishReason([], "content_filter"));
+    await expect(
+      callOpenAIEmailBatch(
+        [{ emailIndex: 0, body: "t", senderName: "S", fallbackDate: "2026-07-14" }],
+        "key",
+        1
+      )
+    ).rejects.toThrow(ProviderContractError);
+  });
+
+  it("succeeds when finish_reason is stop", async () => {
+    const item = { emailIndex: 0, isTransaction: false, transactions: [], outcome: "not_transaction" };
+    mockFetch.mockResolvedValueOnce(makeResponseWithFinishReason([item], "stop"));
+    const result = await callOpenAIEmailBatch(
+      [{ emailIndex: 0, body: "t", senderName: "S", fallbackDate: "2026-07-14" }],
+      "key",
+      1
+    );
+    expect(result.items).toHaveLength(1);
+  });
+});
+
+describe("callOpenAIEmailBatch — schema includes candidateCount", () => {
+  afterEach(() => mockFetch.mockReset());
+
+  it("passes candidateCount in the request body schema as minItems/maxItems", async () => {
+    const item = { emailIndex: 0, isTransaction: false, transactions: [], outcome: "not_transaction", subjectTemplate: "", bodyTemplate: "" };
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [{ message: { content: JSON.stringify({ results: [item] }) }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+      }),
+    });
+
+    await callOpenAIEmailBatch(
+      [{ emailIndex: 0, body: "t", senderName: "S", fallbackDate: "2026-07-14" }],
+      "key",
+      1
+    );
+
+    const calledBody = JSON.parse((mockFetch as jest.Mock).mock.calls[0][1].body);
+    const resultsSchema = calledBody.response_format.json_schema.schema.properties.results;
+    expect(resultsSchema.minItems).toBe(1);
+    expect(resultsSchema.maxItems).toBe(1);
+  });
+});
