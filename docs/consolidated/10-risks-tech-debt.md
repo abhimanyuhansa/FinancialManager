@@ -4,6 +4,7 @@
 > **Code baseline frozen:** 2026-07-14 — Pass 2 written; same commit anchor throughout.
 > **Baseline anchor date:** 2026-07-14
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
+> **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Pass 7 corrections:** 2026-07-15 — Freeze metadata standardized. K-01.
 > **Pass 3 corrections:** 2026-07-14 — REL-6 and REL-7 added (final-chunk silent data loss;
 > LLM result array length mismatch).

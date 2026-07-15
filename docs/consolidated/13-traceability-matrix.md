@@ -4,6 +4,7 @@
 > **Code baseline frozen:** 2026-07-14 — Pass 2 written; same commit anchor throughout.
 > **Baseline anchor date:** 2026-07-14
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 8
+> **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Pass 8 corrections:** 2026-07-15 — NFR-DATA-2 row fixed: [Partial] qualifier moved into
 > Requirement cell (was an extra 8th column in a 7-column table). Freeze metadata updated. K-01, K-02.
 > **Pass 3 corrections:** 2026-07-14 — FR-A2 (syncFromDate read-only; no write route);

@@ -5,6 +5,7 @@
 > same commit anchor. No modifications to the baseline commit itself.
 > **Baseline anchor date:** 2026-07-14
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
+> **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Pass 7 corrections:** 2026-07-15 — Freeze metadata standardized. K-01.
 > **Pass 3 corrections:** 2026-07-14 — resolvedBy=NULL for static tier-0 (not "static");
 > cron diagram corrected to GET; TENANT_KEYED_NOT_ENFORCED note added.

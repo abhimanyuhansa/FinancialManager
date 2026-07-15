@@ -5,6 +5,7 @@
 > same commit anchor. No modifications to the baseline commit itself.
 > **Baseline anchor date:** 2026-07-14
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 8
+> **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Pass 8 corrections:** 2026-07-15 — NFR-SCALE-4 table row fixed: merged dangling 4th cell
 > into Status cell (3-column table). Freeze metadata standardized. K-01, K-02.
 > **Pass 7 corrections:** 2026-07-15 — NFR-DATA-2 changed to [Partial] with REL-8 exception.

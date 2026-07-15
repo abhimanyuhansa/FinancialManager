@@ -4,6 +4,7 @@
 > **Frozen:** 2026-07-14 — baseline commit frozen; document text updated through Pass 6
 > against the same commit anchor. No modifications to the baseline commit itself.
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
+> **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
 > **Pass 4 corrections:** 2026-07-15 — §4 transaction feature description corrected (no DELETE
 > on `/api/transactions/[id]` — PATCH only; G-03).

@@ -3,6 +3,7 @@
 > **Baseline commit:** `31a607738f19ee3920a961e5cf347a6cf99a28f5`
 > **Baseline anchor date:** 2026-07-14 — validated pass-1 as-built baseline.
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
+> **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Pass 7 corrections:** 2026-07-15 — FR-C9 narrowed: "every parse attempt" → "every
 > successfully fetched candidate email" (REL-8 exception). Freeze metadata standardized. J-01, J-02.
 > **Pass 3 corrections:** 2026-07-14 — FR-A2 syncFromDate never-written note; FR-B8 partial

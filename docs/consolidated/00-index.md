@@ -3,6 +3,7 @@
 > **Baseline commit:** `31a607738f19ee3920a961e5cf347a6cf99a28f5`
 > **Baseline anchor date:** 2026-07-14
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 8
+> **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Status:** Pass 1 through Pass 8 complete — all 14 documents written and verified.
 > **Pass 8:** 2026-07-15 — 2 further inaccuracies (K-01, K-02) corrected: freeze metadata
 > standardized across 04, 07, 09, 10, 11, 12, 13 (Pass-7 freeze declaration added); index
