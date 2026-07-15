@@ -3,6 +3,7 @@ import {
   recordSuccess,
   recordFailure,
   tryAcquireHalfOpenProbe,
+  releaseHalfOpenProbe,
 } from "../../../src/lib/llm/circuitBreaker";
 
 jest.mock("@/lib/prisma", () => ({
@@ -20,6 +21,7 @@ jest.mock("@/lib/prisma", () => ({
 import { prisma } from "@/lib/prisma";
 const mockFindUnique = prisma.llmCircuitBreaker.findUnique as jest.Mock;
 const mockUpsert = prisma.llmCircuitBreaker.upsert as jest.Mock;
+const mockUpdateMany = prisma.llmCircuitBreaker.updateMany as jest.Mock;
 const mockQueryRaw = prisma.$queryRaw as jest.Mock;
 
 describe("getCircuitBreakerState", () => {
@@ -146,5 +148,33 @@ describe("getCircuitBreakerState — PROBING with expired lease", () => {
     });
     const state = await getCircuitBreakerState("gemini");
     expect(state).toBe("HALF_OPEN");
+  });
+});
+
+describe("releaseHalfOpenProbe", () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it("transitions PROBING → OPEN and resets openedAt to enforce a full cooldown", async () => {
+    mockUpdateMany.mockResolvedValueOnce({ count: 1 });
+    await releaseHalfOpenProbe("gemini");
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ provider: "gemini", state: "PROBING" }),
+        data: expect.objectContaining({
+          state: "OPEN",
+          openedAt: expect.any(Date),
+        }),
+      })
+    );
+  });
+
+  it("clears probeLeaseExpiresAt when releasing probe", async () => {
+    mockUpdateMany.mockResolvedValueOnce({ count: 1 });
+    await releaseHalfOpenProbe("openai");
+    expect(mockUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ probeLeaseExpiresAt: null }),
+      })
+    );
   });
 });
