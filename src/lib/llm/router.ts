@@ -7,6 +7,23 @@ import {
   CircuitState,
 } from "./circuitBreaker";
 
+// How many ms to reserve for DB writes + cleanup after the LLM call returns
+const DB_AND_CLEANUP_RESERVE_MS = 8_000;
+// Don't bother selecting a provider if we can't give it at least this much time
+const MIN_PROVIDER_BUDGET_MS = 5_000;
+
+const DEFAULT_GEMINI_TIMEOUT_MS = Number(
+  process.env.GEMINI_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS ?? 30_000
+);
+const DEFAULT_OPENAI_TIMEOUT_MS = Number(
+  process.env.OPENAI_TIMEOUT_MS ?? process.env.LLM_TIMEOUT_MS ?? 30_000
+);
+
+const PROVIDER_DEFAULT_TIMEOUT: Record<LLMProvider, number> = {
+  gemini: DEFAULT_GEMINI_TIMEOUT_MS,
+  openai: DEFAULT_OPENAI_TIMEOUT_MS,
+};
+
 export type SelectedProvider = {
   provider: LLMProvider;
   isHalfOpenProbe: boolean;
@@ -16,8 +33,6 @@ export type SelectedProvider = {
 };
 
 function getPrimaryProvider(_candidateCount: number): LLMProvider {
-  // Gemini (gemini-3.1-flash-lite) is always primary: 2-10s vs gpt-4o-mini's 5-35s for our batch sizes.
-  // OpenAI is the fallback. Override with LLM_PRIMARY_PROVIDER env var if needed.
   return (process.env.LLM_PRIMARY_PROVIDER as LLMProvider | undefined) ?? "gemini";
 }
 
@@ -25,16 +40,25 @@ function getFallbackProvider(primary: LLMProvider): LLMProvider {
   return primary === "gemini" ? "openai" : "gemini";
 }
 
-const DEFAULT_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 30_000);
+function computeEffectiveTimeout(provider: LLMProvider, invocationDeadlineMs?: number): number {
+  const configured = PROVIDER_DEFAULT_TIMEOUT[provider];
+  if (!invocationDeadlineMs) return configured;
+  const remaining = invocationDeadlineMs - Date.now() - DB_AND_CLEANUP_RESERVE_MS;
+  return Math.min(configured, remaining);
+}
 
 async function tryReserve(
   provider: LLMProvider,
   state: CircuitState,
   quotaAllowed: boolean,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  invocationDeadlineMs?: number
 ): Promise<SelectedProvider | null> {
   if (!quotaAllowed || state === "OPEN") return null;
+
+  const effectiveTimeoutMs = computeEffectiveTimeout(provider, invocationDeadlineMs);
+  if (effectiveTimeoutMs < MIN_PROVIDER_BUDGET_MS) return null;
 
   let isHalfOpenProbe = false;
   if (state === "HALF_OPEN") {
@@ -49,18 +73,18 @@ async function tryReserve(
     return null;
   }
 
-  return { provider, isHalfOpenProbe, reservedInputTokens: inputTokens, reservedOutputTokens: outputTokens, effectiveTimeoutMs: DEFAULT_TIMEOUT_MS };
+  return { provider, isHalfOpenProbe, reservedInputTokens: inputTokens, reservedOutputTokens: outputTokens, effectiveTimeoutMs };
 }
 
 export async function selectProvider(
   candidateCount: number,
   estimatedInputTokens: number,
-  estimatedOutputTokens: number
+  estimatedOutputTokens: number,
+  invocationDeadlineMs?: number
 ): Promise<SelectedProvider> {
   const primary = getPrimaryProvider(candidateCount);
   const fallback = getFallbackProvider(primary);
 
-  // Phase 1: read-only checks for both providers in parallel
   const [primaryState, fallbackState] = await Promise.all([
     getCircuitBreakerState(primary),
     getCircuitBreakerState(fallback),
@@ -75,16 +99,15 @@ export async function selectProvider(
       : Promise.resolve({ allowed: false, reason: "circuit open" }),
   ]);
 
-  // Phase 2: single atomic reserve+probe for chosen provider
   const primaryResult = await tryReserve(
     primary, primaryState, primaryQuota.allowed,
-    estimatedInputTokens, estimatedOutputTokens
+    estimatedInputTokens, estimatedOutputTokens, invocationDeadlineMs
   );
   if (primaryResult) return primaryResult;
 
   const fallbackResult = await tryReserve(
     fallback, fallbackState, fallbackQuota.allowed,
-    estimatedInputTokens, estimatedOutputTokens
+    estimatedInputTokens, estimatedOutputTokens, invocationDeadlineMs
   );
   if (fallbackResult) return fallbackResult;
 

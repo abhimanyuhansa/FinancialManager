@@ -61,3 +61,33 @@ describe("selectProvider", () => {
     expect(mockReserveQuota).toHaveBeenCalledWith(result.provider, 1, 100, 50);
   });
 });
+
+describe("selectProvider — deadline budget", () => {
+  beforeEach(() => {
+    delete process.env.LLM_PRIMARY_PROVIDER;
+    mockCheckQuota.mockResolvedValue({ allowed: true });
+    mockReserveQuota.mockResolvedValue(true);
+    mockGetState.mockResolvedValue("CLOSED");
+    mockTryProbe.mockResolvedValue(true);
+  });
+  afterEach(() => jest.resetAllMocks());
+
+  it("attaches effectiveTimeoutMs to selected provider result", async () => {
+    const deadline = Date.now() + 55_000;
+    const result = await selectProvider(5, 50, 50, deadline);
+    expect(result.effectiveTimeoutMs).toBeGreaterThan(0);
+    expect(result.effectiveTimeoutMs).toBeLessThanOrEqual(55_000);
+  });
+
+  it("skips provider when remaining budget is less than MIN_PROVIDER_BUDGET_MS", async () => {
+    const tightDeadline = Date.now() + 2_000;
+    await expect(selectProvider(5, 50, 50, tightDeadline)).rejects.toThrow("Both providers exhausted");
+  });
+
+  it("caps effectiveTimeoutMs at configured provider timeout", async () => {
+    const generousDeadline = Date.now() + 600_000;
+    const result = await selectProvider(5, 50, 50, generousDeadline);
+    const maxProviderTimeout = 60_000;
+    expect(result.effectiveTimeoutMs).toBeLessThanOrEqual(maxProviderTimeout);
+  });
+});
