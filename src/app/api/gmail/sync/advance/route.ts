@@ -78,6 +78,8 @@ async function advanceJobLocked(
   total?: number;
   source?: string;
 }> {
+  // maxDuration=60 — reserve 8s for DB writes, so LLM gets at most 52s from now.
+  const invocationDeadlineMs = Date.now() + 52_000;
 
   // Reset any error-outcome messages that haven't been retried yet so they
   // get picked up in this or a subsequent advance() call. Only resets messages
@@ -438,7 +440,8 @@ async function advanceJobLocked(
                 fallbackDate: e.receivedDate,
               })),
               batchKey,
-              llmContext
+              llmContext,
+              invocationDeadlineMs
             );
           } catch (llmErr) {
             // LLM batch failed entirely — log each candidate as error so the job

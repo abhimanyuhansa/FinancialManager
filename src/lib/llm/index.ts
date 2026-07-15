@@ -67,7 +67,8 @@ async function callProvider(
 export async function parseEmailBatchLLM(
   inputs: EmailInput[],
   batchKey: string,
-  ctx: LlmCallContext
+  ctx: LlmCallContext,
+  invocationDeadlineMs?: number
 ): Promise<ParsedEmailItem[]> {
   // Idempotency gate — atomic claim or return cached result
   const idempResult = await acquireIdempotencyKey(batchKey);
@@ -77,7 +78,7 @@ export async function parseEmailBatchLLM(
 
   const estimatedInput = estimateInputTokens(inputs);
   const estimatedOutput = estimateOutputTokens(inputs.length);
-  const selected = await selectProvider(inputs.length, estimatedInput, estimatedOutput);
+  const selected = await selectProvider(inputs.length, estimatedInput, estimatedOutput, invocationDeadlineMs);
 
   const start = Date.now();
   try {
@@ -108,12 +109,13 @@ export async function parseEmailBatchLLM(
 
 export async function parseStatementLLM(
   body: string,
-  ctx: LlmCallContext
+  ctx: LlmCallContext,
+  invocationDeadlineMs?: number
 ): Promise<StatementItem[]> {
   const estimatedInput = Math.ceil(body.length / 4);
   const estimatedOutput = 200;
 
-  const selected = await selectProvider(1, estimatedInput, estimatedOutput);
+  const selected = await selectProvider(1, estimatedInput, estimatedOutput, invocationDeadlineMs);
   const start = Date.now();
 
   try {
