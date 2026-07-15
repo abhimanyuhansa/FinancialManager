@@ -3,6 +3,7 @@ import {
   ParsedEmailItem,
   StatementItem,
   LlmCallContext,
+  isAvailabilityError,
 } from "./providers/types";
 import { selectProvider, releaseQuota, SelectedProvider } from "./router";
 import { callGeminiEmailBatch, callGeminiStatement } from "./providers/gemini";
@@ -93,7 +94,9 @@ export async function parseEmailBatchLLM(
     const errDetail = err instanceof Error ? err.message : String(err);
 
     await logAttempt(ctx, batchKey, selected, "error", latencyMs, 0, 0, errDetail);
-    await recordFailure(selected.provider);
+    if (isAvailabilityError(err)) {
+      await recordFailure(selected.provider);
+    }
     if (selected.isHalfOpenProbe) {
       await releaseHalfOpenProbe(selected.provider);
     }
@@ -126,7 +129,9 @@ export async function parseStatementLLM(
     const latencyMs = Date.now() - start;
     const errDetail = err instanceof Error ? err.message : String(err);
     await logAttempt(ctx, null, selected, "error", latencyMs, 0, 0, errDetail);
-    await recordFailure(selected.provider);
+    if (isAvailabilityError(err)) {
+      await recordFailure(selected.provider);
+    }
     throw err;
   }
 }

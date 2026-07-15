@@ -91,4 +91,38 @@ describe("parseEmailBatchLLM", () => {
     expect(mockCallOpenAI).toHaveBeenCalled();
     expect(mockCallGemini).not.toHaveBeenCalled();
   });
+
+  it("does NOT call recordFailure when error is ProviderContractError", async () => {
+    const { ProviderContractError } = await import("../../../src/lib/llm/providers/types");
+    const selected = { provider: "gemini" as const, isHalfOpenProbe: false, reservedInputTokens: 100, reservedOutputTokens: 50, effectiveTimeoutMs: 30000 };
+    mockSelectProvider.mockResolvedValue(selected);
+    mockCallGemini.mockRejectedValue(new ProviderContractError("gemini", "Expected 3 got 1"));
+
+    await expect(
+      parseEmailBatchLLM(
+        [{ emailIndex: 0, body: "test", senderName: "S", fallbackDate: "2026-07-14" }],
+        "batchkey-contract-err",
+        ctx
+      )
+    ).rejects.toThrow("Expected 3 got 1");
+
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+  });
+
+  it("DOES call recordFailure when error is ProviderTimeoutError", async () => {
+    const { ProviderTimeoutError } = await import("../../../src/lib/llm/providers/types");
+    const selected = { provider: "gemini" as const, isHalfOpenProbe: false, reservedInputTokens: 100, reservedOutputTokens: 50, effectiveTimeoutMs: 30000 };
+    mockSelectProvider.mockResolvedValue(selected);
+    mockCallGemini.mockRejectedValue(new ProviderTimeoutError("gemini", "Timed out after 30000ms"));
+
+    await expect(
+      parseEmailBatchLLM(
+        [{ emailIndex: 0, body: "test", senderName: "S", fallbackDate: "2026-07-14" }],
+        "batchkey-timeout-err",
+        ctx
+      )
+    ).rejects.toThrow("Timed out after 30000ms");
+
+    expect(mockRecordFailure).toHaveBeenCalledWith("gemini");
+  });
 });
