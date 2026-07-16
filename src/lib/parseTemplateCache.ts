@@ -49,8 +49,52 @@ export function canonicalise(text: string): string {
     .trim();
 }
 
+// Replacement order matters: more specific patterns first.
+const SKELETON_REPLACEMENTS: Array<[RegExp, string]> = [
+  // UPI VPA addresses (user@bank)
+  [/\b[\w.+\-]+@[\w.]+\b/gi, "{{VPA}}"],
+  // Order IDs: Amazon-style (NNN-NNNNNNN-NNNNNNN)
+  [/\b\d{3}-\d{7}-\d{7}\b/g, "{{ORDER_ID}}"],
+  // Generic ORDER ID labels
+  [/\bORDER[_\s-]?(?:ID|NO)?[:\s]*[A-Z0-9]{6,}\b/gi, "{{ORDER_ID}}"],
+  // Transaction reference IDs (TXN/REF/UTR/UPI/RRN prefix + alphanumeric)
+  [/\b(?:TXN|REF|UTR|UPI|RRN)[_\s-]?[A-Z0-9]{6,}\b/gi, "{{TXN_ID}}"],
+  // Masked account numbers (XX1234, ****1234)
+  [/\b(?:XX|x{2,}|\*{2,})\d{4,}\b/gi, "{{ACCOUNT}}"],
+  // Account/Acct label followed by masked/partial number
+  [/\b(?:Account|Acct|A\/C)[^\w][\w*X]{4,}\b/gi, "{{ACCOUNT}}"],
+  // Card last-4 references
+  [/\b(?:Card|card)\s+(?:ending|no\.?|number)?\s*\d{4}\b/gi, "{{CARD}}"],
+  [/\bending\s+\d{4}\b/gi, "{{CARD}}"],
+  // Currency amounts: ₹500, Rs.500, Rs. 1,200.50, INR 3,000
+  [/(?:₹|Rs\.?\s*|INR\s*)[\d,]+(?:\.\d{1,2})?/gi, "{{AMOUNT}}"],
+  // Plain numbers that look like amounts (4+ digit groups)
+  [/\b[\d,]{4,}(?:\.\d{1,2})?\b/g, "{{AMOUNT}}"],
+  // Dates: DD/MM/YY, DD-MM-YY, YYYY-MM-DD
+  [/\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/g, "{{DATE}}"],
+  [/\b\d{4}-\d{2}-\d{2}\b/g, "{{DATE}}"],
+  // DD Mon YYYY or Mon DD YYYY
+  [/\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*,?\s+\d{4}\b/gi, "{{DATE}}"],
+  [/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b/gi, "{{DATE}}"],
+  // Times: HH:MM or HH:MM:SS
+  [/\b\d{2}:\d{2}(?::\d{2})?\b/g, "{{TIME}}"],
+];
+
+export function normalizeToSkeleton(text: string): string {
+  let result = text;
+  for (const [pattern, placeholder] of SKELETON_REPLACEMENTS) {
+    result = result.replace(pattern, placeholder);
+  }
+  // Collapse adjacent identical placeholders (e.g., "{{AMOUNT}} {{AMOUNT}}" → "{{AMOUNT}}")
+  result = result.replace(/({{[A-Z_]+}})\s*\1/g, "$1");
+  return result;
+}
+
 export function templateHash(subject: string, body: string): string {
-  const canonical = canonicalise(subject) + "\n---\n" + canonicalise(body);
+  const canonical =
+    normalizeToSkeleton(canonicalise(subject)) +
+    "\n---\n" +
+    normalizeToSkeleton(canonicalise(body));
   return crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 

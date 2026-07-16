@@ -1,4 +1,4 @@
-import { canonicalise, templateHash } from "@/lib/parseTemplateCache";
+import { canonicalise, templateHash, normalizeToSkeleton } from "@/lib/parseTemplateCache";
 import { applyTemplate, compareOutputs, type ExtractorMap, type RegexExtractor } from "@/lib/parseTemplateCache";
 
 describe("canonicalise", () => {
@@ -209,5 +209,77 @@ describe("state transitions", () => {
     it("returns false below threshold", () => {
       expect(shouldDisableShadow(2)).toBe(false);
     });
+  });
+});
+
+describe("normalizeToSkeleton", () => {
+  it("replaces currency amounts (₹500, Rs.1,200.50, INR 3000)", () => {
+    const input = "Rs. 500.00 debited. Amount: ₹1,200.50. INR 3000 transferred.";
+    const result = normalizeToSkeleton(input);
+    expect(result).not.toMatch(/500/);
+    expect(result).not.toMatch(/1,200/);
+    expect(result).not.toMatch(/3000/);
+    expect(result).toContain("{{AMOUNT}}");
+  });
+
+  it("replaces dates in common formats", () => {
+    const input = "Transaction on 15/07/26 at 12:30. Statement for 2026-07-15. Date: 15 Jul, 2026.";
+    const result = normalizeToSkeleton(input);
+    expect(result).not.toMatch(/15\/07\/26/);
+    expect(result).not.toMatch(/2026-07-15/);
+    expect(result).toContain("{{DATE}}");
+  });
+
+  it("replaces UPI VPA addresses", () => {
+    const input = "Payment to merchant@okhdfcbank. UPI ref: user.name@oksbi";
+    const result = normalizeToSkeleton(input);
+    expect(result).not.toMatch(/merchant@okhdfcbank/);
+    expect(result).not.toMatch(/user\.name@oksbi/);
+    expect(result).toContain("{{VPA}}");
+  });
+
+  it("replaces account/card last-4 digits", () => {
+    const input = "Account XX1234 debited. Card ending 5678 charged.";
+    const result = normalizeToSkeleton(input);
+    expect(result).not.toMatch(/XX1234/);
+    expect(result).not.toMatch(/5678/);
+  });
+
+  it("replaces order and transaction IDs", () => {
+    const input = "Order ID: 408-1234567-8901234. Txn Ref: TXN20260715123456789";
+    const result = normalizeToSkeleton(input);
+    expect(result).not.toMatch(/408-1234567/);
+    expect(result).not.toMatch(/TXN20260715/);
+    expect(result).toContain("{{ORDER_ID}}");
+    expect(result).toContain("{{TXN_ID}}");
+  });
+
+  it("preserves static text (bank name, labels)", () => {
+    const result = normalizeToSkeleton("HDFC Bank Alert: Rs.500 debited");
+    expect(result).toContain("HDFC Bank Alert");
+    expect(result).toContain("debited");
+  });
+});
+
+describe("templateHash — skeleton stability", () => {
+  it("same structural template with different amounts produces the same hash", () => {
+    const email1Subject = "HDFC Bank UPI Alert";
+    const email1Body = "Rs. 500.00 debited from your HDFC account towards VPA zepto@okicici on 15/07/26";
+    const email2Body = "Rs. 1200.00 debited from your HDFC account towards VPA zepto@okicici on 16/07/26";
+
+    const hash1 = templateHash(email1Subject, email1Body);
+    const hash2 = templateHash(email1Subject, email2Body);
+    expect(hash1).toBe(hash2);
+  });
+
+  it("structurally different emails produce different hashes", () => {
+    const hash1 = templateHash("HDFC UPI Alert", "Rs. 500 debited from account towards VPA");
+    const hash2 = templateHash("SBI Alert", "INR 500 Debited from Acct No");
+    expect(hash1).not.toBe(hash2);
+  });
+
+  it("same email always produces same hash (idempotent)", () => {
+    const body = "Rs. 750 debited from your account on 15/07/26";
+    expect(templateHash("Alert", body)).toBe(templateHash("Alert", body));
   });
 });
