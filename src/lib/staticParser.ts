@@ -298,7 +298,7 @@ function parseZomato(body: string, subject: string, receivedDate: string): Stati
 }
 
 function parseUber(body: string, subject: string, receivedDate: string): StaticParseResult {
-  if (!/trip with Uber|receipt for your|delivery.*receipt/i.test(subject)) return NONE;
+  if (!/trip with Uber|receipt for your|delivery.*receipt/i.test(subject)) return INSUF;
   const amtM = body.match(/Total\s+[₹]([\d,]+(?:\.\d{2})?)/i);
   const amount = parseAmount(amtM?.[1]);
   if (!amount) return INSUF;
@@ -323,7 +323,7 @@ function parseAirtel(body: string, subject: string, receivedDate: string): Stati
 }
 
 function parseJio(body: string, subject: string, receivedDate: string): StaticParseResult {
-  if (!/payment receipt|payment.*received/i.test(subject)) return NONE;
+  if (!/payment receipt|payment.*received/i.test(subject)) return INSUF;
   const amtM = body.match(/payment of Rs\.?\s*([\d,]+(?:\.\d{2})?)/i);
   const amount = parseAmount(amtM?.[1]);
   if (!amount) return INSUF;
@@ -333,7 +333,7 @@ function parseJio(body: string, subject: string, receivedDate: string): StaticPa
 }
 
 function parseMsedcl(body: string, subject: string, receivedDate: string): StaticParseResult {
-  if (!/payment receipt|online payment receipt/i.test(subject)) return NONE;
+  if (!/payment receipt|online payment receipt/i.test(subject)) return INSUF;
   const amtM = body.match(/Amount:\s*([\d,]+)\s*\/-/i);
   const amount = parseAmount(amtM?.[1]);
   if (!amount) return INSUF;
@@ -353,7 +353,7 @@ function parseMsedcl(body: string, subject: string, receivedDate: string): Stati
 }
 
 function parseCred(body: string, subject: string, receivedDate: string): StaticParseResult {
-  if (!/credit card bill payment was successful/i.test(subject)) return NONE;
+  if (!/credit card bill payment was successful/i.test(subject)) return INSUF;
   const amtM = body.match(/amount paid\s*[₹]([\d,]+(?:\.\d{2})?)/i);
   const amount = parseAmount(amtM?.[1]);
   if (!amount) return INSUF;
@@ -412,7 +412,8 @@ export function parseEmailStatic(email: EmailInput): StaticParseResult {
       if (/is debited from your HDFC Bank Credit Card/i.test(body)) {
         return parseHdfcCreditCardAlert(body, receivedDate);
       }
-      return NONE;
+      // Known financial sender with unrecognized format — escalate to LLM
+      return INSUF;
     }
 
     case "alerts.sbi.bank.in":
