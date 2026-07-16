@@ -142,7 +142,7 @@ export type EmailInput = {
   emailIndex: number;
   body: string;
   senderName: string;
-  subject: string;
+  subject?: string;
   fallbackDate: string;
 };
 
