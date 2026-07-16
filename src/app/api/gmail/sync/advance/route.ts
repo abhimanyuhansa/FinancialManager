@@ -159,12 +159,26 @@ async function advanceJobLocked(
   const filteredLogs: Array<{
     userId: string; syncJobId: string; gmailMsgId: string; senderDomain: string;
     bodyLengthRaw: number; bodyLengthSent: number; wasTruncated: boolean; batchSize: number; outcome: string;
+    parsedMerchant?: string;
   }> = [];
   const toProcess: ProcessableEmail[] = [];
+  // REL-8: row IDs for messages Gmail did not return — excluded from processed=true
+  // so the next tick can retry them rather than silently losing them.
+  const missingRowIds = new Set<string>();
 
   for (const { id: rowId, gmailMsgId } of pending) {
     const msg = fetchedMap.get(gmailMsgId);
-    if (!msg) continue;
+    if (!msg) {
+      filteredLogs.push({
+        userId: job.userId, syncJobId: job.id, gmailMsgId,
+        senderDomain: "unknown", bodyLengthRaw: 0,
+        bodyLengthSent: 0, wasTruncated: false, batchSize: 1,
+        outcome: "error",
+        parsedMerchant: "Gmail batch: message not returned",
+      });
+      missingRowIds.add(rowId);
+      continue;
+    }
 
     const isExcluded =
       excludedDomains.has(msg.senderDomain) || excludedEmails.has(msg.senderEmail);
@@ -547,7 +561,13 @@ async function advanceJobLocked(
   }
 
   await prisma.syncJobMessage.updateMany({
-    where: { id: { in: pending.map((p) => p.id).filter((id) => !llmFailedRowIds.has(id)) } },
+    where: {
+      id: {
+        in: pending
+          .map((p) => p.id)
+          .filter((id) => !llmFailedRowIds.has(id) && !missingRowIds.has(id)),
+      },
+    },
     data: { processed: true },
   });
 
