@@ -171,4 +171,44 @@ describe("parseEmailBatchLLM", () => {
       45_000,
     );
   });
+
+  it("splits inputs > MAX_BATCH_SIZE into micro-batches and merges results", async () => {
+    // Create 6 inputs (> MAX_BATCH_SIZE=5) — should be split into 2 calls: 5 + 1
+    const inputs = Array.from({ length: 6 }, (_, i) => ({
+      ...input,
+      emailIndex: i,
+      body: `email ${i}`,
+    }));
+
+    const makeResult = (idx: number) => ({ ...rawItem, emailIndex: idx });
+
+    // Mock: each call returns the items for the batch
+    mockSelectProvider.mockResolvedValue(selectedGemini);
+    let callCount = 0;
+    mockCallGemini.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        // First micro-batch: 5 items
+        return Promise.resolve({
+          items: [0, 1, 2, 3, 4].map(makeResult),
+          inputTokens: 100, outputTokens: 50,
+        });
+      }
+      // Second micro-batch: 1 item
+      return Promise.resolve({
+        items: [makeResult(0)],
+        inputTokens: 20, outputTokens: 10,
+      });
+    });
+    mockValidate.mockImplementation((items) => items);
+
+    const result = await parseEmailBatchLLM(inputs, "batchkey-microbatch", ctx);
+
+    expect(result).toHaveLength(6);
+    // emailIndex should be restored to original positions (0-5)
+    const indices = result.map((r) => r.emailIndex).sort((a, b) => a - b);
+    expect(indices).toEqual([0, 1, 2, 3, 4, 5]);
+    // Two separate Gemini calls were made
+    expect(mockCallGemini).toHaveBeenCalledTimes(2);
+  });
 });

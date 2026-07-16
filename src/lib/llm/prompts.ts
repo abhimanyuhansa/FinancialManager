@@ -136,13 +136,24 @@ export const BATCH_SYSTEM_PROMPT =
   "For each successfully parsed transaction email, also return subjectTemplate and bodyTemplate: copies of the subject and body with ALL dynamic values replaced by typed placeholders. Use: {{AMOUNT}}, {{DATE}}, {{MERCHANT}}, {{VPA}}, {{ACCOUNT}}, {{ORDER_ID}}, {{TRANSACTION_ID}}, {{CURRENCY}}. Replace every occurrence of each dynamic value. Static text (bank name, fixed labels) stays unchanged.\n\n" +
   "Return a JSON array — one object per input email. Never include explanations — only JSON.";
 
-export type EmailInput = { emailIndex: number; body: string; senderName: string; fallbackDate: string };
+export type EmailInput = {
+  emailIndex: number;
+  body: string;
+  senderName: string;
+  subject: string;
+  fallbackDate: string;
+};
+
+// Maximum number of emails per LLM call. Reduces blast radius of a single
+// malformed email failing the whole batch.
+export const MAX_BATCH_SIZE = 5;
 
 export function buildBatchUserPrompt(items: EmailInput[]): string {
   const emailsJson = JSON.stringify(
     items.map((i) => ({
       emailIndex: i.emailIndex,
       senderName: i.senderName,
+      subject: i.subject,
       fallbackDate: i.fallbackDate,
       body: i.body,
     }))

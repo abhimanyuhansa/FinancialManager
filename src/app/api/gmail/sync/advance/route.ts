@@ -427,6 +427,7 @@ async function advanceJobLocked(
                 emailIndex: idx,
                 body: e.body,
                 senderName: e.senderName,
+                subject: e.subject,
                 fallbackDate: e.receivedDate,
               })),
               batchKey,

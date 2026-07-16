@@ -6,6 +6,7 @@ import {
   STATEMENT_SYSTEM_PROMPT,
   buildStatementUserPrompt,
   estimateInputTokens,
+  MAX_BATCH_SIZE,
 } from "../../../src/lib/llm/prompts";
 
 describe("prompts", () => {
@@ -24,7 +25,7 @@ describe("prompts", () => {
 
   it("buildBatchUserPrompt includes emailIndex in output", () => {
     const prompt = buildBatchUserPrompt([
-      { emailIndex: 0, body: "hello", senderName: "HDFC", fallbackDate: "2026-07-14" },
+      { emailIndex: 0, body: "hello", senderName: "HDFC", subject: "HDFC Alert", fallbackDate: "2026-07-14" },
     ]);
     expect(prompt).toContain("emailIndex");
     expect(prompt).toContain("0");
@@ -41,8 +42,30 @@ describe("prompts", () => {
 
   it("estimateInputTokens returns a positive number", () => {
     const tokens = estimateInputTokens([
-      { emailIndex: 0, body: "debit Rs.500 from HDFC", senderName: "HDFC", fallbackDate: "2026-07-14" },
+      { emailIndex: 0, body: "debit Rs.500 from HDFC", senderName: "HDFC", subject: "HDFC Alert", fallbackDate: "2026-07-14" },
     ]);
     expect(tokens).toBeGreaterThan(0);
+  });
+});
+
+describe("buildBatchUserPrompt — subject inclusion", () => {
+  it("includes subject in the serialized email JSON", () => {
+    const prompt = buildBatchUserPrompt([{
+      emailIndex: 0,
+      body: "Rs. 500 debited",
+      senderName: "HDFC Bank",
+      subject: "HDFC Bank UPI Alert",
+      fallbackDate: "2026-07-16",
+    }]);
+    expect(prompt).toContain("HDFC Bank UPI Alert");
+    expect(prompt).toContain("subject");
+  });
+});
+
+describe("MAX_BATCH_SIZE export", () => {
+  it("is exported and is a positive integer <= 10", () => {
+    expect(typeof MAX_BATCH_SIZE).toBe("number");
+    expect(MAX_BATCH_SIZE).toBeGreaterThan(0);
+    expect(MAX_BATCH_SIZE).toBeLessThanOrEqual(10);
   });
 });

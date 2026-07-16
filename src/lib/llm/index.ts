@@ -11,7 +11,7 @@ import { callGeminiEmailBatch, callGeminiStatement } from "./providers/gemini";
 import { callOpenAIEmailBatch, callOpenAIStatement } from "./providers/openai";
 import { validateProviderResults } from "./validate";
 import { recordSuccess, recordFailure, releaseHalfOpenProbe } from "./circuitBreaker";
-import { estimateInputTokens, estimateOutputTokens, EmailInput } from "./prompts";
+import { estimateInputTokens, estimateOutputTokens, EmailInput, MAX_BATCH_SIZE } from "./prompts";
 import { acquireIdempotencyKey, completeIdempotencyKey, failIdempotencyKey } from "./idempotency";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
@@ -95,6 +95,22 @@ export async function parseEmailBatchLLM(
   ctx: LlmCallContext,
   invocationDeadlineMs?: number
 ): Promise<ParsedEmailItem[]> {
+  // If input exceeds MAX_BATCH_SIZE, split into micro-batches and merge results.
+  // Limits blast radius: a malformed email in one micro-batch cannot affect others.
+  if (inputs.length > MAX_BATCH_SIZE) {
+    const allResults: ParsedEmailItem[] = [];
+    for (let start = 0; start < inputs.length; start += MAX_BATCH_SIZE) {
+      const slice = inputs.slice(start, start + MAX_BATCH_SIZE);
+      const reindexed = slice.map((item, i) => ({ ...item, emailIndex: i }));
+      const microKey = `${batchKey}:batch:${start}`;
+      const microResults = await parseEmailBatchLLM(reindexed, microKey, ctx, invocationDeadlineMs);
+      for (const r of microResults) {
+        allResults.push({ ...r, emailIndex: r.emailIndex + start });
+      }
+    }
+    return allResults;
+  }
+
   const idempResult = await acquireIdempotencyKey(batchKey, invocationDeadlineMs);
   if (idempResult.status === "complete") {
     return idempResult.result;
