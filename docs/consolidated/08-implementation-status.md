@@ -5,14 +5,27 @@
 > against the same commit anchor. No modifications to the baseline commit itself.
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
 > **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
-> **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
-> **Pass 3 corrections:** 2026-07-14 — conflict table rows 23–28 added; §1.2 resolvedBy
-> corrected to NULL.
-> **Pass 4 corrections:** 2026-07-15 — header updated; no content changes (G-07 applied in
-> `09-testing-quality.md`).
-> **Pass 5 corrections:** 2026-07-15 — §1.1 "transactions CRUD" corrected to accurately
-> describe PATCH-only (no DELETE) on `/api/transactions/[id]`. H-03.
-> **Pass 6 corrections:** 2026-07-15 — Frozen metadata corrected. I-01.
+> **Architecture Remediation update:** 2026-07-16 — Tasks 0–7 complete; final commit `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
+
+## Architecture Remediation — 2026-07-16
+
+Baseline commit: `8b36c99` | Final commit: `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
+
+| Item | Finding | Status |
+|------|---------|--------|
+| REL-6 | Unconditional processed=true after LLM failure | RESOLVED |
+| REL-8 | Missing Gmail batch response silently dropped | RESOLVED |
+| 3.1 | Template hash uses raw content (not skeleton) | RESOLVED |
+| 3.2 | Known-sender static parser returns not_transaction | RESOLVED |
+| 3.3 | All emails in one LLM call | RESOLVED (MAX_BATCH_SIZE=5) |
+| 3.6 | PII in LLM prompts | MITIGATED |
+| 3.7 | Single LLM call for all tasks | ACCEPTED (POC scope) |
+| 3.8 | Subject not in LLM input | RESOLVED |
+| 3.10 | Flat MIME part traversal | RESOLVED |
+| 3.11 | LLM deadline/fallback | RESOLVED (prior session) |
+| 3.12 | Doc/code mismatch | RESOLVED (this task) |
+
+---
 
 > The reconciliation of **what prior docs/memory claim** against **what the code actually does**.
 > Per PM decision, **code is truth**; older claims are preserved here as history. Tags per
