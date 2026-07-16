@@ -1,4 +1,4 @@
-import { buildScanFromDate, parseBatchResponse, type FullMessage } from "@/lib/gmail";
+import { buildScanFromDate, parseBatchResponse, extractBodyFromParts, type FullMessage } from "@/lib/gmail";
 
 describe("buildScanFromDate", () => {
   it("returns date 1 month ago for '1m'", () => {
@@ -97,3 +97,47 @@ describe("parseBatchResponse", () => {
 // Silence unused import warning — FullMessage is a type export used in tests
 const _fullMessageTypeCheck: FullMessage | undefined = undefined;
 void _fullMessageTypeCheck;
+
+describe("extractBodyFromParts — recursive MIME traversal", () => {
+  it("extracts text/plain from a flat parts array", () => {
+    const parts = [
+      { mimeType: "text/plain", body: { data: Buffer.from("Hello World").toString("base64url") } },
+    ];
+    const body = extractBodyFromParts(parts as Parameters<typeof extractBodyFromParts>[0]);
+    expect(body).toContain("Hello World");
+  });
+
+  it("extracts text/plain from nested multipart/alternative", () => {
+    const parts = [
+      {
+        mimeType: "multipart/alternative",
+        body: {},
+        parts: [
+          { mimeType: "text/plain", body: { data: Buffer.from("Nested plain").toString("base64url") } },
+          { mimeType: "text/html", body: { data: Buffer.from("<p>Nested HTML</p>").toString("base64url") } },
+        ],
+      },
+    ];
+    const body = extractBodyFromParts(parts as Parameters<typeof extractBodyFromParts>[0]);
+    expect(body).toContain("Nested plain");
+  });
+
+  it("falls back to text/html when no text/plain found, strips tags", () => {
+    const parts = [
+      {
+        mimeType: "multipart/alternative",
+        body: {},
+        parts: [
+          { mimeType: "text/html", body: { data: Buffer.from("<p>Payment of <b>Rs.500</b></p>").toString("base64url") } },
+        ],
+      },
+    ];
+    const body = extractBodyFromParts(parts as Parameters<typeof extractBodyFromParts>[0]);
+    expect(body).toContain("Rs.500");
+    expect(body).not.toContain("<p>");
+  });
+
+  it("returns empty string for empty parts array", () => {
+    expect(extractBodyFromParts([])).toBe("");
+  });
+});

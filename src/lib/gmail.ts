@@ -114,6 +114,34 @@ export type FullMessage = {
   pdfAttachmentId: string | null;
 };
 
+type MimePart = {
+  mimeType: string;
+  body?: { data?: string; attachmentId?: string };
+  parts?: MimePart[];
+};
+
+export function extractBodyFromParts(parts: MimePart[]): string {
+  let plainText = "";
+  let htmlText = "";
+
+  function traverse(partList: MimePart[]): void {
+    for (const part of partList) {
+      if (part.mimeType === "text/plain" && part.body?.data) {
+        plainText += Buffer.from(part.body.data, "base64url").toString("utf-8") + " ";
+      } else if (part.mimeType === "text/html" && part.body?.data) {
+        const decoded = Buffer.from(part.body.data, "base64url").toString("utf-8");
+        htmlText += decoded.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ") + " ";
+      } else if (part.parts?.length) {
+        traverse(part.parts);
+      }
+    }
+  }
+
+  traverse(parts);
+  const raw = plainText.trim() || htmlText.trim();
+  return raw.replace(/\s+/g, " ").trim();
+}
+
 export function parseBatchResponse(responseBody: string, boundary: string): FullMessage[] {
   const results: FullMessage[] = [];
   const parts = responseBody.split(`--${boundary}`);
@@ -138,7 +166,7 @@ export function parseBatchResponse(responseBody: string, boundary: string): Full
       payload?: {
         headers?: Array<{ name: string; value: string }>;
         body?: { data?: string };
-        parts?: Array<{ mimeType: string; body?: { data?: string; attachmentId?: string } }>;
+        parts?: MimePart[];
       };
     };
 
@@ -164,11 +192,10 @@ export function parseBatchResponse(responseBody: string, boundary: string): Full
 
     let body = "";
     const parts2 = msg.payload?.parts ?? [];
-    const plainPart = parts2.find((p) => p.mimeType === "text/plain");
-    const htmlPart = parts2.find((p) => p.mimeType === "text/html");
-    const rawData = plainPart?.body?.data ?? htmlPart?.body?.data ?? msg.payload?.body?.data ?? "";
-    if (rawData) {
-      const decoded = Buffer.from(rawData, "base64url").toString("utf-8");
+    if (parts2.length > 0) {
+      body = extractBodyFromParts(parts2);
+    } else if (msg.payload?.body?.data) {
+      const decoded = Buffer.from(msg.payload.body.data, "base64url").toString("utf-8");
       body = decoded.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
     }
 
