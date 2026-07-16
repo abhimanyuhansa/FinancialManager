@@ -34,11 +34,12 @@ async function callGemini(
   systemPrompt: string,
   userPrompt: string,
   apiKey: string,
-  responseSchema?: unknown
+  responseSchema?: unknown,
+  timeoutMs: number = GEMINI_TIMEOUT_MS,
 ): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
   const geminiModel = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let res: Response;
   try {
@@ -64,7 +65,7 @@ async function callGemini(
   } catch (e: unknown) {
     clearTimeout(timer);
     if (e instanceof Error && e.name === "AbortError") {
-      throw new ProviderTimeoutError(PROVIDER, `Timed out after ${GEMINI_TIMEOUT_MS}ms`);
+      throw new ProviderTimeoutError(PROVIDER, `Timed out after ${timeoutMs}ms`);
     }
     throw e;
   }
@@ -97,13 +98,15 @@ function parseJsonText<T>(text: string): T {
 
 export async function callGeminiEmailBatch(
   inputs: EmailInput[],
-  apiKey: string
+  apiKey: string,
+  timeoutMs?: number,
 ): Promise<ProviderCallResult> {
   const { text, inputTokens, outputTokens } = await callGemini(
     BATCH_SYSTEM_PROMPT,
     buildBatchUserPrompt(inputs),
     apiKey,
-    EMAIL_JSON_SCHEMA
+    EMAIL_JSON_SCHEMA,
+    timeoutMs,
   );
 
   const raw = parseJsonText<ParsedEmailItem[]>(text);
@@ -116,12 +119,15 @@ export async function callGeminiEmailBatch(
 
 export async function callGeminiStatement(
   body: string,
-  apiKey: string
+  apiKey: string,
+  timeoutMs?: number,
 ): Promise<StatementCallResult> {
   const { text, inputTokens, outputTokens } = await callGemini(
     STATEMENT_SYSTEM_PROMPT,
     buildStatementUserPrompt(body),
-    apiKey
+    apiKey,
+    undefined,
+    timeoutMs,
   );
 
   const raw = parseJsonText<StatementItem[]>(text);

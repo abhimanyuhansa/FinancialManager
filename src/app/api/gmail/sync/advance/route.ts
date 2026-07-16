@@ -81,33 +81,6 @@ async function advanceJobLocked(
   // maxDuration=60 — reserve 8s for DB writes, so LLM gets at most 52s from now.
   const invocationDeadlineMs = Date.now() + 52_000;
 
-  // Reset any error-outcome messages that haven't been retried yet so they
-  // get picked up in this or a subsequent advance() call. Only resets messages
-  // with exactly one error ParseLog (i.e., first-attempt failures) to prevent
-  // infinite retry loops on consistently failing emails.
-  await prisma.$executeRaw`
-    UPDATE "SyncJobMessage" sjm
-    SET processed = false
-    FROM (
-      SELECT sjm2.id
-      FROM "SyncJobMessage" sjm2
-      WHERE sjm2."syncJobId" = ${job.id} AND sjm2.processed = true
-        AND (
-          SELECT COUNT(*) FROM "ParseLog" pl
-          WHERE pl."gmailMsgId" = sjm2."gmailMsgId"
-            AND pl."syncJobId" = ${job.id}
-            AND pl.outcome = 'error'
-        ) = 1
-        AND NOT EXISTS (
-          SELECT 1 FROM "ParseLog" pl2
-          WHERE pl2."gmailMsgId" = sjm2."gmailMsgId"
-            AND pl2."syncJobId" = ${job.id}
-            AND pl2.outcome != 'error'
-        )
-    ) retryable
-    WHERE sjm.id = retryable.id
-  `;
-
   const pending = await prisma.syncJobMessage.findMany({
     where: { syncJobId: job.id, processed: false },
     take: CHUNK_SIZE,
@@ -225,6 +198,9 @@ async function advanceJobLocked(
   // Batch ParseLog writes — flushed once after all serial DB work completes,
   // avoiding dozens of individual round-trips before the LLM call.
   const pendingLogs: Prisma.ParseLogCreateManyInput[] = [];
+  // Row IDs whose LLM call failed transiently — leave unprocessed so the next
+  // tick retries them instead of silently dropping the emails.
+  const llmFailedRowIds = new Set<string>();
 
   if (toProcess.length > 0) {
     // ── Static parser pass ──────────────────────────────────────────────────
@@ -444,8 +420,9 @@ async function advanceJobLocked(
               invocationDeadlineMs
             );
           } catch (llmErr) {
-            // LLM batch failed entirely — log each candidate as error so the job
-            // can advance past this chunk rather than looping forever.
+            // LLM batch failed entirely (both providers exhausted or contract error).
+            // Log the error but do NOT mark these messages as processed — leave them
+            // for the next tick to retry rather than silently dropping transactions.
             const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
             for (const email of llmCandidates) {
               pendingLogs.push({
@@ -459,6 +436,7 @@ async function advanceJobLocked(
                 geminiConfidence: 0,
                 parsedMerchant: errMsg.slice(0, 200),
               });
+              llmFailedRowIds.add(email.rowId);
             }
             results = [];
           }
@@ -569,7 +547,7 @@ async function advanceJobLocked(
   }
 
   await prisma.syncJobMessage.updateMany({
-    where: { id: { in: pending.map((p) => p.id) } },
+    where: { id: { in: pending.map((p) => p.id).filter((id) => !llmFailedRowIds.has(id)) } },
     data: { processed: true },
   });
 

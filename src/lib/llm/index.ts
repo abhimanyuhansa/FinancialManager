@@ -4,6 +4,7 @@ import {
   StatementItem,
   LlmCallContext,
   isAvailabilityError,
+  ProviderContractError,
 } from "./providers/types";
 import { selectProvider, releaseQuota, SelectedProvider } from "./router";
 import { callGeminiEmailBatch, callGeminiStatement } from "./providers/gemini";
@@ -11,7 +12,7 @@ import { callOpenAIEmailBatch, callOpenAIStatement } from "./providers/openai";
 import { validateProviderResults } from "./validate";
 import { recordSuccess, recordFailure, releaseHalfOpenProbe } from "./circuitBreaker";
 import { estimateInputTokens, estimateOutputTokens, EmailInput } from "./prompts";
-import { acquireIdempotencyKey, completeIdempotencyKey } from "./idempotency";
+import { acquireIdempotencyKey, completeIdempotencyKey, failIdempotencyKey } from "./idempotency";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
@@ -25,7 +26,7 @@ async function logAttempt(
   inputTokens: number,
   outputTokens: number,
   errorDetail: string | null,
-  finishReason?: string
+  opts: { attemptNumber: number; wasFallback: boolean; fallbackReason: string | null; candidateCount: number; finishReason?: string }
 ): Promise<void> {
   try {
     await prisma.llmCallLog.create({
@@ -38,13 +39,13 @@ async function logAttempt(
           selected.provider === "gemini"
             ? (process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite")
             : (process.env.OPENAI_MODEL ?? "gpt-4o-mini"),
-        candidateCount: 0,
-        attemptNumber: 1,
-        wasFallback: false,
-        fallbackReason: null,
+        candidateCount: opts.candidateCount,
+        attemptNumber: opts.attemptNumber,
+        wasFallback: opts.wasFallback,
+        fallbackReason: opts.fallbackReason,
         outcome,
         errorDetail,
-        finishReason: finishReason ?? null,
+        finishReason: opts.finishReason ?? null,
         effectiveTimeoutMs: selected.effectiveTimeoutMs,
         latencyMs,
         inputTokens,
@@ -57,14 +58,35 @@ async function logAttempt(
   }
 }
 
-async function callProvider(
-  selected: SelectedProvider,
-  inputs: EmailInput[]
-) {
+async function callProvider(selected: SelectedProvider, inputs: EmailInput[]) {
   if (selected.provider === "gemini") {
-    return callGeminiEmailBatch(inputs, GEMINI_API_KEY);
+    return callGeminiEmailBatch(inputs, GEMINI_API_KEY, selected.effectiveTimeoutMs);
   }
   return callOpenAIEmailBatch(inputs, OPENAI_API_KEY, inputs.length, selected.effectiveTimeoutMs);
+}
+
+async function finalizeFailedAttempt(
+  selected: SelectedProvider,
+  err: unknown,
+  ctx: LlmCallContext,
+  batchKey: string | null,
+  latencyMs: number,
+  attemptNumber: number,
+  wasFallback: boolean,
+  fallbackReason: string | null,
+  candidateCount: number,
+): Promise<void> {
+  const errDetail = err instanceof Error ? err.message : String(err);
+  await logAttempt(ctx, batchKey, selected, "error", latencyMs, 0, 0, errDetail, {
+    attemptNumber, wasFallback, fallbackReason, candidateCount,
+  });
+  if (isAvailabilityError(err)) {
+    await recordFailure(selected.provider);
+  }
+  if (selected.isHalfOpenProbe) {
+    await releaseHalfOpenProbe(selected.provider);
+  }
+  await releaseQuota(selected.provider, 1, selected.reservedInputTokens, selected.reservedOutputTokens);
 }
 
 export async function parseEmailBatchLLM(
@@ -73,41 +95,61 @@ export async function parseEmailBatchLLM(
   ctx: LlmCallContext,
   invocationDeadlineMs?: number
 ): Promise<ParsedEmailItem[]> {
-  // Idempotency gate — atomic claim or return cached result
-  const idempResult = await acquireIdempotencyKey(batchKey);
+  const idempResult = await acquireIdempotencyKey(batchKey, invocationDeadlineMs);
   if (idempResult.status === "complete") {
     return idempResult.result;
   }
 
   const estimatedInput = estimateInputTokens(inputs);
   const estimatedOutput = estimateOutputTokens(inputs.length);
-  const selected = await selectProvider(inputs.length, estimatedInput, estimatedOutput, invocationDeadlineMs);
 
-  const start = Date.now();
-  try {
-    const callResult = await callProvider(selected, inputs);
-    const validated = validateProviderResults(callResult.items, inputs.length, selected.provider);
-    const latencyMs = Date.now() - start;
+  let lastErr: unknown;
+  let attemptNumber = 0;
+  let fallbackReason: string | null = null;
 
-    await logAttempt(ctx, batchKey, selected, "success", latencyMs, callResult.inputTokens, callResult.outputTokens, null, callResult.finishReason);
-    await recordSuccess(selected.provider);
-    await completeIdempotencyKey(batchKey, validated);
-    return validated;
-  } catch (err) {
-    const latencyMs = Date.now() - start;
-    const errDetail = err instanceof Error ? err.message : String(err);
+  // Two attempts: primary provider, then fallback if the primary fails with an availability error.
+  for (let i = 0; i < 2; i++) {
+    attemptNumber = i + 1;
+    const wasFallback = i > 0;
 
-    await logAttempt(ctx, batchKey, selected, "error", latencyMs, 0, 0, errDetail);
-    if (isAvailabilityError(err)) {
-      await recordFailure(selected.provider);
+    let selected: SelectedProvider;
+    try {
+      selected = await selectProvider(inputs.length, estimatedInput, estimatedOutput, invocationDeadlineMs);
+    } catch (routerErr) {
+      // Both providers exhausted or budget too tight — fail fast
+      await failIdempotencyKey(batchKey);
+      throw routerErr;
     }
-    if (selected.isHalfOpenProbe) {
-      await releaseHalfOpenProbe(selected.provider);
+
+    const start = Date.now();
+    try {
+      const callResult = await callProvider(selected, inputs);
+      const validated = validateProviderResults(callResult.items, inputs.length, selected.provider);
+      const latencyMs = Date.now() - start;
+
+      await logAttempt(ctx, batchKey, selected, "success", latencyMs, callResult.inputTokens, callResult.outputTokens, null, {
+        attemptNumber, wasFallback, fallbackReason, candidateCount: inputs.length, finishReason: callResult.finishReason,
+      });
+      await recordSuccess(selected.provider);
+      await completeIdempotencyKey(batchKey, validated);
+      return validated;
+    } catch (err) {
+      const latencyMs = Date.now() - start;
+      await finalizeFailedAttempt(
+        selected, err, ctx, batchKey, latencyMs,
+        attemptNumber, wasFallback, fallbackReason, inputs.length,
+      );
+      lastErr = err;
+      fallbackReason = err instanceof Error ? err.name : "unknown";
+
+      // Only retry on availability errors — contract/parse errors are batch-specific, retrying won't help
+      const shouldRetry = isAvailabilityError(err) && !(err instanceof ProviderContractError);
+      if (!shouldRetry) break;
     }
-    // Release reserved quota so the next tick can reserve it for a fresh attempt.
-    await releaseQuota(selected.provider, 1, selected.reservedInputTokens, selected.reservedOutputTokens);
-    throw err;
   }
+
+  await failIdempotencyKey(batchKey);
+  throw lastErr;
 }
 
 export async function parseStatementLLM(
@@ -118,25 +160,47 @@ export async function parseStatementLLM(
   const estimatedInput = Math.ceil(body.length / 4);
   const estimatedOutput = 200;
 
-  const selected = await selectProvider(1, estimatedInput, estimatedOutput, invocationDeadlineMs);
-  const start = Date.now();
+  let lastErr: unknown;
+  let fallbackReason: string | null = null;
 
-  try {
-    const result = selected.provider === "gemini"
-      ? await callGeminiStatement(body, GEMINI_API_KEY)
-      : await callOpenAIStatement(body, OPENAI_API_KEY);
-    const latencyMs = Date.now() - start;
+  for (let i = 0; i < 2; i++) {
+    const attemptNumber = i + 1;
+    const wasFallback = i > 0;
 
-    await logAttempt(ctx, null, selected, "success", latencyMs, result.inputTokens, result.outputTokens, null);
-    await recordSuccess(selected.provider);
-    return result.items;
-  } catch (err) {
-    const latencyMs = Date.now() - start;
-    const errDetail = err instanceof Error ? err.message : String(err);
-    await logAttempt(ctx, null, selected, "error", latencyMs, 0, 0, errDetail);
-    if (isAvailabilityError(err)) {
-      await recordFailure(selected.provider);
+    let selected: SelectedProvider;
+    try {
+      selected = await selectProvider(1, estimatedInput, estimatedOutput, invocationDeadlineMs);
+    } catch (routerErr) {
+      throw routerErr;
     }
-    throw err;
+
+    const start = Date.now();
+    try {
+      const result = selected.provider === "gemini"
+        ? await callGeminiStatement(body, GEMINI_API_KEY, selected.effectiveTimeoutMs)
+        : await callOpenAIStatement(body, OPENAI_API_KEY, selected.effectiveTimeoutMs);
+      const latencyMs = Date.now() - start;
+
+      await logAttempt(ctx, null, selected, "success", latencyMs, result.inputTokens, result.outputTokens, null, {
+        attemptNumber, wasFallback, fallbackReason, candidateCount: 1,
+      });
+      await recordSuccess(selected.provider);
+      return result.items;
+    } catch (err) {
+      const latencyMs = Date.now() - start;
+      const errDetail = err instanceof Error ? err.message : String(err);
+      await logAttempt(ctx, null, selected, "error", latencyMs, 0, 0, errDetail, {
+        attemptNumber, wasFallback, fallbackReason, candidateCount: 1,
+      });
+      if (isAvailabilityError(err)) {
+        await recordFailure(selected.provider);
+      }
+      lastErr = err;
+      fallbackReason = err instanceof Error ? err.name : "unknown";
+
+      if (!isAvailabilityError(err)) break;
+    }
   }
+
+  throw lastErr;
 }

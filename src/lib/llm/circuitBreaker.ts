@@ -99,8 +99,10 @@ export async function tryAcquireHalfOpenProbe(provider: LLMProvider): Promise<bo
 }
 
 export async function releaseHalfOpenProbe(provider: LLMProvider): Promise<void> {
+  // Refresh openedAt so the full cooldown must elapse before the next probe attempt.
+  // Without this, the circuit becomes HALF_OPEN again immediately after a failed probe.
   await prisma.llmCircuitBreaker.updateMany({
     where: { provider, state: "PROBING" },
-    data: { state: "OPEN", consecutiveFailures: 0, probeLeaseExpiresAt: null },
+    data: { state: "OPEN", openedAt: new Date(), consecutiveFailures: 0, probeLeaseExpiresAt: null },
   });
 }
