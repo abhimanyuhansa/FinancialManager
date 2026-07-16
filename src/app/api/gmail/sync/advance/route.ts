@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getGmailToken, fetchMessageIdPage, fetchFullMessageBatch, fetchPdfAttachment } from "@/lib/gmail";
 import { parseEmailBatchLLM } from "@/lib/llm";
+import { sanitizeEmailForLlm } from "@/lib/llm/sanitize";
 
 export const maxDuration = 60;
 import { acquireLock, LockLostError } from "@/lib/llm/lock";
@@ -148,6 +149,7 @@ async function advanceJobLocked(
   type ProcessableEmail = {
     msgId: string;
     body: string;
+    sanitizedBody: string;
     senderName: string;
     senderEmail: string;
     senderDomain: string;
@@ -195,6 +197,7 @@ async function advanceJobLocked(
     toProcess.push({
       msgId: gmailMsgId,
       body: msg.body.slice(0, BODY_LIMIT),
+      sanitizedBody: sanitizeEmailForLlm(msg.body.slice(0, BODY_LIMIT)),
       senderName: msg.senderName,
       senderEmail: msg.senderEmail,
       senderDomain: msg.senderDomain,
@@ -425,7 +428,7 @@ async function advanceJobLocked(
             results = await parseEmailBatchLLM(
               llmCandidates.map((e, idx) => ({
                 emailIndex: idx,
-                body: e.body,
+                body: e.sanitizedBody,
                 senderName: e.senderName,
                 subject: e.subject,
                 fallbackDate: e.receivedDate,
