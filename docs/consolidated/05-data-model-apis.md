@@ -95,6 +95,15 @@
 > C87: `/api/gmail/scan/{id}/retry` route description corrected — FAILED removed as retryable option;
 >   stalled active-scan recovery (expired lease) added.
 > C88: Earlier C77–C80 dry-run claim superseded; final isolated C84 dry run pending Stage 1 approval.
+> **Phase 0 revision 2026-07-23 (C89–C91):**
+> C89: Constraint name confirmed `account_user_id_id_unique`; `account_disconnected_idx` added to SQL;
+>   SQL header updated to C81–C89; psql usage updated to `docs/consolidated/phase1a-dry-run.sql`.
+>   All verification SELECT queries converted to DO/RAISE EXCEPTION assertions (C92 in SQL).
+> C90: VP13 rewritten — canonical erasure order: manual_classification → scan_item → scan_run →
+>   source → filter (CASCADE removes versions, no direct version delete) → Account → User;
+>   all 8 tables asserted zero.
+> C91: Retry decision table in 14 updated — CREATED+published → 409 scan_active; PAUSED → 409
+>   scan_paused; all 10 statuses now covered; ACs updated.
 > **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
 > **Pass 3 corrections:** 2026-07-14 — 6-tier ownership taxonomy, API method corrections,
 > SyncJobMessage cascade correction. Source: reviewer pass verified against code.

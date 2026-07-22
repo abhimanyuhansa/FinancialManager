@@ -1,5 +1,5 @@
 -- =============================================================================
--- Financial Manager Phase 1A — Canonical DDL Dry Run (C81–C83 applied)
+-- Financial Manager Phase 1A — Canonical DDL Dry Run (C81–C89 applied)
 -- Execute against an isolated, disposable PostgreSQL database.
 -- ON_ERROR_STOP=1 is required: any failure aborts immediately.
 -- ROLLBACK at end leaves no permanent changes.
@@ -7,7 +7,8 @@
 -- =============================================================================
 -- Usage:
 --   psql -X -v ON_ERROR_STOP=1 "$ISOLATED_DATABASE_URL" \
---     -f /tmp/fm_phase1a_dry_run.sql 2>&1 | tee /tmp/fm_phase1a_dry_run.log
+--     -f docs/consolidated/phase1a-dry-run.sql \
+--     2>&1 | tee /tmp/fm_phase1a_dry_run.log
 
 BEGIN;
 
@@ -15,20 +16,94 @@ BEGIN;
 -- VP1: Baseline User and Account schema validation
 -- =============================================================================
 \echo '--- VP1: Baseline User and Account schema ---'
-SELECT column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_name = 'User'
-ORDER BY ordinal_position;
 
-SELECT column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_name = 'Account'
-ORDER BY ordinal_position;
+-- Assert required User columns exist
+DO $$
+DECLARE
+  missing TEXT;
+BEGIN
+  SELECT string_agg(required_col, ', ')
+  INTO missing
+  FROM (VALUES ('id'),('email'),('createdAt')) AS t(required_col)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'User' AND column_name = t.required_col
+  );
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP1: User table missing required columns: %', missing;
+  END IF;
+  RAISE NOTICE 'PASS VP1: User required columns present';
+END; $$;
 
--- Confirm UNIQUE("userId", id) does not yet exist (additive change below will add it)
-SELECT COUNT(*) AS account_unique_userId_id_already_exists
-FROM pg_constraint
-WHERE conrelid = '"Account"'::regclass AND contype = 'u' AND conname = 'Account_userId_id_unique';
+-- Assert required Account columns exist
+DO $$
+DECLARE
+  missing TEXT;
+BEGIN
+  SELECT string_agg(required_col, ', ')
+  INTO missing
+  FROM (VALUES ('id'),('userId'),('type'),('provider'),('providerAccountId')) AS t(required_col)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'Account' AND column_name = t.required_col
+  );
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP1: Account table missing required columns: %', missing;
+  END IF;
+  RAISE NOTICE 'PASS VP1: Account required columns present';
+END; $$;
+
+-- Assert Phase 1A tables do not yet exist
+DO $$
+DECLARE
+  existing_tables TEXT;
+BEGIN
+  SELECT string_agg(tablename, ', ')
+  INTO existing_tables
+  FROM pg_tables
+  WHERE schemaname = 'public'
+    AND tablename IN (
+      'email_filter','email_filter_version',
+      'email_source','email_scan_run',
+      'email_scan_item','email_manual_classification'
+    );
+  IF existing_tables IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP1: Phase 1A tables already exist in this database: %. Use a clean isolated database.', existing_tables;
+  END IF;
+  RAISE NOTICE 'PASS VP1: No pre-existing Phase 1A tables';
+END; $$;
+
+-- Assert account_user_id_id_unique does not yet exist (will be added in VP2)
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_constraint
+  WHERE conrelid = '"Account"'::regclass
+    AND contype = 'u'
+    AND conname = 'account_user_id_id_unique';
+  IF cnt > 0 THEN
+    RAISE EXCEPTION 'FAIL VP1: account_user_id_id_unique already exists before additive migration';
+  END IF;
+  RAISE NOTICE 'PASS VP1: account_user_id_id_unique not yet present';
+END; $$;
+
+-- Assert account_disconnected_idx does not yet exist
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_indexes
+  WHERE schemaname = 'public'
+    AND tablename = 'Account'
+    AND indexname = 'account_disconnected_idx';
+  IF cnt > 0 THEN
+    RAISE EXCEPTION 'FAIL VP1: account_disconnected_idx already exists before additive migration';
+  END IF;
+  RAISE NOTICE 'PASS VP1: account_disconnected_idx not yet present';
+END; $$;
 
 -- =============================================================================
 -- VP2 (prep): Account additive changes
@@ -36,16 +111,60 @@ WHERE conrelid = '"Account"'::regclass AND contype = 'u' AND conname = 'Account_
 \echo '--- VP2: Account additive changes ---'
 ALTER TABLE "Account" ADD COLUMN IF NOT EXISTS disconnected_at TIMESTAMPTZ;
 ALTER TABLE "Account" ADD COLUMN IF NOT EXISTS disconnection_reason TEXT;
-ALTER TABLE "Account" ADD CONSTRAINT "Account_userId_id_unique" UNIQUE ("userId", id);
+ALTER TABLE "Account" ADD CONSTRAINT account_user_id_id_unique UNIQUE ("userId", id);
+CREATE INDEX account_disconnected_idx
+  ON "Account"(id)
+  WHERE disconnected_at IS NOT NULL;
 
-SELECT column_name, data_type
-FROM information_schema.columns
-WHERE table_name = 'Account'
-  AND column_name IN ('disconnected_at', 'disconnection_reason')
-ORDER BY column_name;
+-- Assert both columns now exist
+DO $$
+DECLARE
+  missing TEXT;
+BEGIN
+  SELECT string_agg(required_col, ', ')
+  INTO missing
+  FROM (VALUES ('disconnected_at'),('disconnection_reason')) AS t(required_col)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'Account' AND column_name = t.required_col
+  );
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP2: Account additive columns missing after migration: %', missing;
+  END IF;
+  RAISE NOTICE 'PASS VP2: Account additive columns present';
+END; $$;
 
-SELECT conname FROM pg_constraint
-WHERE conrelid = '"Account"'::regclass AND contype = 'u' AND conname = 'Account_userId_id_unique';
+-- Assert account_user_id_id_unique exists exactly once
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_constraint
+  WHERE conrelid = '"Account"'::regclass
+    AND contype = 'u'
+    AND conname = 'account_user_id_id_unique';
+  IF cnt <> 1 THEN
+    RAISE EXCEPTION 'FAIL VP2: account_user_id_id_unique count = % (expected 1)', cnt;
+  END IF;
+  RAISE NOTICE 'PASS VP2: account_user_id_id_unique exists exactly once';
+END; $$;
+
+-- Assert account_disconnected_idx exists exactly once
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_indexes
+  WHERE schemaname = 'public'
+    AND tablename = 'Account'
+    AND indexname = 'account_disconnected_idx';
+  IF cnt <> 1 THEN
+    RAISE EXCEPTION 'FAIL VP2: account_disconnected_idx count = % (expected 1)', cnt;
+  END IF;
+  RAISE NOTICE 'PASS VP2: account_disconnected_idx exists exactly once';
+END; $$;
 
 -- =============================================================================
 -- VP2: Six-table DDL
@@ -380,23 +499,82 @@ ALTER TABLE email_scan_run
   ON DELETE RESTRICT;
 
 -- =============================================================================
--- VP3: Account additive changes confirmed
+-- VP3: Account additive changes confirmed (assertions)
 -- =============================================================================
-\echo '--- VP3: Account additive columns present ---'
-SELECT column_name, data_type
-FROM information_schema.columns
-WHERE table_name = 'Account'
-  AND column_name IN ('disconnected_at','disconnection_reason')
-ORDER BY column_name;
+\echo '--- VP3: Account additive changes confirmed ---'
 
-\echo '--- VP3: Account UNIQUE(userId,id) constraint ---'
-SELECT conname FROM pg_constraint
-WHERE conrelid = '"Account"'::regclass AND contype = 'u' AND conname = 'Account_userId_id_unique';
+DO $$
+DECLARE
+  missing TEXT;
+BEGIN
+  SELECT string_agg(required_col, ', ')
+  INTO missing
+  FROM (VALUES ('disconnected_at'),('disconnection_reason')) AS t(required_col)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'Account' AND column_name = t.required_col
+  );
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP3: Account additive columns missing: %', missing;
+  END IF;
+  RAISE NOTICE 'PASS VP3: Account additive columns confirmed present';
+END; $$;
+
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_constraint
+  WHERE conrelid = '"Account"'::regclass
+    AND contype = 'u'
+    AND conname = 'account_user_id_id_unique';
+  IF cnt <> 1 THEN
+    RAISE EXCEPTION 'FAIL VP3: account_user_id_id_unique count = % (expected 1)', cnt;
+  END IF;
+  RAISE NOTICE 'PASS VP3: account_user_id_id_unique present exactly once';
+END; $$;
+
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_indexes
+  WHERE schemaname = 'public'
+    AND tablename = 'Account'
+    AND indexname = 'account_disconnected_idx';
+  IF cnt <> 1 THEN
+    RAISE EXCEPTION 'FAIL VP3: account_disconnected_idx count = % (expected 1)', cnt;
+  END IF;
+  RAISE NOTICE 'PASS VP3: account_disconnected_idx present exactly once';
+END; $$;
 
 -- =============================================================================
--- VP4: FK inventory checks
+-- VP4: FK inventory (assertion: expected FK count present)
 -- =============================================================================
 \echo '--- VP4: FK inventory ---'
+
+DO $$
+DECLARE
+  fk_count INT;
+BEGIN
+  SELECT COUNT(*) INTO fk_count
+  FROM pg_constraint
+  WHERE contype = 'f'
+    AND conrelid::regclass::text IN (
+      'email_filter','email_filter_version',
+      'email_source','email_scan_run',
+      'email_scan_item','email_manual_classification'
+    );
+  -- 22 composite declarative FKs as defined in canonical schema
+  IF fk_count < 10 THEN
+    RAISE EXCEPTION 'FAIL VP4: FK count = % (expected >= 10 for six-table schema)', fk_count;
+  END IF;
+  RAISE NOTICE 'PASS VP4: FK inventory count = %', fk_count;
+END; $$;
+
+-- Report full FK inventory for manual inspection
 SELECT conname,
        conrelid::regclass AS tbl,
        confrelid::regclass AS ref_tbl,
@@ -412,10 +590,61 @@ WHERE contype = 'f'
   )
 ORDER BY conrelid::regclass::text, conname;
 
+-- Assert the two deferred circular FKs are present and deferrable
+DO $$
+DECLARE
+  missing TEXT;
+BEGIN
+  SELECT string_agg(required_con, ', ')
+  INTO missing
+  FROM (VALUES ('fk_email_filter_current_version'),('fk_version_supersedes')) AS t(required_con)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = t.required_con AND condeferrable = true
+  );
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: Deferred circular FK(s) missing or not deferrable: %', missing;
+  END IF;
+  RAISE NOTICE 'PASS VP4: Both deferred circular FKs present and deferrable';
+END; $$;
+
 -- =============================================================================
--- VP5: Trigger inventory checks
+-- VP5: Trigger inventory (assertion: exactly 3 application triggers)
 -- =============================================================================
-\echo '--- VP5: Trigger inventory (expect 3: immutable, source_ownership, parent_immutable) ---'
+\echo '--- VP5: Trigger inventory (expect exactly 3) ---'
+
+DO $$
+DECLARE
+  trigger_count INT;
+  missing TEXT;
+BEGIN
+  -- Assert exactly the three expected triggers exist
+  SELECT string_agg(required_tg, ', ')
+  INTO missing
+  FROM (VALUES
+    ('trg_email_filter_version_immutable'),
+    ('trg_email_scan_item_source_ownership'),
+    ('trg_email_scan_item_parent_immutable')
+  ) AS t(required_tg)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = t.required_tg
+  );
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP5: Expected trigger(s) missing: %', missing;
+  END IF;
+
+  SELECT COUNT(*) INTO trigger_count
+  FROM pg_trigger
+  WHERE tgrelid::regclass::text IN ('email_filter_version','email_scan_item')
+    AND tgname NOT LIKE 'RI_%';
+  IF trigger_count <> 3 THEN
+    RAISE EXCEPTION 'FAIL VP5: Trigger count = % (expected exactly 3)', trigger_count;
+  END IF;
+
+  RAISE NOTICE 'PASS VP5: Exactly 3 application triggers present';
+END; $$;
+
+-- Report trigger details for inspection
 SELECT tgname AS trigger_name, tgrelid::regclass AS table_name,
        tgenabled,
        CASE tgtype & 2 WHEN 2 THEN 'BEFORE' ELSE 'AFTER' END AS timing,
@@ -483,17 +712,39 @@ INSERT INTO email_manual_classification (
 -- VP6: Deferred circular-FK test
 -- =============================================================================
 \echo '--- VP6: Deferred circular FK bootstrap (fk_email_filter_current_version) ---'
-SELECT ef.id AS filter_id, ef.current_version_id, efv.id AS version_id,
-       'deferred FK resolved' AS result
-FROM email_filter ef
-JOIN email_filter_version efv ON efv.id = ef.current_version_id
-WHERE ef.id = 'dryrun-f1';
 
-\echo '--- VP6: fk_version_supersedes (deferrable) listed in FK inventory ---'
-SELECT conname, condeferrable, condeferred
-FROM pg_constraint
-WHERE conname IN ('fk_email_filter_current_version','fk_version_supersedes')
-ORDER BY conname;
+DO $$
+DECLARE
+  filter_id TEXT;
+  version_id TEXT;
+BEGIN
+  SELECT ef.id, ef.current_version_id
+  INTO filter_id, version_id
+  FROM email_filter ef
+  JOIN email_filter_version efv ON efv.id = ef.current_version_id
+  WHERE ef.id = 'dryrun-f1';
+  IF filter_id IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP6: Deferred FK fk_email_filter_current_version did not resolve for dryrun-f1';
+  END IF;
+  RAISE NOTICE 'PASS VP6: Deferred FK resolved — filter % → version %', filter_id, version_id;
+END; $$;
+
+DO $$
+DECLARE
+  missing TEXT;
+BEGIN
+  SELECT string_agg(required_con, ', ')
+  INTO missing
+  FROM (VALUES ('fk_email_filter_current_version'),('fk_version_supersedes')) AS t(required_con)
+  WHERE NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = t.required_con AND condeferrable = true
+  );
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP6: Deferrable constraint(s) not found: %', missing;
+  END IF;
+  RAISE NOTICE 'PASS VP6: Both deferrable circular FKs confirmed in pg_constraint';
+END; $$;
 
 -- =============================================================================
 -- VP7: Cross-user negative tests
@@ -513,9 +764,9 @@ BEGIN
       'dryrun-f1','dryrun-fv1',
       'q','2026-01-01','2026-07-01',
       1,1,'{}' );
-    RAISE EXCEPTION 'FAIL: cross-user scan was not rejected';
+    RAISE EXCEPTION 'FAIL VP7: cross-user scan was not rejected';
   EXCEPTION WHEN foreign_key_violation THEN
-    RAISE NOTICE 'PASS: cross-user/cross-account scan FK violation raised';
+    RAISE NOTICE 'PASS VP7: cross-user/cross-account scan FK violation raised';
   END;
 END; $$;
 
@@ -530,11 +781,11 @@ BEGIN
   BEGIN
     INSERT INTO email_scan_item (id, scan_run_id, email_source_id)
       VALUES ('dryrun-si-bad','dryrun-sr1','dryrun-es-a2');
-    RAISE EXCEPTION 'FAIL: cross-account source membership was not rejected';
+    RAISE EXCEPTION 'FAIL VP8: cross-account source membership was not rejected';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE '%same user/gmail_account_id%' THEN
-      RAISE NOTICE 'PASS: trg_email_scan_item_source_ownership rejected cross-account source: %', SQLERRM;
-    ELSE RAISE EXCEPTION 'FAIL unexpected: %', SQLERRM;
+      RAISE NOTICE 'PASS VP8: trg_email_scan_item_source_ownership rejected cross-account source: %', SQLERRM;
+    ELSE RAISE EXCEPTION 'FAIL VP8 unexpected: %', SQLERRM;
     END IF;
   END;
 END; $$;
@@ -547,11 +798,11 @@ DO $$
 BEGIN
   BEGIN
     UPDATE email_filter_version SET gmail_query = 'changed' WHERE id = 'dryrun-fv1';
-    RAISE EXCEPTION 'FAIL: trigger did not block UPDATE';
+    RAISE EXCEPTION 'FAIL VP9: trigger did not block UPDATE';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE '%immutable%' THEN
-      RAISE NOTICE 'PASS: trg_email_filter_version_immutable fired: %', SQLERRM;
-    ELSE RAISE EXCEPTION 'FAIL unexpected: %', SQLERRM;
+      RAISE NOTICE 'PASS VP9: trg_email_filter_version_immutable fired: %', SQLERRM;
+    ELSE RAISE EXCEPTION 'FAIL VP9 unexpected: %', SQLERRM;
     END IF;
   END;
 END; $$;
@@ -576,11 +827,11 @@ DO $$
 BEGIN
   BEGIN
     UPDATE email_scan_item SET scan_run_id = 'dryrun-sr2' WHERE id = 'dryrun-si1';
-    RAISE EXCEPTION 'FAIL: trigger did not block scan_run_id change';
+    RAISE EXCEPTION 'FAIL VP10a: trigger did not block scan_run_id change';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE '%immutable%' THEN
-      RAISE NOTICE 'PASS: trg_email_scan_item_parent_immutable (scan_run_id) fired: %', SQLERRM;
-    ELSE RAISE EXCEPTION 'FAIL unexpected: %', SQLERRM;
+      RAISE NOTICE 'PASS VP10a: trg_email_scan_item_parent_immutable (scan_run_id) fired: %', SQLERRM;
+    ELSE RAISE EXCEPTION 'FAIL VP10a unexpected: %', SQLERRM;
     END IF;
   END;
 END; $$;
@@ -592,11 +843,11 @@ DO $$
 BEGIN
   BEGIN
     UPDATE email_scan_item SET email_source_id = 'dryrun-es2' WHERE id = 'dryrun-si1';
-    RAISE EXCEPTION 'FAIL: trigger did not block email_source_id change';
+    RAISE EXCEPTION 'FAIL VP10b: trigger did not block email_source_id change';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE '%immutable%' THEN
-      RAISE NOTICE 'PASS: trg_email_scan_item_parent_immutable (email_source_id) fired: %', SQLERRM;
-    ELSE RAISE EXCEPTION 'FAIL unexpected: %', SQLERRM;
+      RAISE NOTICE 'PASS VP10b: trg_email_scan_item_parent_immutable (email_source_id) fired: %', SQLERRM;
+    ELSE RAISE EXCEPTION 'FAIL VP10b unexpected: %', SQLERRM;
     END IF;
   END;
 END; $$;
@@ -612,9 +863,9 @@ BEGIN
       id, user_id, email_source_id,
       previous_classification, new_classification, classification_version
     ) VALUES ('dryrun-mc-bad','dryrun-u2','dryrun-es1','UNREVIEWED','FINANCIAL',99);
-    RAISE EXCEPTION 'FAIL: cross-user classification was not rejected';
+    RAISE EXCEPTION 'FAIL VP11a: cross-user classification was not rejected';
   EXCEPTION WHEN foreign_key_violation THEN
-    RAISE NOTICE 'PASS: cross-user classification FK violation raised';
+    RAISE NOTICE 'PASS VP11a: cross-user classification FK violation raised';
   END;
 END; $$;
 
@@ -625,11 +876,20 @@ INSERT INTO email_manual_classification (
   id, user_id, email_source_id,
   previous_classification, new_classification, classification_version
 ) VALUES ('dryrun-mc-casc','dryrun-u1','dryrun-es-casc','UNREVIEWED','FINANCIAL',1);
-SELECT id, user_id FROM email_manual_classification WHERE id = 'dryrun-mc-casc';
+
 DELETE FROM email_source WHERE id = 'dryrun-es-casc';
-SELECT COUNT(*) AS surviving_after_cascade
-FROM email_manual_classification WHERE id = 'dryrun-mc-casc';
--- Expected: 0
+
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM email_manual_classification WHERE id = 'dryrun-mc-casc';
+  IF cnt <> 0 THEN
+    RAISE EXCEPTION 'FAIL VP11b: Classification cascade left % orphan row(s) after source delete', cnt;
+  END IF;
+  RAISE NOTICE 'PASS VP11b: Classification cascade on source delete — 0 rows remain';
+END; $$;
 
 -- =============================================================================
 -- VP12: Both continuation CHECK negative tests
@@ -650,9 +910,9 @@ BEGIN
       'dryrun-sr-chk1','dryrun-u1','req-chk1','dryrun-a1','dryrun-f1','dryrun-fv1',
       'q','2026-01-01','2026-07-01', 1,1,'{}', 5, 5
     );
-    RAISE EXCEPTION 'FAIL: coherence constraint did not reject partial state';
+    RAISE EXCEPTION 'FAIL VP12a: coherence constraint did not reject partial state';
   EXCEPTION WHEN check_violation THEN
-    RAISE NOTICE 'PASS: chk_pending_continuation_coherence rejected partial pending state';
+    RAISE NOTICE 'PASS VP12a: chk_pending_continuation_coherence rejected partial pending state';
   END;
 END; $$;
 
@@ -676,16 +936,17 @@ BEGIN
       7,    -- pending_continuation_sequence (mismatch)
       'DISCOVERY', now()
     );
-    RAISE EXCEPTION 'FAIL: sequence-match constraint did not reject mismatch';
+    RAISE EXCEPTION 'FAIL VP12b: sequence-match constraint did not reject mismatch';
   EXCEPTION WHEN check_violation THEN
-    RAISE NOTICE 'PASS: chk_pending_sequence_matches_scan_sequence rejected mismatch';
+    RAISE NOTICE 'PASS VP12b: chk_pending_sequence_matches_scan_sequence rejected mismatch';
   END;
 END; $$;
 
 -- =============================================================================
--- VP13: User-erasure transaction test (7-step documented §13 application order)
+-- VP13: User-erasure transaction test (canonical 7-step C90 order)
 -- =============================================================================
-\echo '--- VP13: User erasure in documented §13 order ---'
+\echo '--- VP13: User erasure in canonical C90 order ---'
+
 INSERT INTO "User" (id, email, "createdAt")
   VALUES ('dryrun-uerase','dryrun-uerase@test.invalid', now());
 INSERT INTO "Account" (id, "userId", type, provider, "providerAccountId")
@@ -715,32 +976,47 @@ INSERT INTO email_manual_classification (
   previous_classification, new_classification, classification_version
 ) VALUES ('dryrun-mcerase','dryrun-uerase','dryrun-eserase','UNREVIEWED','FINANCIAL',1);
 
--- §13 application erasure order (7 steps):
--- Step 1: scan items (RESTRICT on email_source_id requires deletion before sources)
+-- C90 canonical erasure order:
+-- Step 1: manual classifications (RESTRICT on email_source_id does not block this)
+DELETE FROM email_manual_classification WHERE user_id = 'dryrun-uerase';
+-- Step 2: scan items (RESTRICT on email_source_id requires deletion before sources)
 DELETE FROM email_scan_item WHERE scan_run_id IN (
   SELECT id FROM email_scan_run WHERE user_id = 'dryrun-uerase'
 );
--- Step 2: scan runs
+-- Step 3: scan runs
 DELETE FROM email_scan_run WHERE user_id = 'dryrun-uerase';
--- Step 3: manual classifications
-DELETE FROM email_manual_classification WHERE user_id = 'dryrun-uerase';
 -- Step 4: email sources
 DELETE FROM email_source WHERE user_id = 'dryrun-uerase';
--- Step 5: filter versions (cascade from filter covers this, but explicit for clarity)
-DELETE FROM email_filter_version WHERE email_filter_id IN (
-  SELECT id FROM email_filter WHERE user_id = 'dryrun-uerase'
-);
--- Step 6: filters
+-- Step 5: filters — ON DELETE CASCADE removes email_filter_version automatically
+--         Do NOT directly delete email_filter_version
 DELETE FROM email_filter WHERE user_id = 'dryrun-uerase';
--- Step 7: user (Account cascades from User)
+-- Step 6: Account rows for the user (explicit; not relying on User CASCADE for ordering clarity)
+DELETE FROM "Account" WHERE "userId" = 'dryrun-uerase';
+-- Step 7: User
 DELETE FROM "User" WHERE id = 'dryrun-uerase';
 
-SELECT
-  (SELECT COUNT(*) FROM email_filter            WHERE user_id = 'dryrun-uerase') AS filters,
-  (SELECT COUNT(*) FROM email_source            WHERE user_id = 'dryrun-uerase') AS sources,
-  (SELECT COUNT(*) FROM email_scan_run          WHERE user_id = 'dryrun-uerase') AS scan_runs,
-  (SELECT COUNT(*) FROM email_manual_classification WHERE user_id = 'dryrun-uerase') AS classifications;
--- All expected: 0
+-- Assert all 8 relevant tables have zero rows for the erased user/filter/scan
+DO $$
+DECLARE
+  cnt_mc    INT; cnt_si    INT; cnt_sr    INT; cnt_es    INT;
+  cnt_fv    INT; cnt_ef    INT; cnt_acc   INT; cnt_usr   INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt_mc  FROM email_manual_classification WHERE user_id = 'dryrun-uerase';
+  SELECT COUNT(*) INTO cnt_si  FROM email_scan_item WHERE scan_run_id IN (SELECT id FROM email_scan_run WHERE user_id = 'dryrun-uerase');
+  SELECT COUNT(*) INTO cnt_sr  FROM email_scan_run WHERE user_id = 'dryrun-uerase';
+  SELECT COUNT(*) INTO cnt_es  FROM email_source WHERE user_id = 'dryrun-uerase';
+  SELECT COUNT(*) INTO cnt_fv  FROM email_filter_version WHERE email_filter_id IN (SELECT id FROM email_filter WHERE user_id = 'dryrun-uerase');
+  SELECT COUNT(*) INTO cnt_ef  FROM email_filter WHERE user_id = 'dryrun-uerase';
+  SELECT COUNT(*) INTO cnt_acc FROM "Account" WHERE "userId" = 'dryrun-uerase';
+  SELECT COUNT(*) INTO cnt_usr FROM "User" WHERE id = 'dryrun-uerase';
+
+  IF cnt_mc + cnt_si + cnt_sr + cnt_es + cnt_fv + cnt_ef + cnt_acc + cnt_usr <> 0 THEN
+    RAISE EXCEPTION
+      'FAIL VP13: Erasure left non-zero rows — mc:% si:% sr:% es:% fv:% ef:% acc:% usr:%',
+      cnt_mc, cnt_si, cnt_sr, cnt_es, cnt_fv, cnt_ef, cnt_acc, cnt_usr;
+  END IF;
+  RAISE NOTICE 'PASS VP13: All 8 tables have 0 rows after canonical erasure';
+END; $$;
 
 -- =============================================================================
 -- VP14: Full rollback — pre-rollback baseline counts
@@ -754,31 +1030,87 @@ ROLLBACK;
 -- =============================================================================
 -- VP15: Post-rollback baseline-schema verification (outside transaction)
 -- =============================================================================
-\echo '--- VP15: Post-rollback — Phase 1A tables must not exist ---'
-SELECT tablename
-FROM pg_tables
-WHERE schemaname = 'public'
-  AND tablename IN (
-    'email_filter','email_filter_version',
-    'email_source','email_scan_run',
-    'email_scan_item','email_manual_classification'
-  );
--- Expected: 0 rows
+\echo '--- VP15: Post-rollback verification ---'
 
-\echo '--- VP15: Post-rollback — Account columns must be gone ---'
-SELECT column_name
-FROM information_schema.columns
-WHERE table_name = 'Account'
-  AND column_name IN ('disconnected_at','disconnection_reason');
--- Expected: 0 rows
+-- Assert Phase 1A tables are gone
+DO $$
+DECLARE
+  surviving_tables TEXT;
+BEGIN
+  SELECT string_agg(tablename, ', ')
+  INTO surviving_tables
+  FROM pg_tables
+  WHERE schemaname = 'public'
+    AND tablename IN (
+      'email_filter','email_filter_version',
+      'email_source','email_scan_run',
+      'email_scan_item','email_manual_classification'
+    );
+  IF surviving_tables IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP15: Phase 1A tables survive rollback: %', surviving_tables;
+  END IF;
+  RAISE NOTICE 'PASS VP15: All 6 Phase 1A tables removed by rollback';
+END; $$;
 
-\echo '--- VP15: Post-rollback — Account_userId_id_unique must be gone ---'
-SELECT COUNT(*) AS constraint_still_exists
-FROM pg_constraint
-WHERE conrelid = '"Account"'::regclass AND contype = 'u' AND conname = 'Account_userId_id_unique';
--- Expected: 0
+-- Assert Account additive columns are gone
+DO $$
+DECLARE
+  surviving_cols TEXT;
+BEGIN
+  SELECT string_agg(column_name, ', ')
+  INTO surviving_cols
+  FROM information_schema.columns
+  WHERE table_name = 'Account'
+    AND column_name IN ('disconnected_at','disconnection_reason');
+  IF surviving_cols IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL VP15: Account additive columns survive rollback: %', surviving_cols;
+  END IF;
+  RAISE NOTICE 'PASS VP15: Account additive columns removed by rollback';
+END; $$;
 
-\echo '--- VP15: Post-rollback — baseline User table intact ---'
-SELECT COUNT(*) AS user_count_unchanged FROM "User";
+-- Assert account_user_id_id_unique constraint is gone
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_constraint
+  WHERE conrelid = '"Account"'::regclass
+    AND contype = 'u'
+    AND conname = 'account_user_id_id_unique';
+  IF cnt <> 0 THEN
+    RAISE EXCEPTION 'FAIL VP15: account_user_id_id_unique survives rollback (count = %)', cnt;
+  END IF;
+  RAISE NOTICE 'PASS VP15: account_user_id_id_unique removed by rollback';
+END; $$;
+
+-- Assert account_disconnected_idx is gone
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_indexes
+  WHERE schemaname = 'public'
+    AND tablename = 'Account'
+    AND indexname = 'account_disconnected_idx';
+  IF cnt <> 0 THEN
+    RAISE EXCEPTION 'FAIL VP15: account_disconnected_idx survives rollback (count = %)', cnt;
+  END IF;
+  RAISE NOTICE 'PASS VP15: account_disconnected_idx removed by rollback';
+END; $$;
+
+-- Assert baseline User count unchanged (no production rows leaked)
+DO $$
+DECLARE
+  usr_count INT;
+BEGIN
+  SELECT COUNT(*) INTO usr_count FROM "User";
+  -- If any dryrun- rows somehow survive rollback, this will catch them
+  IF EXISTS (SELECT 1 FROM "User" WHERE id LIKE 'dryrun-%') THEN
+    RAISE EXCEPTION 'FAIL VP15: dryrun- User rows survive rollback';
+  END IF;
+  RAISE NOTICE 'PASS VP15: Baseline User table intact — % row(s), no dryrun- rows', usr_count;
+END; $$;
 
 \echo '--- VP15: ROLLBACK COMPLETE — all dry-run objects removed ---'

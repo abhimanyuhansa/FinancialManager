@@ -4,7 +4,7 @@
 > **Assessed by:** Senior Software Architect (incoming), per master prompt
 > `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`
 > **Baseline commit inspected:** `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
-> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C88 applied 2026-07-23.
+> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C89 applied 2026-07-23.
 > D-1: Pending final consolidation approval. D-2: Approved. D-3: Approved. D-4: Conditionally approved. D-5: Approved. D-6: Approved.
 > Awaiting explicit Phase 1A implementation approval before any code changes begin.
 > **Revision reason (2026-07-18):** D-1 schema rejected and respecified; D-2 changed to
@@ -366,6 +366,13 @@
 >   "retryable FAILED", "retry a failed/error scan", "all active scans reject retry" removed.
 > C88 — C77–C80 dry-run claim corrected: earlier attempt superseded; final canonical isolated C84 dry
 >   run pending Stage 1 approval. No migration validation claimed before C84 executes.
+> C89 — Constraint name standardized to `account_user_id_id_unique` everywhere (was `Account_userId_id_unique`
+>   in phase1a-dry-run.sql). Missing `account_disconnected_idx` added to SQL. SQL header updated to
+>   C81–C89; psql usage updated to `docs/consolidated/phase1a-dry-run.sql`. Filter FKs confirmed RESTRICT.
+>   All verification SELECT queries converted to DO/RAISE EXCEPTION assertions (C92). VP13 rewritten
+>   to canonical C90 erasure order: manual_classification → scan_item → scan_run → source →
+>   filter (CASCADE removes versions) → Account → User; all 8 tables asserted zero.
+>   §7.8 table updated: CREATED+published → 409 scan_active; PAUSED → 409 scan_paused (C91); ACs updated.
 >
 
 ---
@@ -2738,9 +2745,11 @@ The worker detected a stale message (C65) or a publication failure and invokes r
 | Scan status | Condition | Action | HTTP response |
 |------------|-----------|--------|---------------|
 | `CREATED` | `pending_continuation_published_at IS NULL` | Republish existing initial continuation; no new sequence; CAS `published_at` | 202 `{ scanRunId, status: "CREATED", schedulingStatus: "SCHEDULED" }` |
+| `CREATED` | `pending_continuation_published_at IS NOT NULL` | Reject — continuation already published; active delivery in flight | 409 `{ error: "scan_active", status: "CREATED" }` |
 | `RETRY_WAIT` | Manual retry requested | Lock; verify; increment `batch_sequence`; restore from `resume_stage`; clear `next_retry_at`; persist new immediate continuation; commit + publish + CAS | 200 `{ scanRunId, status: "<actual committed status>" }` — return the status restored from `resume_stage` (`"DISCOVERING"` or `"FETCHING"`) |
 | `DISCOVERING` / `FETCHING` | Unexpired worker lease (`worker_lease_expires_at > now()`) | Reject — active worker may be processing | 409 `{ error: "scan_active", status: "<current>" }` |
 | `DISCOVERING` / `FETCHING` | No lease or expired lease (`worker_lease_expires_at IS NULL OR < now()`) | Lock; verify no active lease; verify unfinished work; increment `batch_sequence`; persist fresh continuation using `current_stage`; commit + publish + CAS | 200 `{ scanRunId, status: "<current committed status>" }` |
+| `PAUSED` | — | Reject — use `POST /api/gmail/scan/{id}/resume` | 409 `{ error: "scan_paused" }` |
 | `FAILED` | Any error code | Reject — `FAILED` is terminal and unrecoverable | 422 `{ error: "unrecoverable_failure", detail: "<last_error_code>" }` |
 | `COMPLETED` | — | Reject — scan finished successfully | 409 `{ error: "scan_terminal", status: "COMPLETED" }` |
 | `COMPLETED_WITH_ERRORS` | — | Reject — scan finished (partial errors are auditable but not retried at scan level) | 409 `{ error: "scan_terminal", status: "COMPLETED_WITH_ERRORS" }` |
@@ -2757,13 +2766,15 @@ RETRY_WAIT state (Case 2), that is a data integrity error — return HTTP 500.
 
 | # | Scenario | Expected |
 |---|----------|----------|
-| AC-7.8-1 | CREATED with `published_at IS NULL` → retry | Republishes using sequence 0; no `batch_sequence` increment |
+| AC-7.8-1 | CREATED with `published_at IS NULL` → retry | Republishes using sequence 0; no `batch_sequence` increment; 202 `{ scanRunId, status: "CREATED", schedulingStatus: "SCHEDULED" }` |
+| AC-7.8-1b | CREATED with `published_at IS NOT NULL` → retry | Returns 409 `{ error: "scan_active", status: "CREATED" }`; no DB changes |
 | AC-7.8-2 | RETRY_WAIT → retry | `batch_sequence` incremented; new dedup ID used; status restored from `resume_stage`; `next_retry_at = NULL`; response returns actual committed status |
 | AC-7.8-3 | FAILED (any error code) → retry | Returns 422 `unrecoverable_failure`; no DB changes |
 | AC-7.8-4 | DISCOVERING with unexpired lease → retry | Returns 409 `scan_active`; no DB changes |
 | AC-7.8-5 | DISCOVERING with expired lease and unfinished work → retry | `batch_sequence` incremented; fresh continuation persisted using `current_stage`; response returns current status |
 | AC-7.8-6 | COMPLETED → retry | Returns 409 `scan_terminal` |
 | AC-7.8-7 | NULL `pending_continuation_sequence` on RETRY_WAIT | Returns 500 data integrity error |
+| AC-7.8-8 | PAUSED → retry | Returns 409 `{ error: "scan_paused" }`; caller must use POST /resume |
 
 ### 7.9 QStash quota assumptions and fallback
 
