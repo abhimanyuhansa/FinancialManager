@@ -4,7 +4,7 @@
 > **Assessed by:** Senior Software Architect (incoming), per master prompt
 > `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`
 > **Baseline commit inspected:** `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
-> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C83 applied 2026-07-23.
+> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C88 applied 2026-07-23.
 > D-1: Pending final consolidation approval. D-2: Approved. D-3: Approved. D-4: Conditionally approved. D-5: Approved. D-6: Approved.
 > Awaiting explicit Phase 1A implementation approval before any code changes begin.
 > **Revision reason (2026-07-18):** D-1 schema rejected and respecified; D-2 changed to
@@ -339,8 +339,8 @@
 >   continuation recovery procedure; AC-79 step references corrected (step 9 commits/releases lease,
 >   step 5 acquires lease); DISCOVERY and FETCH execution separated explicitly in worker steps 7–8.
 > **Revision reason (2026-07-23, corrections C77–C83 — schema/retry/document alignment):**
-> C77–C80 — Phase 0 dry-run validation pass; DDL executed against isolated database; FK and trigger
->   inventories verified; negative tests, erasure, and rollback confirmed.
+> C77–C80 — Earlier dry-run attempt superseded. Final canonical isolated C84 dry run pending
+>   Stage 1 approval. Do not treat any prior dry-run output as final migration validation.
 > C81 — Executable DDL aligned to canonical schema: `gmail_query_snapshot` renamed `effective_gmail_query`;
 >   `total_fetched`, `total_filter_included`, `total_filter_excluded` removed; `retry_count INTEGER NOT NULL DEFAULT 0`
 >   and `max_retries INTEGER NOT NULL DEFAULT 5` added; `filter_snapshot_json` changed to `JSONB NOT NULL`;
@@ -352,6 +352,20 @@
 >   AC-7.8-3 updated to expect 422 rejection for `FAILED` status.
 > C83 — Document cleanup: step 8 rollback-note references updated to step 9; trigger count corrected
 >   to "Remaining triggers: 3" (was "2 of the original 7"); C77–C83 recorded in status metadata.
+> **Revision reason (2026-07-23, corrections C85–C88 — executable SQL, field parity, retry semantics, dry-run status):**
+> C85 — Complete executable SQL committed to `docs/consolidated/` as `phase1a-dry-run.sql`; temporary
+>   path and excerpt are insufficient for approval.
+> C86 — `email_scan_run` field table in 05-data-model-apis.md corrected: `gmail_account_id` FK RESTRICT,
+>   `status` CHECK, `state_version` NOT NULL, `total_discovered` NOT NULL, `retry_count` NOT NULL,
+>   `max_retries` NOT NULL, `max_item_retries` NOT NULL, `created_at`/`updated_at` NOT NULL with defaults;
+>   route description for `/retry` corrected (FAILED removed as retryable option).
+> C87 — Stalled active-scan recovery defined: DISCOVERING or FETCHING with expired lease → lock, verify
+>   no active worker, verify unfinished work, increment batch_sequence, persist fresh continuation using
+>   current_stage, commit + publish + CAS, return current status. Unexpired lease → 409 scan_active.
+>   §7.8 table, Phase 1A route tables, DLQ/failure-callback text, and ACs updated. Active phrases
+>   "retryable FAILED", "retry a failed/error scan", "all active scans reject retry" removed.
+> C88 — C77–C80 dry-run claim corrected: earlier attempt superseded; final canonical isolated C84 dry
+>   run pending Stage 1 approval. No migration validation claimed before C84 executes.
 >
 
 ---
@@ -2548,7 +2562,7 @@ progress. Operators must:
 3. Re-enqueue the message manually (Upstash provides a "Resend" action).
 4. Alternatively, use `POST /api/gmail/scan/{id}/retry` to create a new continuation message.
 
-**Failure callback:** QStash supports an optional `Upstash-Failure-Callback` URL that could call a session-less webhook to mark the scan as `PAUSED` when QStash delivery is exhausted. **Deferred — not part of Phase 1A.** Do not configure `Upstash-Failure-Callback` in Phase 1A. Until this is implemented, a stalled scan is detected via the progress endpoint's `worker_lease_expires_at` becoming stale; the UI can surface this and the operator can use `POST /api/gmail/scan/{id}/retry` to resume.
+**Failure callback:** QStash supports an optional `Upstash-Failure-Callback` URL that could call a session-less webhook to mark the scan as `PAUSED` when QStash delivery is exhausted. **Deferred — not part of Phase 1A.** Do not configure `Upstash-Failure-Callback` in Phase 1A. Until this is implemented, a stalled scan is detected via the progress endpoint's `worker_lease_expires_at` becoming stale; the UI can surface this and the operator can use `POST /api/gmail/scan/{id}/retry` to recover — this triggers Case 3 (§7.8): if the lease is expired, a fresh continuation is published using the current stage.
 
 **Manual recovery from DLQ:** After re-enqueuing from DLQ, the worker processes the message
 normally. The idempotency guarantees ensure no duplicate processing occurs.
@@ -2692,7 +2706,26 @@ have been published or delivered — a fresh identity is required:
 - Return HTTP 200 `{ scanRunId, status: "<actual committed status from resume_stage>" }` — return
   the actual committed status (`"DISCOVERING"` or `"FETCHING"`), not the literal `"RETRY_WAIT"`.
 
-**Case 3 — Automatic stale-message or publication-failure recovery**
+**Case 3 — Stalled `DISCOVERING` or `FETCHING` scan (QStash delivery exhausted)**
+
+The scan is in an active state but has no active worker — QStash exhausted its delivery retries
+and the message moved to the DLQ. Recovery:
+- Lock the scan row (`SELECT … FOR UPDATE`).
+- Verify the scan is in `DISCOVERING` or `FETCHING`.
+- Verify no active worker owns it: `worker_lease_expires_at IS NULL OR worker_lease_expires_at < now()`.
+- Verify unfinished work remains (counters show items not yet terminal, or `discovery_complete = false`).
+- Increment `batch_sequence`.
+- Persist a fresh pending continuation using `current_stage`:
+  (`pending_continuation_sequence = batch_sequence`, `pending_continuation_stage = current_stage`,
+  `pending_continuation_not_before = now()`, `pending_continuation_published_at = NULL`).
+- Commit, publish the continuation using the new deterministic dedup ID, and apply CAS
+  `published_at` update.
+- Return HTTP 200 `{ scanRunId, status: "<current committed status>" }`.
+
+If the worker lease is still unexpired, reject with HTTP 409 `{ error: "scan_active" }` — an
+active worker may still be processing; do not force-publish a duplicate continuation.
+
+**Case 4 — Automatic stale-message or publication-failure recovery**
 
 The worker detected a stale message (C65) or a publication failure and invokes recovery:
 - Republish the existing persisted continuation unchanged.
@@ -2706,18 +2739,19 @@ The worker detected a stale message (C65) or a publication failure and invokes r
 |------------|-----------|--------|---------------|
 | `CREATED` | `pending_continuation_published_at IS NULL` | Republish existing initial continuation; no new sequence; CAS `published_at` | 202 `{ scanRunId, status: "CREATED", schedulingStatus: "SCHEDULED" }` |
 | `RETRY_WAIT` | Manual retry requested | Lock; verify; increment `batch_sequence`; restore from `resume_stage`; clear `next_retry_at`; persist new immediate continuation; commit + publish + CAS | 200 `{ scanRunId, status: "<actual committed status>" }` — return the status restored from `resume_stage` (`"DISCOVERING"` or `"FETCHING"`) |
+| `DISCOVERING` / `FETCHING` | Unexpired worker lease (`worker_lease_expires_at > now()`) | Reject — active worker may be processing | 409 `{ error: "scan_active", status: "<current>" }` |
+| `DISCOVERING` / `FETCHING` | No lease or expired lease (`worker_lease_expires_at IS NULL OR < now()`) | Lock; verify no active lease; verify unfinished work; increment `batch_sequence`; persist fresh continuation using `current_stage`; commit + publish + CAS | 200 `{ scanRunId, status: "<current committed status>" }` |
 | `FAILED` | Any error code | Reject — `FAILED` is terminal and unrecoverable | 422 `{ error: "unrecoverable_failure", detail: "<last_error_code>" }` |
 | `COMPLETED` | — | Reject — scan finished successfully | 409 `{ error: "scan_terminal", status: "COMPLETED" }` |
 | `COMPLETED_WITH_ERRORS` | — | Reject — scan finished (partial errors are auditable but not retried at scan level) | 409 `{ error: "scan_terminal", status: "COMPLETED_WITH_ERRORS" }` |
 | `CANCELLED` | — | Reject — scan was cancelled; start a new scan | 409 `{ error: "scan_terminal", status: "CANCELLED" }` |
-| `DISCOVERING` / `FETCHING` | Active scan | Reject — scan is already running; no retry needed | 409 `{ error: "scan_active", status: "<current>" }` |
 | `CANCELLING` | — | Reject — cancellation in progress; no retry | 409 `{ error: "scan_cancelling" }` |
 
-**Key invariant:** Manual retry (Case 2) must create a fresh continuation identity whenever the
-previous continuation may already have been published or delivered. Automatic recovery (Case 1
-and Case 3) must never generate a new sequence — it republishes the existing persisted state.
-If `pending_continuation_sequence` is NULL for a RETRY_WAIT state (Case 2), that is a data
-integrity error — return HTTP 500.
+**Key invariant:** Manual retry (Case 2) and stalled-scan recovery (Case 3) must create a fresh
+continuation identity whenever the previous continuation may already have been published or
+delivered. Automatic recovery (Case 1 and Case 4) must never generate a new sequence — it
+republishes the existing persisted state. If `pending_continuation_sequence` is NULL for a
+RETRY_WAIT state (Case 2), that is a data integrity error — return HTTP 500.
 
 **Tests for §7.8:**
 
@@ -2726,9 +2760,10 @@ integrity error — return HTTP 500.
 | AC-7.8-1 | CREATED with `published_at IS NULL` → retry | Republishes using sequence 0; no `batch_sequence` increment |
 | AC-7.8-2 | RETRY_WAIT → retry | `batch_sequence` incremented; new dedup ID used; status restored from `resume_stage`; `next_retry_at = NULL`; response returns actual committed status |
 | AC-7.8-3 | FAILED (any error code) → retry | Returns 422 `unrecoverable_failure`; no DB changes |
-| AC-7.8-4 | COMPLETED → retry | Returns 409 `scan_terminal` |
-| AC-7.8-5 | DISCOVERING → retry | Returns 409 `scan_active` |
-| AC-7.8-6 | NULL `pending_continuation_sequence` on RETRY_WAIT | Returns 500 data integrity error |
+| AC-7.8-4 | DISCOVERING with unexpired lease → retry | Returns 409 `scan_active`; no DB changes |
+| AC-7.8-5 | DISCOVERING with expired lease and unfinished work → retry | `batch_sequence` incremented; fresh continuation persisted using `current_stage`; response returns current status |
+| AC-7.8-6 | COMPLETED → retry | Returns 409 `scan_terminal` |
+| AC-7.8-7 | NULL `pending_continuation_sequence` on RETRY_WAIT | Returns 500 data integrity error |
 
 ### 7.9 QStash quota assumptions and fallback
 
@@ -2991,7 +3026,7 @@ HTTP methods follow REST semantics: `GET` for read-only, `POST`/`PATCH`/`DELETE`
 | `/api/gmail/scan/{id}/pause` | POST | Session | Pause an active scan |
 | `/api/gmail/scan/{id}/resume` | POST | Session | Resume a paused scan |
 | `/api/gmail/scan/{id}/cancel` | POST | Session | Cancel a scan |
-| `/api/gmail/scan/{id}/retry` | POST | Session | Retry a failed/error scan |
+| `/api/gmail/scan/{id}/retry` | POST | Session | Recover an unpublished CREATED scan, trigger RETRY_WAIT manual retry, or recover a stalled active scan with an expired lease |
 | `/api/gmail/scan/worker` | POST | QStash signature | Internal worker tick |
 | `/api/gmail/email/{sourceId}` | GET | Session | Get email source metadata |
 | `/api/gmail/email/list` | GET | Session | Paginated email inventory |

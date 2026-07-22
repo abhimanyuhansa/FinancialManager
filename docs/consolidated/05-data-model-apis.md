@@ -88,6 +88,13 @@
 > C82: FAILED is terminal and unrecoverable; "retryable FAILED" removed; RETRY_WAIT retry response
 >   corrected to return actual committed status from `resume_stage` (not literal `"RETRY_WAIT"`).
 > C83: API route heading corrected from "18 planned" to "20 planned"; verified total 36 + 20 = 56.
+> **Phase 0 revision 2026-07-23 (C85–C88):**
+> C86: `email_scan_run` field table corrected — `gmail_account_id` FK RESTRICT noted; `status` DEFAULT
+>   'CREATED' added; `state_version`, `total_discovered`, `retry_count`, `max_retries`, `max_item_retries`
+>   all marked NOT NULL; `created_at`/`updated_at` marked NOT NULL DEFAULT now().
+> C87: `/api/gmail/scan/{id}/retry` route description corrected — FAILED removed as retryable option;
+>   stalled active-scan recovery (expired lease) added.
+> C88: Earlier C77–C80 dry-run claim superseded; final isolated C84 dry run pending Stage 1 approval.
 > **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
 > **Pass 3 corrections:** 2026-07-14 — 6-tier ownership taxonomy, API method corrections,
 > SyncJobMessage cascade correction. Source: reviewer pass verified against code.
@@ -329,27 +336,27 @@ Each `email_scan_run` stores `email_filter_id` + `email_filter_version_id` to re
 | `id` | TEXT PK | `gen_random_uuid()::text` |
 | `user_id` | FK → User CASCADE | |
 | `client_request_id` | TEXT NOT NULL | Client-supplied idempotency key; `UNIQUE(user_id, client_request_id)` prevents duplicate scans on POST retry (C61) |
-| `gmail_account_id` | TEXT FK → Account **RESTRICT** | RESTRICT: historical scan metadata survives account disconnection |
+| `gmail_account_id` | TEXT NOT NULL FK → Account RESTRICT | RESTRICT: historical scan metadata survives account disconnection |
 | `email_filter_id` | TEXT NOT NULL FK → email_filter | Derived from `email_filter_version_id`; both must belong to the same filter (C2) |
 | `email_filter_version_id` | TEXT NOT NULL FK → email_filter_version | NOT NULL — every scan requires an immutable filter version (C2) |
 | `effective_gmail_query` | TEXT NOT NULL | Exact query string used; immutable after scan start |
 | `from_date` | DATE NOT NULL | Scan window start date (inclusive) |
 | `to_date` | DATE NOT NULL | Scan window end date (inclusive); NOT NULL — Phase 1A scans always bounded |
 | `filter_snapshot_json` | JSONB NOT NULL | Copy of filter version rules at scan start; NOT NULL (C2) |
-| `status` | TEXT CHECK | `CREATED`, `DISCOVERING`, `FETCHING`, `PAUSED`, `RETRY_WAIT`, `CANCELLING`, `CANCELLED`, `COMPLETED`, `COMPLETED_WITH_ERRORS`, `FAILED` |
+| `status` | TEXT NOT NULL DEFAULT 'CREATED' CHECK | `CREATED`, `DISCOVERING`, `FETCHING`, `PAUSED`, `RETRY_WAIT`, `CANCELLING`, `CANCELLED`, `COMPLETED`, `COMPLETED_WITH_ERRORS`, `FAILED` |
 | `current_stage` | TEXT CHECK NULLABLE | `DISCOVERY`, `FETCH` — active processing stage; NULL in terminal states (C3) |
 | `resume_stage` | TEXT CHECK NULLABLE | `DISCOVERY`, `FETCH` — stage to resume from `PAUSED` or `RETRY_WAIT`; set on pause/retry entry (C3) |
-| `state_version` | INTEGER DEFAULT 0 | Optimistic concurrency; incremented on every state change |
+| `state_version` | INTEGER NOT NULL DEFAULT 0 | Optimistic concurrency; incremented on every state change |
 | `worker_lease_owner` | TEXT NULLABLE | `crypto.randomUUID()` per invocation |
 | `worker_lease_expires_at` | TIMESTAMPTZ NULLABLE | `now() + WORKER_LEASE_DURATION_SECONDS` |
-| `total_discovered` | INTEGER DEFAULT 0 | |
+| `total_discovered` | INTEGER NOT NULL DEFAULT 0 | |
 | `fetch_success_count` | INTEGER NOT NULL DEFAULT 0 | Count of items in FETCHED status |
 | `fetch_failed_count` | INTEGER NOT NULL DEFAULT 0 | Count of items in PERMANENTLY_FAILED status |
 | `filter_included_count` | INTEGER NOT NULL DEFAULT 0 | Count of INCLUDED filter_decision items |
 | `filter_excluded_count` | INTEGER NOT NULL DEFAULT 0 | Count of EXCLUDED filter_decision items |
-| `retry_count` | INTEGER DEFAULT 0 | Scan-level retry counter; incremented on each RETRY_WAIT re-entry |
-| `max_retries` | INTEGER DEFAULT 5 | Scan-level retry cap; immutable after scan creation |
-| `max_item_retries` | INTEGER DEFAULT 3 | Per-item retry cap; immutable after scan creation |
+| `retry_count` | INTEGER NOT NULL DEFAULT 0 | Scan-level retry counter; incremented on each RETRY_WAIT re-entry |
+| `max_retries` | INTEGER NOT NULL DEFAULT 5 | Scan-level retry cap; immutable after scan creation |
+| `max_item_retries` | INTEGER NOT NULL DEFAULT 3 | Per-item retry cap; immutable after scan creation |
 | `batch_sequence` | BIGINT NOT NULL DEFAULT 0 | Monotone; used as QStash deduplication ID component |
 | `pending_continuation_sequence` | BIGINT NULLABLE | Sequence number of the next scheduled QStash message; written in the checkpoint transaction |
 | `pending_continuation_stage` | TEXT CHECK IN ('DISCOVERY','FETCH') NULLABLE | Stage that the pending continuation will execute |
@@ -360,8 +367,8 @@ Each `email_scan_run` stores `email_filter_id` + `email_filter_version_id` to re
 | `last_error_message_sanitized` | TEXT NULLABLE | Sanitized error (no Gmail IDs, no OAuth tokens, no PII); renamed from `error_message` (C12) |
 | `started_at` | TIMESTAMPTZ NULLABLE | NULL until first worker transitions CREATED→DISCOVERING; set atomically at that transition (C12) |
 | `last_checkpoint_at` | TIMESTAMPTZ NULLABLE | |
-| `created_at` | TIMESTAMPTZ | |
-| `updated_at` | TIMESTAMPTZ | |
+| `created_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
+| `updated_at` | TIMESTAMPTZ NOT NULL DEFAULT now() | |
 | `completed_at` | TIMESTAMPTZ NULLABLE | |
 | `cancelled_at` | TIMESTAMPTZ NULLABLE | Set when status transitions to CANCELLED |
 | `filter_rule_schema_version` | INTEGER NOT NULL | Snapshot of `email_filter_version.rule_schema_version` at scan start; immutable (C23) |
@@ -515,7 +522,7 @@ Methods are indicative (per route handler exports).
 | `/api/gmail/scan/{id}/pause` | POST | session | Pause a scan run |
 | `/api/gmail/scan/{id}/resume` | POST | session | Resume a paused scan run |
 | `/api/gmail/scan/{id}/cancel` | POST | session | Cancel a scan run (sets `status=CANCELLING`) |
-| `/api/gmail/scan/{id}/retry` | POST | session | Retry an unpublished CREATED scan, RETRY_WAIT manual retry, or retryable FAILED scan |
+| `/api/gmail/scan/{id}/retry` | POST | session | Recover an unpublished CREATED scan, trigger RETRY_WAIT manual retry, or recover a stalled active scan with an expired lease |
 
 #### Email source / inventory
 | Route | Method | Auth | Purpose |
