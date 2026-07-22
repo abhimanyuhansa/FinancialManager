@@ -84,6 +84,10 @@
 > C50: Ownership taxonomy corrected — `email_filter_version` and `email_scan_item` are PARENT_SCOPED
 >   (no direct `user_id`); `email_filter`, `email_source`, `email_scan_run`, `email_manual_classification`
 >   are TENANT_SCOPED_ENFORCED.
+> **Phase 0 revision 2026-07-23 (C82–C83):**
+> C82: FAILED is terminal and unrecoverable; "retryable FAILED" removed; RETRY_WAIT retry response
+>   corrected to return actual committed status from `resume_stage` (not literal `"RETRY_WAIT"`).
+> C83: API route heading corrected from "18 planned" to "20 planned"; verified total 36 + 20 = 56.
 > **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
 > **Pass 3 corrections:** 2026-07-14 — 6-tier ownership taxonomy, API method corrections,
 > SyncJobMessage cascade correction. Source: reviewer pass verified against code.
@@ -425,7 +429,7 @@ operations are ever performed on it.
 
 ---
 
-## 2. API routes — 36 endpoints (current) + 18 planned (Phase 1A)
+## 2. API routes — 36 endpoints (current) + 20 planned (Phase 1A)
 
 > Route count post-Phase 1A: **56 total** `[Planned — pending approval]`. Existing 36 routes are unchanged
 > except `/api/gmail/sync/advance` receives the SEC-2 fix (Bearer-only auth, query param removed).

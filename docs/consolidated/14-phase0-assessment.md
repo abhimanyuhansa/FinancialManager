@@ -4,7 +4,7 @@
 > **Assessed by:** Senior Software Architect (incoming), per master prompt
 > `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`
 > **Baseline commit inspected:** `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
-> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C76 applied 2026-07-19.
+> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C83 applied 2026-07-23.
 > D-1: Pending final consolidation approval. D-2: Approved. D-3: Approved. D-4: Conditionally approved. D-5: Approved. D-6: Approved.
 > Awaiting explicit Phase 1A implementation approval before any code changes begin.
 > **Revision reason (2026-07-18):** D-1 schema rejected and respecified; D-2 changed to
@@ -338,6 +338,20 @@
 >   AC-77a updated to expect HTTP 202 with PENDING_RETRY; AC-78a updated to include C65 stale-message
 >   continuation recovery procedure; AC-79 step references corrected (step 9 commits/releases lease,
 >   step 5 acquires lease); DISCOVERY and FETCH execution separated explicitly in worker steps 7–8.
+> **Revision reason (2026-07-23, corrections C77–C83 — schema/retry/document alignment):**
+> C77–C80 — Phase 0 dry-run validation pass; DDL executed against isolated database; FK and trigger
+>   inventories verified; negative tests, erasure, and rollback confirmed.
+> C81 — Executable DDL aligned to canonical schema: `gmail_query_snapshot` renamed `effective_gmail_query`;
+>   `total_fetched`, `total_filter_included`, `total_filter_excluded` removed; `retry_count INTEGER NOT NULL DEFAULT 0`
+>   and `max_retries INTEGER NOT NULL DEFAULT 5` added; `filter_snapshot_json` changed to `JSONB NOT NULL`;
+>   `filter_rule_schema_version` and `filter_evaluator_version` documented as explicit snapshot fields.
+> C82 — FAILED is terminal and unrecoverable: "retryable FAILED" concept removed; recoverable errors
+>   must transition to `RETRY_WAIT` or `PAUSED` instead of `FAILED`; `RETRY_WAIT` manual retry response
+>   corrected to return actual committed status (`DISCOVERING` or `FETCHING`) from `resume_stage`, not
+>   the literal string `"RETRY_WAIT"`; Case 3 removed from §7.8; summary table updated accordingly;
+>   AC-7.8-3 updated to expect 422 rejection for `FAILED` status.
+> C83 — Document cleanup: step 8 rollback-note references updated to step 9; trigger count corrected
+>   to "Remaining triggers: 3" (was "2 of the original 7"); C77–C83 recorded in status metadata.
 >
 
 ---
@@ -1712,7 +1726,7 @@ satisfied, the filter version necessarily belongs to the referenced filter.
 `trg_email_filter_version_supersedes` (Invariant 7). The trigger function
 `check_supersedes_same_filter` is removed.
 
-**Remaining triggers (2 of the original 7):**
+**Remaining triggers: 3**
 
 | # | Invariant | Trigger name | Why declarative FK cannot express it |
 |---|-----------|-------------|--------------------------------------|
@@ -2295,7 +2309,7 @@ Each worker invocation executes exactly these 11 steps in order:
    `pending_continuation_*` fields — set them to `NULL` instead.
 
    **If 0 rows are returned (lease ownership lost):** The entire transaction must be rolled back
-   (see C47 in step 8 rollback note). Do not commit item results, counters, or
+   (see C47 in step 9 rollback note). Do not commit item results, counters, or
    `batch_sequence`. Do not publish a continuation. After rollback, read authoritative state:
    if another worker demonstrably committed the same logical work (their checkpoint is visible
    in `last_checkpoint_at` and item states confirm it), return HTTP 200; otherwise return
@@ -2468,7 +2482,7 @@ only one concurrent worker runs at a time.
 
 #### Case 1 (corrected, C65): DB checkpoint succeeds → QStash next-message publication fails
 
-The scan's `last_checkpoint_at` is updated and item states are persisted (step 8 completed).
+The scan's `last_checkpoint_at` is updated and item states are persisted (step 9 completed).
 The pending continuation fields (`pending_continuation_sequence`, `pending_continuation_stage`,
 `pending_continuation_not_before`) are persisted in the same atomic transaction, but
 `pending_continuation_published_at` remains `NULL` because the QStash publish did not succeed.
@@ -2675,22 +2689,10 @@ have been published or delivered — a fresh identity is required:
   `pending_continuation_published_at = NULL`).
 - Commit, publish the continuation using the new deterministic dedup ID, and apply CAS
   `published_at` update.
-- Return HTTP 200 `{ scanRunId, status: "RETRY_WAIT" }`.
+- Return HTTP 200 `{ scanRunId, status: "<actual committed status from resume_stage>" }` — return
+  the actual committed status (`"DISCOVERING"` or `"FETCHING"`), not the literal `"RETRY_WAIT"`.
 
-**Case 3 — Retryable `FAILED` scan**
-
-The scan has failed with a retryable error code. A fresh continuation identity is required:
-- Lock the scan row (`SELECT … FOR UPDATE`).
-- Verify `last_error_code` is retryable (e.g., `GMAIL_AUTH_ERROR`, `QUOTA_EXHAUSTED`).
-- Increment `batch_sequence`.
-- Restore the correct active stage (`current_stage`) for the failed state.
-- Clear sanitized retryable error state (`last_error_code = NULL`,
-  `last_error_message_sanitized = NULL`) as appropriate.
-- Persist a new pending continuation using the incremented sequence.
-- Commit, publish the continuation, and apply CAS `published_at` update.
-- Return HTTP 200 `{ scanRunId, status: "RETRY_WAIT" }`.
-
-**Case 4 — Automatic stale-message or publication-failure recovery**
+**Case 3 — Automatic stale-message or publication-failure recovery**
 
 The worker detected a stale message (C65) or a publication failure and invokes recovery:
 - Republish the existing persisted continuation unchanged.
@@ -2703,33 +2705,30 @@ The worker detected a stale message (C65) or a publication failure and invokes r
 | Scan status | Condition | Action | HTTP response |
 |------------|-----------|--------|---------------|
 | `CREATED` | `pending_continuation_published_at IS NULL` | Republish existing initial continuation; no new sequence; CAS `published_at` | 202 `{ scanRunId, status: "CREATED", schedulingStatus: "SCHEDULED" }` |
-| `RETRY_WAIT` | Manual retry requested | Lock; verify; increment `batch_sequence`; restore from `resume_stage`; clear `next_retry_at`; persist new immediate continuation; commit + publish + CAS | 200 `{ scanRunId, status: "RETRY_WAIT" }` |
-| `FAILED` | `last_error_code` is retryable (e.g. `GMAIL_AUTH_ERROR`, `QUOTA_EXHAUSTED`) | Lock; verify; increment `batch_sequence`; restore active stage; clear error state; persist new continuation; commit + publish + CAS | 200 `{ scanRunId, status: "RETRY_WAIT" }` |
-| `FAILED` | `last_error_code = 'INVALID_FILTER_SCHEMA'` | Reject — schema incompatibility is not retryable without a filter change | 422 `{ error: "unrecoverable_failure", detail: "INVALID_FILTER_SCHEMA" }` |
-| `FAILED` | `last_error_code = 'INCOMPATIBLE_FILTER_VERSION'` | Reject — evaluator version incompatibility is not retryable without a worker deployment | 422 `{ error: "unrecoverable_failure", detail: "INCOMPATIBLE_FILTER_VERSION" }` |
+| `RETRY_WAIT` | Manual retry requested | Lock; verify; increment `batch_sequence`; restore from `resume_stage`; clear `next_retry_at`; persist new immediate continuation; commit + publish + CAS | 200 `{ scanRunId, status: "<actual committed status>" }` — return the status restored from `resume_stage` (`"DISCOVERING"` or `"FETCHING"`) |
+| `FAILED` | Any error code | Reject — `FAILED` is terminal and unrecoverable | 422 `{ error: "unrecoverable_failure", detail: "<last_error_code>" }` |
 | `COMPLETED` | — | Reject — scan finished successfully | 409 `{ error: "scan_terminal", status: "COMPLETED" }` |
 | `COMPLETED_WITH_ERRORS` | — | Reject — scan finished (partial errors are auditable but not retried at scan level) | 409 `{ error: "scan_terminal", status: "COMPLETED_WITH_ERRORS" }` |
 | `CANCELLED` | — | Reject — scan was cancelled; start a new scan | 409 `{ error: "scan_terminal", status: "CANCELLED" }` |
 | `DISCOVERING` / `FETCHING` | Active scan | Reject — scan is already running; no retry needed | 409 `{ error: "scan_active", status: "<current>" }` |
 | `CANCELLING` | — | Reject — cancellation in progress; no retry | 409 `{ error: "scan_cancelling" }` |
 
-**Key invariant:** Manual retries (Cases 2 and 3) must create a fresh continuation identity
-whenever the previous continuation may already have been published or delivered. Automatic
-recovery (Case 1 and Case 4) must never generate a new sequence — it republishes the existing
-persisted state. If `pending_continuation_sequence` is NULL for a retryable state (Cases 2–3),
-that is a data integrity error — return HTTP 500.
+**Key invariant:** Manual retry (Case 2) must create a fresh continuation identity whenever the
+previous continuation may already have been published or delivered. Automatic recovery (Case 1
+and Case 3) must never generate a new sequence — it republishes the existing persisted state.
+If `pending_continuation_sequence` is NULL for a RETRY_WAIT state (Case 2), that is a data
+integrity error — return HTTP 500.
 
 **Tests for §7.8:**
 
 | # | Scenario | Expected |
 |---|----------|----------|
 | AC-7.8-1 | CREATED with `published_at IS NULL` → retry | Republishes using sequence 0; no `batch_sequence` increment |
-| AC-7.8-2 | RETRY_WAIT → retry | `batch_sequence` incremented; new dedup ID used; status restored from `resume_stage`; `next_retry_at = NULL` |
-| AC-7.8-3 | FAILED with retryable error code → retry | `batch_sequence` incremented; new dedup ID; error state cleared; new continuation persisted |
-| AC-7.8-4 | FAILED with `INVALID_FILTER_SCHEMA` → retry | Returns 422; no DB changes |
-| AC-7.8-5 | COMPLETED → retry | Returns 409 `scan_terminal` |
-| AC-7.8-6 | DISCOVERING → retry | Returns 409 `scan_active` |
-| AC-7.8-7 | NULL `pending_continuation_sequence` on retryable state | Returns 500 data integrity error |
+| AC-7.8-2 | RETRY_WAIT → retry | `batch_sequence` incremented; new dedup ID used; status restored from `resume_stage`; `next_retry_at = NULL`; response returns actual committed status |
+| AC-7.8-3 | FAILED (any error code) → retry | Returns 422 `unrecoverable_failure`; no DB changes |
+| AC-7.8-4 | COMPLETED → retry | Returns 409 `scan_terminal` |
+| AC-7.8-5 | DISCOVERING → retry | Returns 409 `scan_active` |
+| AC-7.8-6 | NULL `pending_continuation_sequence` on RETRY_WAIT | Returns 500 data integrity error |
 
 ### 7.9 QStash quota assumptions and fallback
 
