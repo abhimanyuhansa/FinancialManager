@@ -14,6 +14,18 @@
 > **Pass 5 corrections:** 2026-07-15 — §1.5 taxonomy updated to 7-tier: TENANT_ROOT added;
 > OPERATIONAL_GLOBAL redefined to allow optional user reference; "6-tier" → "7-tier". H-01.
 > **Pass 6 corrections:** 2026-07-15 — Frozen metadata corrected. I-01.
+> **Phase 0 revision 2026-07-19 pass 6 (C24–C33):**
+> C28: §8.2 QStash worker authentication — HMAC-SHA256 wording replaced with `Receiver` class JWT
+>   verification; HTTP 401 → HTTP 489 + `Upstash-NonRetryable-Error: true`; verification flow
+>   updated to `receiver.verify({ signature, body, url, clockTolerance })` with `url` required.
+> **Phase 0 revision 2026-07-19 pass 8 (C40–C45):**
+> C45: §8.2 credential table — "Security comes from HMAC verification" replaced with
+>   "Security comes from Receiver JWT signature and claim verification"; non-retryable response
+>   wording corrected to HTTP 489 + `Upstash-NonRetryable-Error: true`; test expectations updated
+>   from HTTP 401 to HTTP 489.
+> **Phase 0 revision 2026-07-19 pass 9 (C50):**
+> C50: §8.4 `error_message` field references replaced with `last_error_message_sanitized` (two
+>   occurrences — both in prose and in implementation note).
 
 > Per PM decision: **document + verify git state; no code or secret changes this pass.** All
 > git/secret claims below were re-verified read-only at consolidation time (2026-07-14). Tags
@@ -205,3 +217,142 @@ follow-up, out of scope for this doc pass. **[Unverified in code / historical]**
 
 *Cross-references:* auth components → `04-architecture.md §2.1`; route auth column →
 `05-data-model-apis.md §2`; these findings feed the risk register in Pass-2 `10-risks-tech-debt.md`.
+
+---
+
+## 8. Phase 1A security controls `[Planned — pending approval]`
+
+> All items in this section are **`[Planned — pending approval]`**. None are implemented.
+> Full context and rationale: `14-phase0-assessment.md §9, §12`.
+
+### 8.1 SEC-2 fix: remove `?secret=` query parameter from `advance` route
+
+FINDING-2 (§5) is resolved in Phase 1A as part of the `advance/route.ts` modification to add the
+`LEGACY_TRANSACTION_INGESTION_ENABLED` gate. The fix:
+
+- Remove lines `advance/route.ts:605` (`?secret=` path) and the associated `querySecret` extraction.
+- Accept `CRON_SECRET` **only** via `Authorization: Bearer <token>` header.
+- `isCron` logic becomes: `!!CRON_SECRET && authHeader === \`Bearer ${CRON_SECRET}\``
+- This fix is applied regardless of whether `LEGACY_TRANSACTION_INGESTION_ENABLED` is true or false.
+
+**Residual risk (FINDING-3):** `NEXT_PUBLIC_CRON_SECRET` is a client-side env var in the settings
+page. Phase 1A removes the need for clients to call `advance` directly (QStash worker takes over
+for the new scan path). However, the legacy `advance` path remains while
+`LEGACY_TRANSACTION_INGESTION_ENABLED=true`. The `NEXT_PUBLIC_CRON_SECRET` var should be removed
+from the settings page client code in Phase 1A. **[Planned — pending approval]**
+
+### 8.2 QStash worker authentication
+
+`/api/gmail/scan/worker` is invoked exclusively by Upstash QStash, never by browser sessions.
+It uses **QStash JWT signature verification via the `Receiver` class** (not NextAuth sessions, not manual HMAC-SHA256):
+
+**Verification flow:**
+1. Extract `Upstash-Signature` header from incoming POST request.
+2. Call `receiver.verify({ signature, body, url, clockTolerance })` — tries `QSTASH_CURRENT_SIGNING_KEY` first, then `QSTASH_NEXT_SIGNING_KEY` (key rotation support per Upstash's signing key rotation spec). The `url` parameter is required for JWT `sub` claim validation (C17).
+3. If verification fails → return HTTP 489 + `Upstash-NonRetryable-Error: true` immediately, no DB access.
+4. After signature verification, resolve user identity from `scanRunId`:
+   `SELECT user_id FROM email_scan_run WHERE id = $scanRunId`
+5. Verify the user identity is non-null and the scan run is not in a terminal state.
+
+**Credential security requirements (binding — D-6):**
+
+| Constraint | Requirement |
+|-----------|-------------|
+| `QSTASH_TOKEN` | Server-only env var. Must NOT be `NEXT_PUBLIC_*`. Never logged. Never stored in DB. |
+| `QSTASH_CURRENT_SIGNING_KEY` | Server-only. Never exposed to browser, logs, DB, or error records. |
+| `QSTASH_NEXT_SIGNING_KEY` | Server-only. Same constraints as signing key. |
+| Worker endpoint path | May be publicly known (no secret in path). Security comes from Receiver JWT signature and claim verification. |
+| Worker response body | Must not include QStash credentials, Gmail message IDs, OAuth tokens, or PII. |
+
+**Browser sessions cannot substitute for QStash verification.** The worker accepts ONLY requests
+with a valid Upstash-Signature. Requests lacking or presenting an invalid signature return
+HTTP 489 + `Upstash-NonRetryable-Error: true` unconditionally (non-retryable — QStash must not
+redeliver requests that will never succeed due to a permanent authentication failure).
+
+**User-supplied input:** The `scanRunId` in the QStash message payload is treated as untrusted
+input. After signature verification proves the message originated from Upstash, the worker still:
+- Looks up `email_scan_run WHERE id = $scanRunId`
+- Verifies the scan run exists and belongs to a real user
+- Acquires a worker lease atomically (prevents two concurrent workers from processing the same scan)
+
+This means a replayed or forged `scanRunId` in a legitimately signed message cannot access
+another user's data — ownership is always checked against the DB.
+
+### 8.3 OAuth token encryption plan
+
+**Current state:** `Account.access_token` and `Account.refresh_token` are stored unencrypted
+(FINDING-4). Phase 1A does not add OAuth token encryption — this is out of scope for POC.
+
+**Option A (Phase 1A+):** Column-level AES-256-GCM encryption using the existing `src/lib/crypto.ts`
+pattern, applied to `Account.access_token` and `Account.refresh_token` on write/read in the
+NextAuth Prisma adapter. Requires a `GMAIL_TOKEN_ENCRYPTION_KEY` env var (separate from statement
+password key).
+
+**Option B (long-term):** Google Cloud KMS or Vercel KV-backed encryption with envelope key rotation.
+Higher operational complexity; not appropriate for POC scale.
+
+**Decision status:** Both options are `[Planned — post-Phase 1A]`. Phase 1A does not touch the
+OAuth token storage path.
+
+### 8.4 Scan error sanitization requirements
+
+All error messages stored in `email_scan_run.last_error_message_sanitized` and `email_scan_item.last_error_message_sanitized`
+**must be sanitized before storage** (D-6). Permitted in error messages:
+
+- Generic error type (e.g., "Gmail API error", "fetch timeout", "Gmail quota exceeded")
+- HTTP status codes (e.g., "HTTP 429")
+- Internal UUIDs (scan run IDs, item IDs — these are app-internal, non-PII)
+
+**Must NOT appear** in any stored error message or API response:
+
+| Prohibited content | Example |
+|-------------------|---------|
+| Gmail message IDs | `19a3b4c5d6e7f891` |
+| OAuth access/refresh tokens | `ya29.a0A...` |
+| Gmail email addresses | `user@gmail.com` |
+| Account or card identifiers | Last 4 digits, account numbers |
+| QStash credentials | Signing keys, QSTASH_TOKEN |
+| Statement PDF passwords | Encrypted or plaintext |
+| PAN (payment card numbers) | 16-digit card numbers |
+| OTPs | 6-digit codes from email body |
+| Raw email body content | Email snippets, subject lines |
+| Date of birth | DOB values from emails |
+
+Implementation: a `sanitizeErrorMessage(err: unknown): string` function in
+`src/lib/scan/sanitize.ts` applies the above rules before any `last_error_message_sanitized` write.
+**[Planned — pending approval]**
+
+### 8.5 Feature flag security properties
+
+The two Phase 1A feature flags affect the security surface:
+
+| Flag | When false (safe default) | When true | Threat if flag misconfigured |
+|------|--------------------------|-----------|------------------------------|
+| `LLM_PARSING_ENABLED` | LLM router throws `LlmDisabledError`; no AI provider calls | Gemini/OpenAI can be invoked | PII sent to AI provider without user's knowledge |
+| `LEGACY_TRANSACTION_INGESTION_ENABLED` | `advance/route.ts` returns 503; legacy path disabled | Existing `advance` route active | N/A — legacy path is the known-safe existing behavior |
+
+**Safe-default guarantee:** Both flags default to `false` when the env var is absent or set to any
+value other than the string `"true"`. An empty string, `"false"`, `"0"`, or missing var all result
+in the disabled (safe) state.
+
+**Vercel configuration requirement:** Both flags must be explicitly set to `"true"` in Vercel
+environment variables if the operator wants to enable the associated functionality. Unset = disabled.
+This must be documented in `11-operations-deployment.md` and confirmed at deploy time.
+
+### 8.6 Phase 1A security testing requirements
+
+The following tests are required before Phase 1A ships (`[Planned — pending approval]`):
+
+| Test | What it proves |
+|------|---------------|
+| `tests/lib/featureFlags.test.ts` | `isLlmParsingEnabled()` returns false when env var is absent, empty, or `"false"` |
+| `tests/lib/featureFlags.test.ts` | `isLlmParsingEnabled()` returns true ONLY when env var = `"true"` |
+| `tests/lib/featureFlags.test.ts` | `router.callLlm()` throws `LlmDisabledError` when flag is false (no provider calls) |
+| `tests/api/scan-worker.test.ts` | Worker returns HTTP 489 + `Upstash-NonRetryable-Error: true` on missing Upstash-Signature |
+| `tests/api/scan-worker.test.ts` | Worker returns HTTP 489 + `Upstash-NonRetryable-Error: true` on invalid Upstash-Signature |
+| `tests/api/scan-worker.test.ts` | Worker accepts valid Upstash-Signature |
+| `tests/api/scan-worker.test.ts` | Worker cannot access scan run belonging to different user |
+| `tests/lib/scan/sanitize.test.ts` | `sanitizeErrorMessage` strips Gmail IDs, OAuth tokens, PII from error strings |
+
+*Full acceptance criteria for Phase 1A security controls: `14-phase0-assessment.md §15`
+(AC-35 through AC-42).*

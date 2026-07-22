@@ -5,6 +5,8 @@
 > **Baseline anchor date:** 2026-07-14
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
 > **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
+> **Phase 0 revision 2026-07-19:** §9.3 migration comment corrected: `email_filter` (not
+> `email_filter_rule`) as the logical filter table name per Q3 decision.
 > **Pass 7 corrections:** 2026-07-15 — Freeze metadata standardized. K-01.
 > **Pass 3 corrections:** 2026-07-14 — §1 Vercel single-instance tagged [Unverified];
 > §5 E2E startup instructions corrected (webServer auto-starts); advance button dev-only
@@ -118,7 +120,26 @@ used exclusively.
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `CRON_SECRET` | **Required** | — | Bearer token for `/api/gmail/sync/advance`; used by Vercel Cron and settings UI |
-| `NEXT_PUBLIC_CRON_SECRET` | Optional | — | **Client-side** cron secret for the settings UI "advance" button. See FINDING-3 in `06`. Do NOT set equal to `CRON_SECRET` — it would ship the secret to all browser clients. |
+| `NEXT_PUBLIC_CRON_SECRET` | **REMOVE in Phase 1A** | — | **CLIENT-SIDE** cron secret. FINDING-3 in `06`. **`[Planned — pending approval]`:** Remove this var and the `settings/page.tsx:1405` reference that reads it. Do NOT use in production — ships secret to all browser clients. |
+
+### Phase 1A feature flags `[Planned — pending approval]`
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `LLM_PARSING_ENABLED` | Optional | `false` (safe default) | Set to `"true"` to enable LLM (Gemini/OpenAI) calls. Missing, empty, or any value other than `"true"` = disabled. |
+| `LEGACY_TRANSACTION_INGESTION_ENABLED` | Optional | `false` (safe default) | Set to `"true"` to enable the existing `advance/route.ts` parse path (static parser, template cache, exact result cache, LLM extraction, Transaction upsert, ParseLog). Missing or non-`"true"` = returns 503. |
+
+### Phase 1A: Upstash QStash credentials `[Planned — pending approval]`
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `QSTASH_TOKEN` | **Required for Phase 1A** | Upstash REST API token for enqueuing messages. Server-only. **Must NOT be `NEXT_PUBLIC_*`**. Never logged. Never stored in DB. |
+| `QSTASH_CURRENT_SIGNING_KEY` | **Required for Phase 1A** | HMAC signing key for verifying incoming QStash requests at `/api/gmail/scan/worker`. Server-only. |
+| `QSTASH_NEXT_SIGNING_KEY` | **Required for Phase 1A** | Next signing key (rotation). Server-only. Same constraints as current key. |
+
+> **Security constraint (D-6):** All three QStash vars are server-only (`process.env` in Node
+> runtime, never `NEXT_PUBLIC_*`). They must never appear in logs, DB records, error messages,
+> API responses, or browser bundles.
 
 ### Test / non-prod
 
@@ -254,3 +275,101 @@ observability gap — see §7.
 
 *Cross-references:* environment variable security → `06-security-authentication.md §2–§3`;
 cron advance behavior → `04-architecture.md §3`; operational risks → `10-risks-tech-debt.md §4`.
+
+---
+
+## 9. Phase 1A operational changes `[Planned — pending approval]`
+
+> All items in this section are **`[Planned — pending approval]`**. None are deployed.
+> Full rationale in `14-phase0-assessment.md §18` (config changes) and §19 (external resources).
+
+### 9.1 Vercel configuration changes
+
+| Change | File | Detail |
+|--------|------|--------|
+| Add worker route max duration | `vercel.json` | Add `"src/app/api/gmail/scan/worker/route.ts": { "maxDuration": 60 }` alongside existing advance route entry |
+| Env vars | Vercel dashboard | Add `LLM_PARSING_ENABLED`, `LEGACY_TRANSACTION_INGESTION_ENABLED`, `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` |
+| Remove var | Vercel dashboard | Remove `NEXT_PUBLIC_CRON_SECRET` from all environments |
+
+**Build command remains unchanged:** `npx prisma generate && next build`
+
+### 9.2 Upstash QStash provisioning
+
+| Action | Detail |
+|--------|--------|
+| Create Upstash account | Free tier at upstash.com |
+| Create QStash queue | 1 queue; free tier = 10 queues max |
+| Configure worker URL | `https://<your-app>.vercel.app/api/gmail/scan/worker` |
+| Obtain credentials | Copy `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` into Vercel env vars |
+| Verify connectivity | Use QStash dashboard to confirm message delivery to worker URL |
+
+**QStash free-tier quotas** (verified 2026-07-16):
+
+| Limit | Value | Phase 1A headroom |
+|-------|-------|-------------------|
+| Messages/day | 1,000 | ~133 per 3,000-email scan (well under limit) |
+| Max queues | 10 | 1 required |
+| Max message size | 1 MB | ~100 bytes per message (well under) |
+| Max HTTP response time | 15 min | Each worker tick completes in <60s |
+| DLQ retention | 3 days | Monitor DLQ for failed scans |
+| Max parallelism | 10 | Single-user POC; no contention expected |
+
+> **Action required:** Monitor the QStash DLQ (Dead Letter Queue) for failed messages.
+> A message enters DLQ if the worker returns 5xx three times. This indicates a scan stuck
+> in a failed state — inspect `email_scan_run.error_message` for the scan run ID.
+
+### 9.3 Database migration prerequisites
+
+Before deploying Phase 1A:
+
+```bash
+# 1. Run the Phase 1A schema migration
+npx prisma migrate deploy
+# This adds 6 new tables: email_filter, email_filter_version, email_source,
+# email_scan_run, email_scan_item, email_manual_classification.
+# Existing tables are not modified.
+
+# 2. Verify migration completed
+npx prisma migrate status
+
+# 3. Generate Prisma client
+npx prisma generate
+```
+
+**Safe to run against existing prod data** — migration is additive only; no columns added or
+dropped from existing tables; no data migration required.
+
+### 9.4 Cron behavior during Phase 1A
+
+The existing Vercel Cron at `0 2 * * *` (targeting `advance/route.ts`) continues to run during
+Phase 1A. Its behavior depends on `LEGACY_TRANSACTION_INGESTION_ENABLED`:
+
+- **Flag = false:** `advance` returns 503. Cron trigger is a no-op (logged, not alarming).
+- **Flag = true:** `advance` runs normally, processing any pending `SyncJob` records.
+
+The new scan path (`/api/gmail/scan/worker`) is **not** triggered by Vercel Cron. It is triggered
+exclusively by Upstash QStash messages initiated by `POST /api/gmail/scan/start`.
+
+### 9.5 Deployment sequence for Phase 1A
+
+**Recommended order** (minimizes risk of partially-deployed state):
+
+1. Run `npx prisma migrate deploy` (adds 6 new tables — safe at any time, additive only)
+2. Set `LLM_PARSING_ENABLED=false`, `LEGACY_TRANSACTION_INGESTION_ENABLED=false` in Vercel
+3. Set `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` in Vercel
+4. Remove `NEXT_PUBLIC_CRON_SECRET` from Vercel environment variables
+5. Deploy Phase 1A code (`git push` → Vercel CI)
+6. Verify `/api/health` returns 200; verify `/api/gmail/scan/start` returns expected response
+7. Test one scan end-to-end with `LLM_PARSING_ENABLED=false` and `LEGACY_TRANSACTION_INGESTION_ENABLED=false`
+8. Confirm `SELECT COUNT(*) FROM "Transaction"` = 0 after scan completes (AC-01)
+9. (Optional) Enable `LEGACY_TRANSACTION_INGESTION_ENABLED=true` to restore legacy sync path
+
+### 9.6 Rollback procedure
+
+If Phase 1A must be rolled back:
+
+1. Set `LEGACY_TRANSACTION_INGESTION_ENABLED=false` (disables new scan path — no-op if already false)
+2. Set `LLM_PARSING_ENABLED=false` (disables LLM)
+3. Revert to the previous deployed commit in Vercel (instant rollback)
+4. The 6 new Phase 1A tables can be retained or dropped; no existing table references them
+5. To restore full legacy functionality, re-enable `LEGACY_TRANSACTION_INGESTION_ENABLED=true`

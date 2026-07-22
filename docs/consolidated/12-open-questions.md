@@ -6,6 +6,31 @@
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
 > **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Pass 7 corrections:** 2026-07-15 — Freeze metadata standardized. K-01.
+> **Phase 0 revision 2026-07-19:** D-5 updated: `email_filter_rule` replaced by `email_filter`/
+> `email_filter_version` two-table design (Q1–Q4 + C1–C8). Decision outcomes recorded:
+> D-1: **Pending** — final consolidation approval after C1–C33 corrections applied. D-2: **Approved** — QStash
+> for background scan progression. D-3: **Approved** — no body storage in Phase 1A; Gmail
+> re-fetch only. D-4: **Conditionally approved** — feature flags (`LLM_PARSING_ENABLED`,
+> `LEGACY_TRANSACTION_INGESTION_ENABLED`) and legacy-path shutdown. D-5: **Approved** — defer
+> remaining SYSTEM_GLOBAL migration. D-6: **Approved** — remove `?secret=` query param; QStash
+> signature verification only for scan worker endpoint.
+> **Phase 0 revision 2026-07-19 pass 4 (C9–C13):** D-6 text corrected: QStash authentication
+> for scan worker uses `@upstash/qstash` `Receiver` class JWT verification (C9; not manual HMAC).
+> **Phase 0 revision 2026-07-19 pass 5 (C14–C23):**
+> D-1: Status unchanged — **PENDING**; awaiting final consolidation approval after C1–C33 corrections.
+> D-6: Text corrected further — non-retryable response is HTTP 489 + `Upstash-NonRetryable-Error: true`
+>   (C17); `Receiver.verify()` requires `url` parameter (C17); `Upstash-Retries` publish header
+>   (C17, replaces `Upstash-Retry-Count`); failure callback uses `Receiver` JWT (C17).
+> C16: Rule-draft CRUD not in Phase 1A — filter API renamed to `/api/email-filters` hierarchy
+>   (no open question; resolved by schema design).
+> C22: Quota recovery — no automatic midnight recovery; manual resume is approved; optional Vercel
+>   cron sweeper (approved as optional). Phase 1A behavior documented in D-2.
+> **Phase 0 revision 2026-07-19 pass 6 (C24–C33):**
+> C33: D-1 status updated from "pending after C1–C8" to "pending after C1–C23 final consolidation".
+> **Phase 0 revision 2026-07-19 pass 7 (C34–C39):**
+> C39: D-1 status updated to "pending final consolidation approval"; C1–C33 applied (not C1–C23);
+>   D-1–D-6 statuses: D-1 Pending, D-2 Approved, D-3 Approved, D-4 Conditionally approved,
+>   D-5 Approved, D-6 Approved.
 > **Pass 3 corrections:** 2026-07-14 — OQ-11 added (`User.syncFromDate` never written).
 
 > Items that cannot be resolved by reading the code — they require a PM or owner decision.
@@ -226,3 +251,146 @@ only (in which case the field should be documented as admin-only)? Or should the
 removed since `sixMonthsAgo` is the effective default in all cases?
 
 **Owner:** PM / Engineering.
+
+---
+
+## Phase 1A Blocking Decisions (D-1 through D-6) — added 2026-07-16
+
+These 6 decisions were identified during the Phase 0 architecture audit (see `14-phase0-assessment.md §12`).
+Decision outcomes recorded 2026-07-19: D-1 pending final consolidation approval; D-2 Approved; D-3 Approved; D-4 Conditionally approved; D-5 Approved; D-6 Approved
+(see `14-phase0-assessment.md §5` for full decision text and rationale). C1–C33 applied.
+**Phase 1A implementation remains blocked on D-1 final consolidation approval.**
+
+---
+
+## D-1 — New `email_scan_run` table vs. extending `SyncJob`
+
+**Status: PENDING — awaiting final consolidation approval. C1–C33 applied.**
+
+**Context:** Phase 1A needs a scan session record. Option A: create a new `email_scan_run`
+table. Option B: add new columns to the existing `SyncJob` table.
+
+**Why it matters:** Option B requires altering an existing production table and risks
+migrating in-flight sync jobs. Option A is purely additive with no rollback risk.
+
+**Recommendation:** New table alongside (Option A). See ADR-14 in `07`.
+
+**Owner:** Architect / PM.
+
+---
+
+## D-2 — Client polling vs. external cron for scan tick progression
+
+**Status: APPROVED — QStash (Upstash) for background scan progression; browser polling retained for status display only.**
+
+**Context:** The scan tick (`/api/gmail/scan/worker`) must be called repeatedly to progress a
+scan. On Vercel Hobby, the daily cron fires once and stops. QStash provides at-least-once
+delivery with configurable retry, enabling background scan completion without an open browser.
+
+**Why it matters:** Without repeated advancement, large inbox scans (10k+ emails) may take
+days to complete if the user only opens the app occasionally.
+
+**Decision:** QStash for Phase 1A. Browser polls a read-only status endpoint for display;
+closing the browser does not stop the scan. External cron via GitHub Actions / cron-job.org
+is a Phase 2 upgrade path if QStash free tier proves insufficient.
+
+**QStash quota recovery (C22):** If daily quota is exhausted, the scan is marked `PAUSED` with
+a sanitized quota-exhausted message. QStash cannot schedule its own recovery after midnight UTC
+reset — there is no automatic recovery. Manual resume (user action or admin API) is the approved
+Phase 1A recovery path. The existing daily Vercel cron may optionally be used as a sweep that
+resumes PAUSED scans after quota resets — this is approved as optional.
+
+**Owner:** PM (UX expectation) / Architect (implementation).
+
+---
+
+## D-3 — `body_hash` only vs. encrypted body snapshot in `email_source`
+
+**Status: APPROVED — no body storage in Phase 1A. Gmail re-fetch for any reprocessing.**
+
+**Context:** `email_source` could store: (a) nothing — bodies are always fetched transiently;
+(b) a SHA-256 hash of the body — enables dedup without storage; (c) an AES-256-GCM encrypted
+body — enables offline reprocessing without Gmail re-fetch.
+
+**Why it matters:** Option (c) stores PII at rest. Option (a) requires re-fetching from Gmail
+for every parse attempt. Option (b) is a data-minimization middle ground.
+
+**Decision:** Phase 1A stores metadata only (subject, sender, received date, has_attachment,
+filter_decision). No body and no body hash by default. Source idempotency key:
+`(user_id, gmail_account_id, gmail_message_id)`. Reproducibility limitation: if an email is
+deleted from Gmail or authorization is revoked, deterministic re-parsing is not possible —
+accepted limitation for Phase 1A. Encrypted body snapshot deferred to Phase 1C if regression
+testing requires it.
+
+**Owner:** PM (data policy) / Architect.
+
+---
+
+## D-4 — Set `LLM_PARSING_ENABLED=false` in Vercel environment
+
+**Status: CONDITIONALLY APPROVED — feature flags and legacy-path shutdown required before Phase 1A ships.**
+
+**Context:** Two flags are required: `LLM_PARSING_ENABLED=false` (prevents AI provider calls
+only) and `LEGACY_TRANSACTION_INGESTION_ENABLED=false` (disables the complete legacy
+transaction-ingestion path — no SyncJob creation, no fetching, no parsing, no ParseLog, no
+transaction insert). Both must be server-only (`NEXT_PUBLIC_*` is prohibited). Safe default
+for any missing or malformed value: disabled.
+
+**Why it matters:** The transition window between old route and new route needs both flags
+explicitly set. The Vercel environment change must be made **before** Phase 1A code deploys.
+
+**Decision:** Create both flags as the absolute first code change in Phase 1A. LLM=0
+regression test must pass before any Phase 1A code ships. Confirm string `"false"`, not
+empty/unset. Do not make the Vercel env change during Phase 0 revision.
+
+**Owner:** Deploy configuration owner / PM approval.
+
+---
+
+## D-5 — Scope of SYSTEM_GLOBAL migration in Phase 1A
+
+**Status: APPROVED — defer remaining SYSTEM_GLOBAL migration. EmailFilter deprecated in Phase 1A.**
+
+**Context:** OQ-10 above asks whether the 5 SYSTEM_GLOBAL models (`GmailQueryKeyword`,
+`ExclusionRule`, `MerchantMaster`, `SubCategoryMaster`, `EmailFilter`) should remain shared
+or be migrated to per-user isolation. Phase 1A introduces `email_filter`/`email_filter_version`
+as the per-user filter design replacing `EmailFilter`. Should the other 4 SYSTEM_GLOBAL models
+be migrated in Phase 1A, Phase 2, or never?
+
+**Why it matters:** Migrating SYSTEM_GLOBAL models requires altering existing tables and
+migrating existing data — not additive-only. This is a higher-risk migration than the new
+Phase 1A tables.
+
+**Decision:** Leave `GmailQueryKeyword`, `ExclusionRule`, `MerchantMaster`, `SubCategoryMaster`
+unchanged. Mark legacy `EmailFilter` settings UI as deprecated in Phase 1A — do not claim
+replacement is complete until migration, cutover, legacy UI removal, and legacy API removal
+are done. SYSTEM_GLOBAL migration for the other 4 is a separate scoped decision for a future
+phase.
+
+**Owner:** PM / Architect.
+
+---
+
+## D-6 — Remove `?secret=` query param from `advance/route.ts` (SEC-2)
+
+**Status: APPROVED — remove query-param secret path; enforce QStash signature verification for scan worker endpoint.**
+
+**Context:** `advance/route.ts` currently accepts the cron secret as both a query parameter
+(`?secret=<CRON_SECRET>`) and a Bearer header. The query parameter path leaks the secret to
+server access logs. This is a HIGH severity security finding (SEC-2 in `06` and `10`).
+
+**Why it matters:** Server logs on Vercel are visible to anyone with dashboard access. A
+leaked `CRON_SECRET` allows arbitrary cron advance calls. The fix is 2 lines of code.
+
+**Decision:** Remove `querySecret` path from `advance/route.ts`. Accept `Authorization: Bearer`
+only for legacy advance. New `/api/gmail/scan/worker` endpoint uses QStash JWT signature
+verification via the official `@upstash/qstash` `Receiver` class only (not session auth, not Bearer;
+C9 — manual HMAC is NOT used). `receiver.verify({ signature, body, url, clockTolerance })` —
+the `url` parameter is required for JWT `sub` claim validation (C17). Non-retryable responses
+return HTTP 489 + `Upstash-NonRetryable-Error: true` (C17); publish retry config uses
+`Upstash-Retries` header (C17, not `Upstash-Retry-Count`). Failure callback also uses
+`Receiver` JWT — no separate HMAC secret (C17). No secrets in URLs, browser bundles,
+application logs, proxy logs, access logs, or DB error records. Do not modify the existing
+route during Phase 0 revision; implement in Phase 1A as a companion change to the feature flag work.
+
+**Owner:** Engineering (low effort) / PM approval for any deploy.

@@ -6,6 +6,32 @@
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
 > **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Architecture Remediation update:** 2026-07-16 — Tasks 0–7 complete; final commit `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
+> **Phase 0 Assessment update:** 2026-07-16 — Full audit complete against `260dd90`. 10 root
+> causes confirmed. Phase 1A plan documented in `14-phase0-assessment.md`. Status: awaiting
+> PM approval of D-1 through D-6 before any Phase 1A code changes.
+> **Phase 0 revision 2026-07-19:** Phase 1A design plan row corrected: 6 new tables (not 5);
+> table names corrected to `email_filter`, `email_filter_version`, `email_source`, `email_scan_run`,
+> `email_scan_item`, `email_manual_classification` (Q1–Q4 + C1–C8). C2: `gmail_account_id`
+> ON DELETE RESTRICT on three Account-referencing tables. C3: `total_filter_excluded` replaces
+> `total_skipped`. C5: `max_item_retries`, `retry_count`, `max_retries` added to `email_scan_run`.
+> C6: `to_date` NOT NULL; `previous_classification` NOT NULL; `classification_version` UNIQUE added
+> to `email_manual_classification`. C7: filter evaluation semantics finalized (exclude wins, empty
+> include = all included). C8: QStash deterministic dedup IDs; DB-commit-before-publish ordering.
+> C1: cross-table integrity via PostgreSQL constraint triggers. D-1 status: pending final schema
+> approval. D-2 through D-6: see updated §5 in `14-phase0-assessment.md`.
+> **Phase 0 revision 2026-07-19 pass 6 (C24–C33):**
+> C29: Phase 1A design plan table — `GET /api/gmail/scan/list` row removed; `GET/DELETE`
+>   on `[id]` replaced with `GET` + `POST pause/resume/cancel/retry` sub-routes.
+> **Phase 0 revision 2026-07-19 pass 7 (C34–C39):**
+> C38: Phase 1A design plan table — `/api/gmail/scan/start` renamed to `POST /api/gmail/scan`;
+>   `/api/gmail/scan/tick` renamed to `POST /api/gmail/scan/worker`;
+>   `/api/email-filter-rules` and `[id]` rows replaced with `/api/email-filters` hierarchy;
+>   D-1 through D-6 status updated per C39 (D-1 pending; D-2–D-3 Approved; D-4 Conditionally
+>   approved; D-5–D-6 Approved). C1–C33 applied.
+> **Phase 0 revision 2026-07-19 pass 8 (C40–C45):**
+> C45: `/api/email-filters/[id]` PATCH description updated — PATCH updates logical filter
+>   metadata only (name, active status); rule changes require a new immutable version;
+>   PATCH/DELETE no longer described as editing individual filter-rule rows.
 
 ## Architecture Remediation — 2026-07-16
 
@@ -69,6 +95,28 @@ migrations. Evidence throughout `02`–`06`.
 | Budgeting / goals engine (spec §14 future) | No code |
 | Monetization / paid tiers (spec §14 V2+) | No billing/plan/entitlement code |
 | Multi-currency FX conversion | `currency` stored; no conversion logic |
+
+### 1.6 Phase 1A planned items — [Planned, pending D-1 final consolidation approval; D-2–D-6 approved]
+
+Per Phase 0 assessment `14-phase0-assessment.md`. These items are **[Not Implemented]**
+at assessment date 2026-07-16 and are pending PM/architect approval before any code changes.
+
+| Item | Description |
+|------|-------------|
+| `src/lib/featureFlags.ts` | `isLlmParsingEnabled()` — reads `LLM_PARSING_ENABLED` env var; safe default false |
+| LLM gate in `router.ts` | Guard call at router entry that throws `LlmDisabledError` if flag is false |
+| LLM=0 regression test | `tests/lib/featureFlags.test.ts` — proves zero provider calls when flag is false |
+| Migration: 6 new tables | `email_filter`, `email_filter_version`, `email_source`, `email_scan_run`, `email_scan_item`, `email_manual_classification` |
+| `POST /api/gmail/scan` | POST — creates `email_scan_run`, returns `scanRunId` |
+| `POST /api/gmail/scan/worker` | POST — advances one bounded unit (≤25 IDs or ≤25 fetches); worker lease pattern |
+| `/api/gmail/scan/[id]` | GET — status; POST sub-routes: pause, resume, cancel, retry |
+| `/api/gmail/email/[sourceId]` | GET — email source metadata |
+| `/api/gmail/email/list` | GET — paginated email inventory |
+| `/api/gmail/email/stats` | GET — aggregate counts |
+| `/api/email-filters` | GET/POST — per-user filter rules (replaces SYSTEM_GLOBAL EmailFilter) |
+| `/api/email-filters/[id]` | PATCH — updates logical filter metadata (name, active status) only; DELETE — deletes the filter and all its versions. Rule changes require publishing a new immutable version via `/api/email-filters/[id]/versions`. |
+| `/api/email-filters/[id]/versions` | GET — version history for a filter |
+| Minimal scan management UI | Start scan, progress display, email inventory table |
 
 ### 1.5 Conflicting / stale — [Stale]
 See the conflict table in §2.

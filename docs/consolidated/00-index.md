@@ -5,6 +5,34 @@
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 8
 > **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Status:** Pass 1 through Pass 8 complete — all 14 documents written and verified.
+> **Phase 0 Assessment:** 2026-07-16 — Document 14 added: full architecture audit per master
+> prompt `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`. Assessed against
+> commit `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`. 10 root causes confirmed. 6 blocking
+> decisions (D-1 through D-6) pending PM/architect approval before Phase 1A begins.
+> **Phase 0 Corrections 2026-07-19:** C1–C8 applied to `14-phase0-assessment.md` and propagated
+> to companion documents 00, 05, 07, 08, 09, 10, 12, 13. Decision outcomes recorded: D-1 pending
+> final schema approval; D-2 approved (QStash); D-3 approved (no body storage); D-4 conditionally
+> approved (feature flags + legacy-path shutdown); D-5 approved (defer SYSTEM_GLOBAL migration);
+> D-6 approved (remove ?secret= query param; QStash signature verification). Phase 1A blocked on D-1.
+> **Phase 0 Corrections 2026-07-19 pass 5 (C14–C23):** Applied to `14-phase0-assessment.md` and
+> propagated to companion documents 00, 05, 07, 09, 12. C14 — progress formula corrected
+> (filter_excluded_count is subset of fetch_success_count; CANCELLED items excluded from
+> completion counts; completion guard extended with third condition). C15 — classification
+> versioning: newVersion = N+1; history row and source always carry same version after commit.
+> C16 — filter draft-rule CRUD removed (no draft persistence in six-table schema); API renamed
+> around filters and versions. C17 — HTTP 489 + Upstash-NonRetryable-Error for non-retryable;
+> Upstash-Retries header (not Upstash-Retry-Count); Receiver.verify() requires url parameter;
+> failure callback uses Receiver JWT. C18 — Upstash-Message-Id replay rejection removed;
+> idempotency via DB state only. C19 — SECURITY DEFINER erasure function removed (SECURITY
+> DEFINER bypasses RLS not triggers; prefer cascade via parent email_filter deletion). C20 —
+> 4 of 7 constraint triggers replaced by declarative composite FKs; 2 new UNIQUE constraints
+> added (email_filter_version, email_source); 3 triggers remain. C21 — User CASCADE does not
+> overcome Account RESTRICT; explicit erasure transaction defined; Account additive migration
+> requires D-1 approval; actual NextAuth field names corrected (access_token, refresh_token).
+> C22 — QStash quota recovery: no automatic midnight recovery; manual resume approved for
+> Phase 1A; Vercel daily cron sweeper optional. C23 — rule_schema_version and
+> filter_evaluator_version added to email_filter_version; scan snapshot records both;
+> incompatible version = fail safely (not silent non-match).
 > **Pass 8:** 2026-07-15 — 2 further inaccuracies (K-01, K-02) corrected: freeze metadata
 > standardized across 04, 07, 09, 10, 11, 12, 13 (Pass-7 freeze declaration added); index
 > status updated to Pass 8; two malformed table rows fixed (NFR-SCALE-4 in 03 merged to
@@ -111,6 +139,7 @@ Every claim cites its source file where practical (e.g., `prisma/schema.prisma`,
 | 11 | [11-operations-deployment.md](11-operations-deployment.md) | Ops, Architect | Vercel deploy, cron, env vars (23), database, local dev, logging, monitoring gaps. |
 | 12 | [12-open-questions.md](12-open-questions.md) | PM, Architect | 11 unresolved items requiring PM/owner decision. |
 | 13 | [13-traceability-matrix.md](13-traceability-matrix.md) | QA, Auditor | FR/NFR → component → route → model → unit test → E2E test mapping. |
+| 14 | [14-phase0-assessment.md](14-phase0-assessment.md) | Architect, PM | Phase 0 audit: root causes, data flow trace, component matrix, 6 new tables, 10 risks, 6 blocking decisions, Phase 1A plan. |
 
 ---
 

@@ -5,6 +5,24 @@
 > **Baseline anchor date:** 2026-07-14
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 8
 > **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
+> **Phase 0 revision 2026-07-19:** §4 FR-N requirements updated: `email_filter_rule` replaced
+> with two-table design (`email_filter` + `email_filter_version`); FR-N5/N6 route paths updated
+> to `/api/email-filter-versions`; FR-M5/FR-O3 `source_id` → `email_source_id`; NFR-DATA-4
+> `source_id` → `email_source_id` FK field name. C1–C8 corrections: NFR-DATA-6 (constraint
+> triggers for cross-table FK invariants), NFR-REL-11 (two-condition completion guard), NFR-REL-12
+> (QStash deterministic dedup IDs), NFR-DATA-7 (filter evaluation semantics — exclude wins) added
+> to Phase 1A NFR additions table. FR-L9 updated: CANCELLING two-path documented.
+> **Phase 0 revision 2026-07-19 pass 6 (C24–C33):**
+> C29: FR-L9 route updated from `DELETE /api/gmail/scan/{id}` to
+>   `POST /api/gmail/scan/{id}/cancel`; FR-L10 `GET /api/gmail/scan/list` removed — scan
+>   status accessible via `GET /api/gmail/scan/{id}`.
+> **Phase 0 revision 2026-07-19 pass 7 (C34–C39):**
+> C38: FR-L1 route corrected to `POST /api/gmail/scan`; FR-L3 body_text reference removed —
+>   Phase 1A stores no body (metadata only); FR-L11 Transaction count corrected to delta (Δ=0);
+>   FR-N1–N6 routes updated to `/api/email-filters` hierarchy with `/{id}/versions` for versions;
+>   FR-N4 filter-preview removed (not approved for Phase 1A); NFR-SEC-6 authentication updated
+>   from HMAC-SHA256 to Receiver JWT verification via `@upstash/qstash` `Receiver` class.
+>   C39: D-1 pending; D-2–D-3 Approved; D-4 Conditionally approved; D-5–D-6 Approved.
 > **Pass 8 corrections:** 2026-07-15 — NFR-DATA-2 row fixed: [Partial] qualifier moved into
 > Requirement cell (was an extra 8th column in a 7-column table). Freeze metadata updated. K-01, K-02.
 > **Pass 3 corrections:** 2026-07-14 — FR-A2 (syncFromDate read-only; no write route);
@@ -224,3 +242,82 @@ Requirements with **no** unit or E2E test coverage (gaps from `09-testing-qualit
 
 *Cross-references:* requirements source → `02-functional-requirements.md`, `03-non-functional-requirements.md`;
 test inventory → `09-testing-quality.md`; risk of gaps → `10-risks-tech-debt.md §4`.
+
+---
+
+## 4. Phase 1A requirements traceability `[Planned — pending approval]`
+
+> All items in this section are **`[Planned — pending approval]`**. Components, routes, and tests
+> listed here do not exist yet. Full acceptance criteria in `14-phase0-assessment.md §15`.
+> Phase 1A test design in `14-phase0-assessment.md §16`.
+
+### FR-L. Gmail scan lifecycle (email inventory collection)
+
+| ID | Requirement | Component / lib `[Planned]` | API route `[Planned]` | DB model(s) `[Planned]` | Unit test `[Planned]` | E2E test `[Planned]` |
+|----|-------------|------------------------------|----------------------|------------------------|----------------------|---------------------|
+| FR-L1 | Start scan: create EmailScanRun, enqueue QStash batch | `src/lib/scan/scanner.ts`, `src/lib/scan/scheduler.ts` | `POST /api/gmail/scan` | `email_scan_run`, `email_filter_version` | `tests/api/scan-start.test.ts` | `e2e/15-email-scan.spec.ts` |
+| FR-L2 | Worker tick: discover ≤25 Gmail message IDs, create email_scan_item rows (DISCOVERING phase) | `src/lib/scan/scanner.ts` | `POST /api/gmail/scan/worker` | `email_scan_item`, `email_source` | `tests/api/scan-worker.test.ts` | `e2e/15-email-scan.spec.ts` |
+| FR-L3 | Worker tick: fetch ≤25 full messages via Gmail Batch API, upsert email_source metadata — Phase 1A stores no body (FETCHING phase) | `src/lib/scan/fetcher.ts` | `POST /api/gmail/scan/worker` | `email_source` | `tests/api/scan-worker.test.ts` | — |
+| FR-L4 | Worker re-enqueues next batch when work remains | `src/lib/scan/scheduler.ts`, `QStashSchedulerService` | `POST /api/gmail/scan/worker` → enqueue | `email_scan_run.batch_sequence` | `tests/lib/scan/scheduler.test.ts` | — |
+| FR-L5 | Scan idempotency: re-scan produces no duplicate email_source rows (UNIQUE constraint) | `src/lib/scan/scanner.ts` (INSERT ON CONFLICT DO NOTHING) | — | `email_source` UNIQUE | `tests/api/scan-worker.test.ts` | `e2e/15-email-scan.spec.ts` |
+| FR-L6 | Missing Gmail batch response: write PERMANENTLY_FAILED item + error record (no silent drop) | `src/lib/scan/fetcher.ts` | — | `email_scan_item` | `tests/api/scan-worker.test.ts` | — |
+| FR-L7 | Scan status and progress: read-only polling endpoint, 30+ fields, no PII in response | `src/lib/scan/progress.ts` | `GET /api/gmail/scan/{id}` | `email_scan_run`, `email_scan_item` | — | `e2e/15-email-scan.spec.ts` |
+| FR-L8 | Counter reconciliation: recompute counters from item states on every status read | `src/lib/scan/progress.ts` | `GET /api/gmail/scan/{id}` | `email_scan_item` | `tests/lib/scan/progress.test.ts` | — |
+| FR-L9 | Cancel scan: two-path (no active lease → direct CANCELLED; active lease → CANCELLING, worker confirms CANCELLED) | `src/app/api/gmail/scan/[id]/cancel/route.ts` | `POST /api/gmail/scan/{id}/cancel` | `email_scan_run` | — | — |
+| FR-L10 | List scan runs (paginated) — removed from Phase 1A API; scan status accessible via `GET /api/gmail/scan/{id}` | `src/lib/scan/progress.ts` | `GET /api/gmail/scan/{id}` | `email_scan_run` | — | — |
+| FR-L11 | LLM_PARSING_ENABLED=false: zero Transaction rows created after complete scan (Δ=0 — no new rows, not absolute count zero) | `src/lib/featureFlags.ts` gate in router | — | `Transaction` (delta=0) | `tests/lib/featureFlags.test.ts` | `e2e/15-email-scan.spec.ts` |
+| FR-L12 | Worker lease prevents double-processing under at-least-once delivery | `src/lib/scan/scanner.ts` (atomic UPDATE WHERE) | — | `email_scan_run.worker_lease_owner` | `tests/api/scan-worker.test.ts` | — |
+
+### FR-M. Email inventory management
+
+| ID | Requirement | Component / lib `[Planned]` | API route `[Planned]` | DB model(s) `[Planned]` | Unit test `[Planned]` | E2E test `[Planned]` |
+|----|-------------|------------------------------|----------------------|------------------------|----------------------|---------------------|
+| FR-M1 | List email inventory (paginated, filterable by domain/status/filter_decision) | `src/app/api/gmail/email/list/route.ts` | `GET /api/gmail/email/list` | `email_source`, `email_scan_item` | — | `e2e/15-email-scan.spec.ts` |
+| FR-M2 | Email source metadata (no body_text or OAuth details in response) | `src/app/api/gmail/email/[sourceId]/route.ts` | `GET /api/gmail/email/{sourceId}` | `email_source` | — | — |
+| FR-M3 | Email aggregate stats (total, fetched, failed, by filter_decision) | `src/app/api/gmail/email/stats/route.ts` | `GET /api/gmail/email/stats` | `email_scan_item` | — | — |
+| FR-M4 | Manual classification: submit (append-only, never update/delete) | `src/app/api/gmail/email/[sourceId]/classify/route.ts` | `POST /api/gmail/email/{sourceId}/classify` | `email_manual_classification` | — | — |
+| FR-M5 | Manual classification: audit history (all rows for email_source_id) | `src/app/api/gmail/email/[sourceId]/classifications/route.ts` | `GET /api/gmail/email/{sourceId}/classifications` | `email_manual_classification` | — | — |
+
+### FR-N. Per-user filter management (replaces SYSTEM_GLOBAL EmailFilter)
+
+| ID | Requirement | Component / lib `[Planned]` | API route `[Planned]` | DB model(s) `[Planned]` | Unit test `[Planned]` | E2E test `[Planned]` |
+|----|-------------|------------------------------|----------------------|------------------------|----------------------|---------------------|
+| FR-N1 | Create named per-user filter | `src/app/api/email-filters/route.ts` | `POST /api/email-filters` | `email_filter` | — | — |
+| FR-N2 | List filters for user | `src/app/api/email-filters/route.ts` | `GET /api/email-filters` | `email_filter` | — | — |
+| FR-N3 | Update or deactivate a filter | `src/app/api/email-filters/[id]/route.ts` | `PATCH/DELETE /api/email-filters/{id}` | `email_filter` | — | — |
+| FR-N4 | Dry-run filter preview — **deferred; not in Phase 1A scope** | — | — | — | — | — |
+| FR-N5 | Publish filter config as immutable version snapshot | `src/app/api/email-filters/[id]/versions/route.ts` | `POST /api/email-filters/{id}/versions` | `email_filter_version` | — | — |
+| FR-N6 | List / view filter version history | `src/app/api/email-filters/[id]/versions/route.ts` | `GET /api/email-filters/{id}/versions` | `email_filter_version` | — | — |
+
+### FR-O. Manual classification
+
+| ID | Requirement | Component / lib `[Planned]` | API route `[Planned]` | DB model(s) `[Planned]` | Unit test `[Planned]` | E2E test `[Planned]` |
+|----|-------------|------------------------------|----------------------|------------------------|----------------------|---------------------|
+| FR-O1 | Classify email as FINANCIAL / NON_FINANCIAL / UNCERTAIN / UNREVIEWED | `src/app/api/gmail/email/[sourceId]/classify/route.ts` | `POST /api/gmail/email/{sourceId}/classify` | `email_manual_classification` | — | — |
+| FR-O2 | Classification is append-only: no UPDATE or DELETE on email_manual_classification | (route enforces insert-only) | — | `email_manual_classification` | — | — |
+| FR-O3 | Current classification = most recent row per email_source_id | (query: ORDER BY classified_at DESC LIMIT 1) | `GET /api/gmail/email/{sourceId}` includes current classification | `email_manual_classification` | — | — |
+
+### Phase 1A NFR additions
+
+| ID | Requirement | Component / lib `[Planned]` | Notes |
+|----|-------------|------------------------------|-------|
+| NFR-REL-8 | QStash at-least-once delivery: all worker operations must be idempotent | `src/lib/scan/{scanner,fetcher}.ts` (INSERT ON CONFLICT DO NOTHING, optimistic concurrency) | Covers FR-L5 |
+| NFR-REL-9 | Worker lease TTL: scan-level 55s, item-level 50s (within Vercel 60s limit) | `email_scan_run.worker_lease_expires_at`, `email_scan_item.worker_lease_expires_at` | Per `14-phase0-assessment.md §11` |
+| NFR-REL-10 | Optimistic concurrency: state_version prevents lost updates under concurrent workers | `email_scan_run.state_version`, `email_scan_item.state_version` (UPDATE WHERE state_version=$expected) | |
+| NFR-SEC-6 | Worker authentication: QStash Receiver JWT verification via `@upstash/qstash` `Receiver.verify({ signature, body, url, clockTolerance })` — checked before any DB access | `src/app/api/gmail/scan/worker/route.ts` | Per `06-security-authentication.md §8.2` |
+| NFR-SEC-7 | QStash credentials are server-only (never NEXT_PUBLIC_*, never logged, never stored in DB) | (env var naming convention + code review gate) | Per D-6 |
+| NFR-SEC-8 | Scan error messages sanitized: no Gmail IDs, OAuth tokens, PII, or credentials in stored errors | `src/lib/scan/sanitize.ts` | Per `14-phase0-assessment.md §12` |
+| NFR-DATA-4 | email_source rows never deleted: RESTRICT on scan_item → source FK prevents accidental deletion | `email_scan_item.email_source_id` FK `REFERENCES email_source ON DELETE RESTRICT` | |
+| NFR-DATA-5 | email_manual_classification is append-only: no UPDATE or DELETE allowed at application layer | Route enforces insert-only | Per FR-O2 |
+| NFR-DATA-6 | Cross-table FK invariants enforced via PostgreSQL constraint triggers (C1): current_version_id same-filter, supersedes_version_id same-filter, scan-run filter_version_id same-filter | DB migration: 3 CONSTRAINT TRIGGER definitions | Per `14-phase0-assessment.md §6` |
+| NFR-DATA-7 | Filter evaluation semantics: exclude rule wins over include; empty include rules = all included; non-empty include = at least one must match; unsupported operator types are non-matching (C7) | `src/lib/scan/filter.ts` | Per `14-phase0-assessment.md §6 email_filter_version` |
+| NFR-REL-11 | Completion guard — two conditions: scan is not complete if any item has status IN (DISCOVERED, FETCHING, RETRY_WAIT) OR (status=FETCHED AND filter_decision=PENDING) (C3) | `src/lib/scan/progress.ts` | Per `14-phase0-assessment.md §7.4` |
+| NFR-REL-12 | QStash deduplication: deterministic message ID = sha256(scanRunId:stage:sequence) as Upstash-Deduplication-Id; DB commit must precede QStash publish (C8, C68) | `src/lib/scan/scheduler.ts` | Per `14-phase0-assessment.md §7.3` |
+
+### Phase 1A test gaps (not covered)
+
+| ID | Gap |
+|----|-----|
+| FR-M4, FR-M5, FR-O1–FR-O3 | Manual classification UI: no E2E coverage planned for Phase 1A minimal UI |
+| FR-N4 (filter preview) | Deferred from Phase 1A — not approved; no coverage required |
+| NFR-REL-8 (idempotency under real at-least-once redelivery) | Integration test with real QStash redelivery is out of scope for Phase 1A |

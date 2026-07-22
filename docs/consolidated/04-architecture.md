@@ -6,6 +6,19 @@
 > **Baseline anchor date:** 2026-07-14
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
 > **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
+> **Phase 0 revision 2026-07-19 pass 6 (C24–C33):**
+> C29: §8 route tree — `DELETE /api/gmail/scan/{id}` and `GET /api/gmail/scan/list` removed;
+>   replaced with `POST /api/gmail/scan/{id}/pause|resume|cancel|retry` sub-routes.
+> **Phase 0 revision 2026-07-19 pass 9 (C48):**
+> C48: Progress response fields updated to canonical names — `fetch_success_count`,
+>   `fetch_failed_count`, `filter_included_count`, `filter_excluded_count`,
+>   `last_error_message_sanitized`; obsolete `total_fetched`, `total_fetch_failed`,
+>   `total_skipped`, `items_included`, `items_excluded`, `items_no_filter`, `error_message`
+>   removed.
+> **Phase 0 revision 2026-07-19:** §8 scan-start flow corrected: initial status `CREATED`
+> (not `PENDING`); progress API field `filter_version_id` → `email_filter_id` + `email_filter_version_id`.
+> **Phase 0 revision 2026-07-18:** §8 (target-state, migration, QStash, live-progress
+> architecture) added per Correction #1 from Phase 0 decision message.
 > **Pass 7 corrections:** 2026-07-15 — Freeze metadata standardized. K-01.
 > **Pass 3 corrections:** 2026-07-14 — resolvedBy=NULL for static tier-0 (not "static");
 > cron diagram corrected to GET; TENANT_KEYED_NOT_ENFORCED note added.
@@ -14,8 +27,10 @@
 > **Pass 6 corrections:** 2026-07-15 — §2.3 parse-audit-trail claim narrowed: missing Gmail
 > batch responses are silently skipped with no ParseLog. I-03.
 
-> As-built. Components cite their source files. State machines and the parse chain are
-> reconstructed from the actual routes/libs, not from prior docs. Tags per `00-index.md`.
+> §1–§7: As-built current state. Components cite their source files. State machines and the
+> parse chain are reconstructed from the actual routes/libs, not from prior docs.
+> §8: Proposed Phase 1A target architecture — all items tagged `[Planned — pending approval]`.
+> Tags per `00-index.md`.
 
 ---
 
@@ -220,3 +235,247 @@ Full data model and route inventory → `05-data-model-apis.md`. Auth/security c
 
 *Cross-references:* the requirements these components satisfy → `02-functional-requirements.md`;
 NFR budgets (60s, CHUNK_SIZE=25, quotas) → `03`; models/routes → `05`; what's stale → `08`.
+
+---
+
+## 8. Phase 1A target architecture `[Planned — pending approval]`
+
+> All items in this section are **`[Planned — pending approval]`**. None are implemented.
+> Source of truth: `14-phase0-assessment.md`. Full acceptance criteria in §15 of that document.
+
+### 8.1 Current-state limitations
+
+Three architectural gaps drive Phase 1A:
+
+1. **Scanning and ingestion are fused in a single handler.** `advance/route.ts` (706 lines) performs
+   Gmail ID discovery, full message fetch, static parse, LLM extraction, and `Transaction` upsert in
+   one 60s Vercel function. A fetch timeout aborts all downstream processing with no partial save.
+2. **Progress depends on an open browser connection.** The user must keep the sync page open; there
+   is no durable progress record that survives navigation or page reload.
+3. **No feature flags exist.** `LLM_PARSING_ENABLED` and `LEGACY_TRANSACTION_INGESTION_ENABLED` are
+   absent from the codebase. The LLM cannot be disabled without a code deploy.
+
+### 8.2 Target-state architecture diagram `[Planned — pending approval]`
+
+```
+Browser (React 19 UI, Tailwind v4)
+        │  HTTPS
+        ▼
+Next.js App Router
+  ├─ (existing) pages: dashboard, transactions, assets, settings, onboarding, login
+  ├─ /api/auth/*                     → NextAuth v5 (Google)
+  ├─ /api/gmail/sync/*               → existing sync state machine (unchanged)
+  ├─ /api/gmail/reconcile            → reconciliation (unchanged)
+  ├─ /api/transactions/*             → txn list/search/edit/export (unchanged)
+  ├─ /api/analytics/*                → dashboard aggregates (unchanged)
+  ├─ /api/assets/*                   → net worth (unchanged)
+  ├─ /api/categories, /api/vpa       → (unchanged)
+  ├─ /api/settings/*                 → filters, keywords, exclusions, passwords (unchanged)
+  │
+  ├─ NEW: /api/gmail/scan             POST — create EmailScanRun, enqueue first QStash msg
+  ├─ NEW: /api/gmail/scan/worker     POST — QStash-authenticated tick (replaces advance role)
+  ├─ NEW: /api/gmail/scan/{id}       GET — read status
+  ├─ NEW: /api/gmail/scan/{id}/pause|resume|cancel|retry  POST — scan management
+  ├─ NEW: /api/gmail/email/{id}      GET — email source metadata
+  ├─ NEW: /api/gmail/email/list      GET — paginated email inventory
+  ├─ NEW: /api/gmail/email/stats     GET — aggregate counts
+  ├─ NEW: /api/email-filters         GET/POST — per-user filters
+  └─ NEW: /api/email-filters/{id}/versions  POST/GET — publish/list filter versions
+        │                                                    │
+        │ Prisma 7                                           │ Prisma 7
+        ▼                                                    ▼
+Neon PostgreSQL (27 existing + 6 new tables = 33 total)      │
+                                                             │
+        │                                                    │
+        ├── src/lib/gmail.ts ──► Gmail API (readonly, unchanged)
+        ├── src/lib/staticParser.ts / exactResultCache.ts / parseTemplateCache.ts
+        │   (legacy path — gated behind LEGACY_TRANSACTION_INGESTION_ENABLED)
+        ├── src/lib/llm/* ──► Gemini API (primary) / OpenAI API (fallback)
+        │   (gated behind LLM_PARSING_ENABLED)
+        ├── src/lib/featureFlags.ts  NEW — isLlmParsingEnabled(), isLegacyTransactionIngestionEnabled()
+        ├── src/lib/scan/            NEW — scan domain service (scheduler-agnostic)
+        │     ├── scanner.ts         — scanning phase: Gmail ID discovery → email_scan_item rows
+        │     ├── fetcher.ts         — fetching phase: Gmail Batch API → email_source metadata (Phase 1A stores no body)
+        │     ├── scheduler.ts       — SchedulerService interface (QStash impl + no-op for tests)
+        │     └── progress.ts        — counter reconciliation, live-progress reads
+        └── src/lib/scan/qstash.ts  NEW — QStashSchedulerService implements SchedulerService
+
+Upstash QStash (free tier: 1,000 msg/day, at-least-once delivery)
+  enqueue ──► /api/gmail/scan/worker  ──► QStashSchedulerService.enqueueContinuation()
+```
+
+**Feature flag gates** `[Planned — pending approval]`:
+- `LLM_PARSING_ENABLED=true` (default: false) — allows Tier-3 LLM calls in `llm/router.ts`
+- `LEGACY_TRANSACTION_INGESTION_ENABLED=true` (default: false) — allows existing `advance/route.ts`
+  parse path including static parser, template cache, exact result cache, `upsertTransactionV2`,
+  and `ParseLog` creation
+
+Both flags default to **false** (safe). The existing sync path (`/api/gmail/sync/*`) is protected
+by `LEGACY_TRANSACTION_INGESTION_ENABLED`; Phase 1A does not remove it — both paths coexist.
+
+### 8.3 Migration / coexistence architecture `[Planned — pending approval]`
+
+Phase 1A uses an **additive, non-breaking migration strategy**:
+
+```
+Before Phase 1A:                   During Phase 1A (coexistence):
+─────────────────                  ──────────────────────────────
+/api/gmail/sync/* ──► ParseLog     /api/gmail/sync/* ──► ParseLog
+                   ──► Transaction  (gated: LEGACY_TRANSACTION_INGESTION_ENABLED=true)
+                                                                   │
+                                   NEW /api/gmail/scan/* ──► email_scan_run
+                                                          ──► email_scan_item
+                                                          ──► email_source
+                                   (LLM_PARSING_ENABLED=false during Phase 1A)
+```
+
+**Key coexistence invariants:**
+- The 6 new Phase 1A tables have **no foreign key references** to `SyncJob`, `SyncJobMessage`,
+  `ParseLog`, or `Transaction`. Adding them cannot corrupt existing sync state.
+- `advance/route.ts` is modified **only** to add the `LEGACY_TRANSACTION_INGESTION_ENABLED` guard
+  at the top (returns 503 if flag is false). No logic changes to the existing path.
+- The SEC-2 fix (`querySecret` removal from `advance/route.ts`) is applied regardless of flag state.
+- `ParseLog`, `SyncJob`, `SyncJobMessage`, `Transaction` rows are **not touched** by Phase 1A
+  schema migration (additive migration only; see `14-phase0-assessment.md §17`).
+
+**Rollback:** Disable `LEGACY_TRANSACTION_INGESTION_ENABLED=false` to stop legacy path.
+Drop Phase 1A feature flag `LLM_PARSING_ENABLED=false` to disable AI. New tables can be retained
+or dropped; they have no FKs into existing tables so dropping them is non-destructive.
+
+### 8.4 QStash scheduling architecture `[Planned — pending approval]`
+
+QStash replaces the Vercel Cron + browser-session-driven `advance` pattern for the new scan path.
+
+**Message flow:**
+
+```
+POST /api/gmail/scan
+   │ 1. In one DB transaction:
+   │      a. Create email_scan_run (status=CREATED, batch_sequence=0)
+   │      b. Persist initial pending continuation:
+   │           pending_continuation_sequence = 0
+   │           pending_continuation_stage    = 'DISCOVERY'
+   │           pending_continuation_not_before = now()
+   │           pending_continuation_published_at = NULL
+   │      c. Commit.
+   │ 2. Publish first QStash message using dedup ID sha256(scanRunId:DISCOVERY:0).
+   │ 3. Compare-and-set: mark pending_continuation_published_at = now()
+   │      WHERE pending_continuation_sequence = 0 AND published_at IS NULL.
+   │ 4. Return HTTP 202 { scanRunId, status: "CREATED", schedulingStatus: "PENDING_RETRY" }
+   │      if publication fails — scan stays durable; retry via POST /api/gmail/scan/{id}/retry.
+   ▼
+Upstash QStash
+   │ Delivers POST /api/gmail/scan/worker
+   │ Headers: Upstash-Signature (JWT, verified via Receiver class)
+   ▼
+POST /api/gmail/scan/worker
+   │ 1. Verify JWT signature via Receiver.verify({ signature, body, url, clockTolerance })
+   │ 2. Parse { scanRunId, stage, sequence } and validate against authoritative DB state
+   │ 3. Acquire worker lease (atomic UPDATE WHERE lease expired / NULL)
+   │ 4. Execute one bounded unit:
+   │      - DISCOVERING phase: fetch one Gmail List API page (≤500 IDs),
+   │                            upsert email_scan_item rows
+   │      - FETCHING phase: fetch ≤25 full messages (Gmail Batch API),
+   │                         upsert email_source metadata
+   │ 5. Commit item results, counters, batch_sequence, pending continuation and lease release atomically.
+   │ 6. Publish the persisted continuation via SchedulerService.enqueueContinuation().
+   │ 7. Compare-and-set pending_continuation_published_at.
+   │ 8. Return HTTP 200 (QStash marks delivered; no retry)
+   │    OR HTTP 489 + Upstash-NonRetryable-Error: true (permanent failure; QStash does not retry)
+   ▼
+(Repeat until COMPLETED / COMPLETED_WITH_ERRORS / FAILED)
+```
+
+**SchedulerService interface** (domain isolation — scan service is not coupled to QStash):
+```typescript
+// src/lib/scan/scheduler.ts  [Planned — pending approval]
+export interface ScanContinuation {
+  scanRunId: string;
+  stage: 'DISCOVERY' | 'FETCH';
+  sequence: string;
+  notBefore: Date;
+}
+
+export interface SchedulerService {
+  enqueueContinuation(continuation: ScanContinuation): Promise<void>;
+  cancelPending(scanRunId: string): Promise<void>;
+}
+```
+
+The QStash implementation derives the deterministic deduplication ID
+(`sha256(scanRunId:stage:sequence)`) from the `ScanContinuation` object.
+Implementations: `QStashSchedulerService` (production), `NoOpSchedulerService` (tests).
+
+**QStash message format:**
+```json
+{ "scanRunId": "<uuid>", "stage": "DISCOVERY", "sequence": "0" }
+```
+
+**Worker lease design** (prevents double-processing under at-least-once delivery):
+- Lease owner: `crypto.randomUUID()` per invocation (NOT `VERCEL_REGION + Date.now()`)
+- Scan-level lease: configured via `WORKER_LEASE_DURATION_SECONDS` env var (default: 55s)
+- Item-level lease: configured via `ITEM_LEASE_DURATION_SECONDS` env var (derived from worker execution budget)
+- Acquisition: atomic `UPDATE email_scan_run SET worker_lease_owner=$1, worker_lease_expires_at=now()+$leaseDuration WHERE id=$scanRunId AND (worker_lease_expires_at IS NULL OR worker_lease_expires_at < now())`
+- `state_version` tracks optimistic concurrency for post-lease state transitions; it is NOT used as a predicate on the lease acquisition query.
+
+**Upstash QStash free-tier constraints** (confirmed 2026-07-16):
+
+| Limit | Value | Phase 1A headroom |
+|-------|-------|-------------------|
+| Messages/day | 1,000 | ~133 per 3,000-email scan (<<1,000/day) |
+| Max message size | 1 MB | <<1 KB per message |
+| Max HTTP response time | 15 min | Each tick completes in <60s |
+| DLQ retention | 3 days | Monitor DLQ for failed scans |
+| Max parallelism | 10 | Single-user POC; no contention |
+| Max delay | 7 days | Not used; ticks are near-immediate |
+
+### 8.5 Live-progress architecture `[Planned — pending approval]`
+
+Browser polls a **read-only, durable** progress endpoint. Progress survives navigation and page reloads
+because it is persisted in `email_scan_run` counters, not in server memory or SSE streams.
+
+**Polling flow:**
+
+```
+Browser                     /api/gmail/scan/{scanRunId}         Neon PostgreSQL
+   │                                │                                   │
+   ├─ GET (every 3s) ──────────────►│                                   │
+   │                                ├─ SELECT email_scan_run ──────────►│
+   │                                │   WHERE id=$scanRunId             │
+   │                                │   AND user_id=$sessionUserId ◄────┤
+   │                                │                                   │
+   │                                ├─ counter reconciliation query ───►│
+   │                                │   (recomputes from email_scan_item│
+   │                                │    states to detect QStash drift) │◄───┤
+   │◄── 200 { status, counters } ───┤                                   │
+   │    (30+ fields; no Gmail IDs,  │                                   │
+   │     no OAuth tokens,           │                                   │
+   │     no QStash credentials)     │                                   │
+```
+
+**Progress response fields** (partial — full contract in `14-phase0-assessment.md §8`):
+```
+status, total_discovered, fetch_success_count, fetch_failed_count,
+filter_included_count, filter_excluded_count, created_at, updated_at,
+worker_last_active_at, estimated_completion_at, last_error_code, last_error_message_sanitized,
+email_filter_id, email_filter_version_id, batch_sequence, state_version,
+pending_continuation_sequence, pending_continuation_stage,
+pending_continuation_not_before, pending_continuation_published_at
+```
+
+**Counter reconciliation:** The progress endpoint recomputes `email_scan_run` aggregate counters
+from `email_scan_item` state rows on every poll. This detects drift caused by QStash at-least-once
+redelivery (a worker tick may execute twice; the second run is idempotent but counters may diverge).
+Reconciliation is a single read-only query — no writes on GET.
+
+**Security:** The endpoint enforces `WHERE user_id = $sessionUserId`. A user cannot read another
+user's scan progress by guessing a `scanRunId`. No Gmail message IDs, OAuth tokens, account numbers,
+or QStash credentials appear in the response. Error messages are sanitized before storage (see §8.4
+of `14-phase0-assessment.md` and `06-security-authentication.md §8`).
+
+---
+
+*Cross-references (Phase 1A):* full acceptance criteria → `14-phase0-assessment.md §15`; new data
+models → `05-data-model-apis.md §1.9`; security controls → `06-security-authentication.md §8`;
+deployment config → `11-operations-deployment.md §9`; requirements traceability →
+`13-traceability-matrix.md §4`.

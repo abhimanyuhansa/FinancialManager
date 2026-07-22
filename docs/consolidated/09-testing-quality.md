@@ -17,6 +17,51 @@
 > (2 files, 17 blocks); non-LLM row corrected to 81 blocks. H-04.
 > **Pass 6 corrections:** 2026-07-15 — §2.2 per-file block-count column removed (estimates
 > summed to ~101 while section claimed 81 — not auditable); only total 81 retained. I-06.
+> **Phase 0 revision 2026-07-19:** §4 Phase 1A acceptance criteria: `email_source.fetch_status`
+> corrected to `email_source.last_fetch_status` (C4 field rename); `email_manual_review`
+> reference corrected to `email_manual_classification` (Q1–Q4 rename). C1–C8 corrections
+> incorporated in `14-phase0-assessment.md §12`; new ACs: AC-08a–d (cancellation), AC-26a–h
+> (filter evaluation), AC-33a–b (QStash dedup), AC-39 (completion guard — updated to three conditions in pass 5 C14). Phase
+> 1A test plan for `featureFlags.ts` and scan worker updated to cover constraint trigger
+> validation, CANCELLING path, and QStash signature verification as required test targets.
+> **Phase 0 revision 2026-07-19 pass 4 (C9–C13):** New ACs added to `14-phase0-assessment.md §12`:
+> AC-74a–e (Gmail disconnection model: `getGmailToken()` blocks, soft-disconnect atomicity,
+>   reconnection, `email_source` RESTRICT, `classified_by` ON DELETE SET NULL);
+> AC-75a–c (filter version immutability: UPDATE trigger raises, SECURITY DEFINER bypass works,
+>   `started_at` NULL after create and set on CREATED→DISCOVERING);
+> AC-76a–b (item CANCELLED: all non-terminal items transition on cancel, worker returns 200 on
+>   CANCELLED scan). QStash authentication ACs (AC-57/AC-58) updated — use `Receiver` SDK, not
+> manual HMAC. Worker protocol ACs (AC-32) updated — 10-step sequence.
+> **Phase 0 revision 2026-07-19 pass 5 (C14–C23):**
+> C14: AC-39 updated — completion guard has three conditions: unfinished items, PENDING filter
+>   decisions, AND CANCELLED items; progress formula corrected (filter_excluded_count is subset
+>   of fetch_success_count).
+> C16: Filter API test file paths updated to `/api/email-filters` hierarchy; rule-draft CRUD test
+>   targets removed (no draft persistence in six-table schema).
+> C17: AC-57/AC-58 updated — `Receiver.verify()` requires `url` parameter; non-retryable =
+>   HTTP 489 + `Upstash-NonRetryable-Error: true`; `Upstash-Retries` header; failure callback
+>   uses `Receiver` JWT.
+> C18: AC-33a–b updated — `Upstash-Message-Id` must not gate processing; dedup via DB state only.
+> C19: AC-75b updated — SECURITY DEFINER does not bypass UPDATE trigger; erasure function removed.
+> C20: New AC target: UNIQUE(email_filter_id,id) on email_filter_version; UNIQUE(user_id,id) on
+>   email_source; 4 declarative composite FK constraints validated.
+> C21: Explicit erasure transaction added as required test target; Account RESTRICT ordering verified.
+> C23: AC-26g updated — unsupported rule type → PERMANENTLY_FAILED; AC-26i added —
+>   incompatible `rule_schema_version`/`filter_evaluator_version` → PERMANENTLY_FAILED with
+>   IncompatibleFilterVersionError; AC-26j added — scan snapshot records both version fields.
+
+> **Phase 0 revision 2026-07-19 pass 6 (C24–C33):**
+> C30: Phase 1A acceptance criteria rewritten: DATABASE_URL must point to a dedicated isolated
+>   test database; transaction-count check is a delta (Δ = 0) not an absolute count; correct
+>   count target is email_scan_item count = Gmail-discovered ID count (not email_source count);
+>   existing email_source reuse required; fetch failures visible through email_scan_item only
+>   (not email_manual_classification); complete AC-01–AC-76 matrix required.
+> C32: AC-26i reference updated: filter version incompatibility → scan FAILED (not item
+>   PERMANENTLY_FAILED).
+> **Phase 0 revision 2026-07-19 pass 7 (C34–C39):**
+> C38: Phase 1A unit test targets — `/api/gmail/scan/tick` renamed to `POST /api/gmail/scan/worker`;
+>   `/api/gmail/scan/start` renamed to `POST /api/gmail/scan`; DATABASE_URL note corrected to
+>   "must point to dedicated isolated test database, never the development database".
 
 > Authoritative sources: `jest.config.ts`, `playwright.config.ts`, `tests/` (26 files),
 > `e2e/` (15 specs). Counts verified at baseline commit.
@@ -195,7 +240,7 @@ npx playwright test --debug
 | `ENABLE_TEST_AUTH_SEED` | Must be `1`; enables `/api/test/auth-seed` |
 | `CRON_SECRET` | Used by auth-seed + advance route in tests |
 | `NEXTAUTH_URL` | Must point to the running test server |
-| `DATABASE_URL` | Points to test DB (may be same as dev) |
+| `DATABASE_URL` | Must point to dedicated isolated test database; must never point to the development database |
 
 ---
 
@@ -227,6 +272,66 @@ schema — all have dedicated test files.
 | E2E parallelism | `workers: 1` (serial) | [Confirmed] — prevents DB race conditions |
 | **Coverage threshold** | **None configured** | **[Gap]** — Jest will pass even at 0% coverage |
 | **CI integration** | **Unverified** | E2E spec requires running server; unclear if CI runs it |
+
+---
+
+## 7. Phase 1A required tests (added 2026-07-16)
+
+Per Phase 0 assessment `14-phase0-assessment.md §9`. These tests are **[Not Implemented]**
+pending Phase 1A approval and must be written before Phase 1A ships.
+
+### LLM=0 regression test (blocking gate — must pass before Phase 1A ships)
+
+```
+tests/lib/featureFlags.test.ts
+```
+
+This test must prove that when `LLM_PARSING_ENABLED=false`, no AI provider can be invoked
+under any code path. Specifically:
+- `isLlmParsingEnabled()` returns false
+- `router.callLlm()` throws `LlmDisabledError` without calling Gemini or OpenAI
+- Gemini provider mock is not called
+- OpenAI provider mock is not called
+
+### Phase 1A unit test targets
+
+| Module | Tests |
+|--------|-------|
+| `src/lib/featureFlags.ts` | Flag true/false/missing env var |
+| `POST /api/gmail/scan/worker` route | Scanning phase, fetching phase, lease acquisition, Gmail 429 error |
+| `POST /api/gmail/scan` route | Creates scan run, validates params, auth gate |
+| `email_source` upsert logic | Idempotency on re-run (no duplicates on second scan) |
+
+### Phase 1A E2E test
+
+```
+e2e/15-email-scan.spec.ts
+```
+- Start scan → progress updates → completion
+- Email inventory table loads, is filterable by domain
+- Verify zero `Transaction` rows created during scan (critical acceptance criterion)
+
+### Acceptance criteria for Phase 1A (non-negotiable)
+
+- `DATABASE_URL` must point to a **dedicated isolated test database** — not the development database.
+  Tests must not run against shared state that could be polluted by previous runs.
+- `LLM_PARSING_ENABLED=false` is set in test environment
+- After complete scan tick loop: transaction-count **delta = 0** — the number of `Transaction` rows
+  after the scan must equal the number before the scan started. (Absolute count may be non-zero
+  if the test database has pre-existing transactions from earlier test setup.)
+- `email_scan_item` count = exactly the number of Gmail message IDs returned by the Gmail
+  List API mock. (Not email_source count — email_source may differ if sources are reused
+  across scans.)
+- **Existing `email_source` reuse**: a second scan for the same user and Gmail account must
+  not create duplicate `email_source` rows. The `ON CONFLICT DO NOTHING` upsert must be
+  verified — row count does not increase for previously seen message IDs.
+- Fetch failures must be visible **through `email_scan_item` only** — `email_scan_item.status`
+  = `PERMANENTLY_FAILED` for missing or unresolvable batch responses. No `email_manual_classification`
+  row is created by a fetch failure.
+- **Idempotent re-scan**: two complete scans of the same inbox produce no duplicate `email_source`
+  rows (UNIQUE constraint on `(user_id, gmail_account_id, gmail_message_id)`).
+- **Complete AC-01 through AC-76 matrix**: every acceptance criterion listed in
+  `14-phase0-assessment.md §15` must have a mapped test. No AC may be left untested.
 
 ---
 

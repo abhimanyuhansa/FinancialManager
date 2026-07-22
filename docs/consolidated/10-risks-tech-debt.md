@@ -6,6 +6,14 @@
 > **Documentation finalized and frozen:** 2026-07-15 after Pass 7
 > **Documentation commit:** `732056b82517355842dcf3ac1858ee56b2f0a5da`
 > **Pass 7 corrections:** 2026-07-15 — Freeze metadata standardized. K-01.
+> **Phase 0 revision 2026-07-19:** R-6 corrected: 6 new tables (not 5); R-8 corrected:
+> `email_filter_rule` replaced by `email_filter`/`email_filter_version` two-table design (Q1–Q4).
+> C1–C8 corrections applied to `14-phase0-assessment.md`. Key risk updates: R-6 (Neon connection
+> limits) remains LOW — constraint triggers add minimal overhead; R-8 (EmailFilter confusion)
+> remains LOW — no new risk from C7 filter evaluation semantics (excluded-wins rule is documented).
+> QStash DLQ risk (failure callback + dedup-window-expiry documented in C8) — no new risk register
+> entry required; handled by `14-phase0-assessment.md §7.5 Case 6`. D-1 pending final schema
+> approval does not change risk levels in this register.
 > **Pass 3 corrections:** 2026-07-14 — REL-6 and REL-7 added (final-chunk silent data loss;
 > LLM result array length mismatch).
 > **Pass 4 corrections:** 2026-07-15 — REL-7 removed (invalid — `validateProviderResults()`
@@ -130,4 +138,23 @@ Per `08-implementation-status.md §1.4`:
 
 *Cross-references:* security findings detail → `06-security-authentication.md §5`; partial
 implementations → `08-implementation-status.md §1.3`; test gaps → `09-testing-quality.md §5`;
-open questions for PM decisions → `12-open-questions.md`.
+open questions for PM decisions → `12-open-questions.md`; Phase 0 assessment →
+`14-phase0-assessment.md`.
+
+---
+
+## 8. Phase 1A risks (added 2026-07-16)
+
+Per Phase 0 assessment `14-phase0-assessment.md §10`. These risks apply during and after
+Phase 1A implementation. They do not affect the existing codebase until Phase 1A begins.
+
+| # | Risk | Severity | Mitigation |
+|---|------|----------|-----------|
+| R-1 | **`LLM_PARSING_ENABLED` flag missing** — LLM unconditionally fires when Tier-3 is reached; no mechanism to disable AI parsing without a code deploy | **CRITICAL** (architectural gap) | Create flag as absolute first code change; LLM=0 regression test must pass before any Phase 1A code ships |
+| R-2 | **Existing SyncJob / SyncJobMessage state** — prod DB may have in-progress sync jobs; Phase 1A migration must not interfere with or corrupt these | **HIGH** | Additive-only migration; new tables have no FK references to SyncJob/SyncJobMessage |
+| R-3 | **Worker lease contention** — two concurrent Vercel functions could both attempt to acquire the scan tick lease and double-fetch | **MEDIUM** | Lease acquisition uses atomic UPDATE … WHERE clause; exactly one wins |
+| R-4 | **Gmail rate limits during fetch phase** — bulk fetch of 25 messages per tick may trigger Gmail 429 | **MEDIUM** | Catch 429 → update scan_run.status='failed', record error_message; retry on next client poll |
+| R-5 | **`body_hash` SHA-256 collision** — two different emails produce the same hash (negligible probability) | **LOW** | Acceptable for POC; UNIQUE constraint is on (user_id, gmail_msg_id), not body_hash |
+| R-6 | **Neon connection limits** — Phase 1A adds 6 new tables; free tier may reach connection ceiling under concurrent polling | **LOW** | Prisma connection pooling already in place; no new connections required |
+| R-7 | **Feature flag not set in Vercel** — if `LLM_PARSING_ENABLED` env var is absent, safe default is false (LLM disabled) | **LOW** | Document in `11-operations-deployment.md`; confirm string `"false"` not empty/unset |
+| R-8 | **EmailFilter confusion during Phase 1A** — operators may confuse new per-user `email_filter`/`email_filter_version` tables with legacy SYSTEM_GLOBAL `EmailFilter` | **LOW** | Rename UI sections clearly; add deprecation notice to EmailFilter settings tab |
