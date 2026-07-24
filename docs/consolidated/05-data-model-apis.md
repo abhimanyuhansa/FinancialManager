@@ -112,6 +112,11 @@
 > C95–C97: SQL-only corrections (exact 22-FK assertion, operational deferred-FK tests, stable-ID
 >   erasure assertions, \gset baseline capture).
 > C98: Metadata updated — 14 status to C1–C98 applied 2026-07-25; SQL header to C81–C98.
+> **Phase 0 revision 2026-07-25 (C99–C104):**
+> C99–C104: SQL-only corrections — temp table replaces \gset for baseline counts; exact
+>   pg_attribute FK validation replaces ILIKE checks; IF NOT EXISTS removed from Account
+>   ADD COLUMN statements; incorrect PL/pgSQL EXCEPTION comment and redundant DELETE removed;
+>   VP5 upgraded to exact trigger-definition assertions; metadata updated to C1–C104.
 > **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
 > **Pass 3 corrections:** 2026-07-14 — 6-tier ownership taxonomy, API method corrections,
 > SyncJobMessage cascade correction. Source: reviewer pass verified against code.

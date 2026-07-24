@@ -4,7 +4,7 @@
 > **Assessed by:** Senior Software Architect (incoming), per master prompt
 > `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`
 > **Baseline commit inspected:** `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
-> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C98 applied 2026-07-25.
+> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C104 applied 2026-07-25.
 > D-1: Pending final consolidation approval. D-2: Approved. D-3: Approved. D-4: Conditionally approved. D-5: Approved. D-6: Approved.
 > Awaiting explicit Phase 1A implementation approval before any code changes begin.
 > **Revision reason (2026-07-18):** D-1 schema rejected and respecified; D-2 changed to
@@ -388,6 +388,25 @@
 >   before `BEGIN`; post-ROLLBACK assertions compare exact baseline counts.
 > C98 — Metadata updated: 14 status → C1–C98 applied 2026-07-25; SQL header → C81–C98;
 >   05 revision note added for C94–C98.
+> **Phase 0 revision 2026-07-25 (C99–C104):**
+> C99 — `\gset`-to-DO approach removed: psql variables are not interpolated inside dollar-quoted
+>   DO blocks. Replaced with `CREATE TEMP TABLE phase1a_dryrun_baseline ON COMMIT PRESERVE ROWS`
+>   before BEGIN; baseline counts inserted before BEGIN; VP15 reads from temp table; temp table
+>   dropped after VP15 succeeds. VP1 now asserts no dryrun-% rows in User or Account at entry.
+> C100 — VP4 named-FK validation upgraded from ILIKE keyword checks to exact
+>   `pg_attribute`/`confdeltype`/`confupdtype` assertions; source columns, referenced table,
+>   referenced columns, ON DELETE action code, ON UPDATE action code, deferrable, and initially-
+>   deferred all validated for all 8 required named FKs.
+> C101 — IF NOT EXISTS removed from `ADD COLUMN disconnected_at` and `ADD COLUMN
+>   disconnection_reason`; migration now fails immediately if branch is not at baseline
+>   (VP1 already asserts column absence).
+> C102 — Incorrect comment "Inner BEGIN/EXCEPTION does NOT roll back DML in PostgreSQL" removed;
+>   redundant `DELETE FROM email_filter_version WHERE id = 'dryrun-fv-bad'` removed.
+> C103 — VP5 upgraded: exact trigger assertions for table, function, timing (BEFORE/AFTER),
+>   level (ROW), event (UPDATE / INSERT OR UPDATE), and deferrable status using pg_trigger +
+>   pg_proc + pg_constraint; wrong-table trigger with correct name fails the test.
+> C104 — Metadata updated: 14 status → C1–C104 applied 2026-07-25; SQL header → C81–C104;
+>   05 revision note added for C99–C104.
 
 ---
 
