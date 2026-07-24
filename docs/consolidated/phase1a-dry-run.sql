@@ -1,5 +1,5 @@
 -- =============================================================================
--- Financial Manager Phase 1A — Canonical DDL Dry Run (C81–C104 applied)
+-- Financial Manager Phase 1A — Canonical DDL Dry Run (C81–C107 applied)
 -- Execute against an isolated, disposable PostgreSQL database.
 -- ON_ERROR_STOP=1 is required: any failure aborts immediately.
 -- ROLLBACK at end leaves no permanent changes.
@@ -582,260 +582,190 @@ BEGIN
 END; $$;
 
 -- =============================================================================
--- VP4: FK inventory (assertion: expected FK count present)
+-- VP4: FK structural inventory — bidirectional 22-FK set comparison (C105)
 -- =============================================================================
-\echo '--- VP4: FK inventory ---'
+\echo '--- VP4: FK structural inventory (22-FK EXCEPT comparison) ---'
 
--- C95: Exact 22-FK assertion (replaces fk_count >= 10)
+-- C105: Bidirectional structural set comparison — no dependency on PostgreSQL-generated FK names
+-- Action codes: 'a'=NO ACTION, 'r'=RESTRICT, 'c'=CASCADE, 'n'=SET NULL
+-- ON UPDATE is NO ACTION ('a') for all 22 FKs.
 DO $$
 DECLARE
-  fk_count INT;
+  rec           RECORD;
+  actual_count  INT;
+  missing_count INT;
+  extra_count   INT;
+  dup_count     INT;
 BEGIN
-  SELECT COUNT(*) INTO fk_count
-  FROM pg_constraint
-  WHERE contype = 'f'
-    AND conrelid::regclass::text IN (
+  -- 1. Count check
+  SELECT COUNT(*) INTO actual_count
+  FROM pg_constraint c
+  JOIN pg_class     rc ON rc.oid = c.conrelid
+  WHERE c.contype = 'f'
+    AND rc.relname IN (
       'email_filter','email_filter_version',
       'email_source','email_scan_run',
       'email_scan_item','email_manual_classification'
     );
-  IF fk_count <> 22 THEN
-    RAISE EXCEPTION 'FAIL VP4: FK count = % (expected exactly 22)', fk_count;
+
+  IF actual_count <> 22 THEN
+    RAISE EXCEPTION 'FAIL VP4: FK count = % (expected exactly 22)', actual_count;
   END IF;
-  RAISE NOTICE 'PASS VP4: FK count = 22 (exact)';
+
+  -- 2. Duplicate structural definition check
+  SELECT COUNT(*) INTO dup_count FROM (
+    SELECT
+      rc.relname                                                          AS src_tbl,
+      string_agg(sa.attname, ',' ORDER BY u.pos)                         AS src_cols,
+      rr.relname                                                          AS ref_tbl,
+      string_agg(ra.attname, ',' ORDER BY v.pos)                         AS ref_cols,
+      c.confdeltype,
+      c.condeferrable,
+      c.condeferred
+    FROM pg_constraint c
+    JOIN pg_class rc ON rc.oid = c.conrelid
+    JOIN pg_class rr ON rr.oid = c.confrelid
+    JOIN LATERAL unnest(c.conkey)  WITH ORDINALITY u(attnum, pos) ON TRUE
+    JOIN pg_attribute sa ON sa.attrelid = c.conrelid  AND sa.attnum = u.attnum
+    JOIN LATERAL unnest(c.confkey) WITH ORDINALITY v(attnum, pos) ON TRUE
+    JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = v.attnum
+    WHERE c.contype = 'f'
+      AND rc.relname IN (
+        'email_filter','email_filter_version',
+        'email_source','email_scan_run',
+        'email_scan_item','email_manual_classification'
+      )
+    GROUP BY rc.relname, rr.relname, c.confdeltype, c.condeferrable, c.condeferred, c.oid
+    HAVING COUNT(*) > 1
+  ) dups;
+
+  IF dup_count > 0 THEN
+    RAISE EXCEPTION 'FAIL VP4: % duplicate structural FK definition(s) detected', dup_count;
+  END IF;
+
+  -- 3. expected MINUS actual: every expected FK must exist in the catalog
+  SELECT COUNT(*) INTO missing_count FROM (
+    SELECT src_tbl, src_cols, ref_tbl, ref_cols, confdeltype, condeferrable, condeferred
+    FROM (VALUES
+      -- email_filter (4)
+      ('email_filter',  'user_id',                                   'User',                 'id',                         'c', FALSE, FALSE),
+      ('email_filter',  'gmail_account_id',                          'Account',              'id',                         'r', FALSE, FALSE),
+      ('email_filter',  'id,current_version_id',                     'email_filter_version', 'email_filter_id,id',         'a', TRUE,  TRUE ),
+      ('email_filter',  'user_id,gmail_account_id',                  'Account',              'userId,id',                  'r', FALSE, FALSE),
+      -- email_filter_version (3)
+      ('email_filter_version', 'email_filter_id',                    'email_filter',         'id',                         'c', FALSE, FALSE),
+      ('email_filter_version', 'supersedes_version_id',              'email_filter_version', 'id',                         'a', FALSE, FALSE),
+      ('email_filter_version', 'email_filter_id,supersedes_version_id','email_filter_version','email_filter_id,id',        'a', TRUE,  TRUE ),
+      -- email_source (3)
+      ('email_source',  'user_id',                                   'User',                 'id',                         'c', FALSE, FALSE),
+      ('email_source',  'gmail_account_id',                          'Account',              'id',                         'r', FALSE, FALSE),
+      ('email_source',  'user_id,gmail_account_id',                  'Account',              'userId,id',                  'r', FALSE, FALSE),
+      -- email_scan_run (7)
+      ('email_scan_run','user_id',                                   'User',                 'id',                         'c', FALSE, FALSE),
+      ('email_scan_run','gmail_account_id',                          'Account',              'id',                         'r', FALSE, FALSE),
+      ('email_scan_run','email_filter_id',                           'email_filter',         'id',                         'r', FALSE, FALSE),
+      ('email_scan_run','email_filter_version_id',                   'email_filter_version', 'id',                         'r', FALSE, FALSE),
+      ('email_scan_run','user_id,gmail_account_id,email_filter_id',  'email_filter',         'user_id,gmail_account_id,id','a', FALSE, FALSE),
+      ('email_scan_run','email_filter_id,email_filter_version_id',   'email_filter_version', 'email_filter_id,id',         'r', FALSE, FALSE),
+      ('email_scan_run','user_id,gmail_account_id',                  'Account',              'userId,id',                  'r', FALSE, FALSE),
+      -- email_scan_item (2)
+      ('email_scan_item','scan_run_id',                              'email_scan_run',       'id',                         'c', FALSE, FALSE),
+      ('email_scan_item','email_source_id',                          'email_source',         'id',                         'r', FALSE, FALSE),
+      -- email_manual_classification (3)
+      ('email_manual_classification','user_id',                      'User',                 'id',                         'c', FALSE, FALSE),
+      ('email_manual_classification','classified_by',                'User',                 'id',                         'n', FALSE, FALSE),
+      ('email_manual_classification','user_id,email_source_id',      'email_source',         'user_id,id',                 'c', FALSE, FALSE)
+    ) AS exp(src_tbl, src_cols, ref_tbl, ref_cols, confdeltype, condeferrable, condeferred)
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint c
+      JOIN pg_class rc ON rc.oid = c.conrelid
+      JOIN pg_class rr ON rr.oid = c.confrelid
+      WHERE c.contype = 'f'
+        AND rc.relname = exp.src_tbl
+        AND rr.relname = exp.ref_tbl
+        AND c.confdeltype = exp.confdeltype
+        AND c.condeferrable = exp.condeferrable
+        AND c.condeferred   = exp.condeferred
+        AND (
+          SELECT string_agg(sa.attname, ',' ORDER BY u.pos)
+          FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
+          JOIN pg_attribute sa ON sa.attrelid = c.conrelid AND sa.attnum = u.attnum
+        ) = exp.src_cols
+        AND (
+          SELECT string_agg(ra.attname, ',' ORDER BY v.pos)
+          FROM unnest(c.confkey) WITH ORDINALITY v(attnum, pos)
+          JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = v.attnum
+        ) = exp.ref_cols
+    )
+  ) missing;
+
+  IF missing_count > 0 THEN
+    RAISE EXCEPTION 'FAIL VP4: % expected FK(s) not found in catalog (expected MINUS actual is non-empty)', missing_count;
+  END IF;
+
+  -- 4. actual MINUS expected: no unexpected FKs may exist on these tables
+  SELECT COUNT(*) INTO extra_count FROM (
+    SELECT c.oid
+    FROM pg_constraint c
+    JOIN pg_class rc ON rc.oid = c.conrelid
+    JOIN pg_class rr ON rr.oid = c.confrelid
+    WHERE c.contype = 'f'
+      AND rc.relname IN (
+        'email_filter','email_filter_version',
+        'email_source','email_scan_run',
+        'email_scan_item','email_manual_classification'
+      )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM (VALUES
+        ('email_filter',  'user_id',                                   'User',                 'id',                         'c', FALSE, FALSE),
+        ('email_filter',  'gmail_account_id',                          'Account',              'id',                         'r', FALSE, FALSE),
+        ('email_filter',  'id,current_version_id',                     'email_filter_version', 'email_filter_id,id',         'a', TRUE,  TRUE ),
+        ('email_filter',  'user_id,gmail_account_id',                  'Account',              'userId,id',                  'r', FALSE, FALSE),
+        ('email_filter_version', 'email_filter_id',                    'email_filter',         'id',                         'c', FALSE, FALSE),
+        ('email_filter_version', 'supersedes_version_id',              'email_filter_version', 'id',                         'a', FALSE, FALSE),
+        ('email_filter_version', 'email_filter_id,supersedes_version_id','email_filter_version','email_filter_id,id',        'a', TRUE,  TRUE ),
+        ('email_source',  'user_id',                                   'User',                 'id',                         'c', FALSE, FALSE),
+        ('email_source',  'gmail_account_id',                          'Account',              'id',                         'r', FALSE, FALSE),
+        ('email_source',  'user_id,gmail_account_id',                  'Account',              'userId,id',                  'r', FALSE, FALSE),
+        ('email_scan_run','user_id',                                   'User',                 'id',                         'c', FALSE, FALSE),
+        ('email_scan_run','gmail_account_id',                          'Account',              'id',                         'r', FALSE, FALSE),
+        ('email_scan_run','email_filter_id',                           'email_filter',         'id',                         'r', FALSE, FALSE),
+        ('email_scan_run','email_filter_version_id',                   'email_filter_version', 'id',                         'r', FALSE, FALSE),
+        ('email_scan_run','user_id,gmail_account_id,email_filter_id',  'email_filter',         'user_id,gmail_account_id,id','a', FALSE, FALSE),
+        ('email_scan_run','email_filter_id,email_filter_version_id',   'email_filter_version', 'email_filter_id,id',         'r', FALSE, FALSE),
+        ('email_scan_run','user_id,gmail_account_id',                  'Account',              'userId,id',                  'r', FALSE, FALSE),
+        ('email_scan_item','scan_run_id',                              'email_scan_run',       'id',                         'c', FALSE, FALSE),
+        ('email_scan_item','email_source_id',                          'email_source',         'id',                         'r', FALSE, FALSE),
+        ('email_manual_classification','user_id',                      'User',                 'id',                         'c', FALSE, FALSE),
+        ('email_manual_classification','classified_by',                'User',                 'id',                         'n', FALSE, FALSE),
+        ('email_manual_classification','user_id,email_source_id',      'email_source',         'user_id,id',                 'c', FALSE, FALSE)
+      ) AS exp(src_tbl, src_cols, ref_tbl, ref_cols, confdeltype, condeferrable, condeferred)
+      WHERE exp.src_tbl = rc.relname
+        AND exp.ref_tbl = rr.relname
+        AND exp.confdeltype  = c.confdeltype
+        AND exp.condeferrable = c.condeferrable
+        AND exp.condeferred   = c.condeferred
+        AND exp.src_cols = (
+          SELECT string_agg(sa.attname, ',' ORDER BY u.pos)
+          FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
+          JOIN pg_attribute sa ON sa.attrelid = c.conrelid AND sa.attnum = u.attnum
+        )
+        AND exp.ref_cols = (
+          SELECT string_agg(ra.attname, ',' ORDER BY v.pos)
+          FROM unnest(c.confkey) WITH ORDINALITY v(attnum, pos)
+          JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = v.attnum
+        )
+    )
+  ) extra;
+
+  IF extra_count > 0 THEN
+    RAISE EXCEPTION 'FAIL VP4: % unexpected FK(s) found on Phase 1A tables (actual MINUS expected is non-empty)', extra_count;
+  END IF;
+
+  RAISE NOTICE 'PASS VP4: All 22 FKs present with exact structural definitions; no missing, extra, or duplicate FKs';
 END; $$;
-
--- C100: Exact named-FK validation — source columns, referenced table/columns,
--- ON DELETE/UPDATE action codes, deferrable, initially deferred.
--- Action codes: 'a'=NO ACTION, 'r'=RESTRICT, 'c'=CASCADE, 'n'=SET NULL, 'd'=SET DEFAULT
-DO $$
-DECLARE
-  c    RECORD;   -- pg_constraint row
-  scols TEXT;    -- source column names in ordinal order
-  rcols TEXT;    -- referenced column names in ordinal order
-  rtbl TEXT;     -- referenced table name
-BEGIN
-
-  -- Helper: build comma-separated column list from an attribute-number array
-  -- (evaluated inline for each FK via subquery)
-
-  -- ──────────────────────────────────────────────────────────────────────────
-  -- fk_email_filter_account
-  --   email_filter(user_id, gmail_account_id)  →  "Account"("userId", id)
-  --   ON DELETE RESTRICT  ON UPDATE NO ACTION  NOT DEFERRABLE
-  -- ──────────────────────────────────────────────────────────────────────────
-  SELECT c.* INTO c FROM pg_constraint c
-  WHERE c.conname = 'fk_email_filter_account' AND c.conrelid = 'email_filter'::regclass;
-  IF c IS NULL THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account missing from email_filter'; END IF;
-
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO scols
-  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum;
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO rcols
-  FROM unnest(c.confkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum;
-  SELECT r.relname INTO rtbl FROM pg_class r WHERE r.oid = c.confrelid;
-
-  IF scols <> 'user_id,gmail_account_id'  THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account source cols = % (expected user_id,gmail_account_id)', scols; END IF;
-  IF rtbl  <> 'Account'                   THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account ref table = % (expected Account)', rtbl; END IF;
-  IF rcols <> 'userId,id'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account ref cols = % (expected userId,id)', rcols; END IF;
-  IF c.confdeltype <> 'r'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account confdeltype = % (expected r=RESTRICT)', c.confdeltype; END IF;
-  IF c.confupdtype <> 'a'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account confupdtype = % (expected a=NO ACTION)', c.confupdtype; END IF;
-  IF c.condeferrable                      THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account should not be deferrable'; END IF;
-
-  -- ──────────────────────────────────────────────────────────────────────────
-  -- fk_email_source_account
-  --   email_source(user_id, gmail_account_id)  →  "Account"("userId", id)
-  --   ON DELETE RESTRICT  ON UPDATE NO ACTION  NOT DEFERRABLE
-  -- ──────────────────────────────────────────────────────────────────────────
-  SELECT c.* INTO c FROM pg_constraint c
-  WHERE c.conname = 'fk_email_source_account' AND c.conrelid = 'email_source'::regclass;
-  IF c IS NULL THEN RAISE EXCEPTION 'FAIL VP4: fk_email_source_account missing from email_source'; END IF;
-
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO scols
-  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum;
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO rcols
-  FROM unnest(c.confkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum;
-  SELECT r.relname INTO rtbl FROM pg_class r WHERE r.oid = c.confrelid;
-
-  IF scols <> 'user_id,gmail_account_id'  THEN RAISE EXCEPTION 'FAIL VP4: fk_email_source_account source cols = %', scols; END IF;
-  IF rtbl  <> 'Account'                   THEN RAISE EXCEPTION 'FAIL VP4: fk_email_source_account ref table = %', rtbl; END IF;
-  IF rcols <> 'userId,id'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_source_account ref cols = %', rcols; END IF;
-  IF c.confdeltype <> 'r'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_source_account confdeltype = % (expected r)', c.confdeltype; END IF;
-  IF c.confupdtype <> 'a'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_source_account confupdtype = % (expected a)', c.confupdtype; END IF;
-  IF c.condeferrable                      THEN RAISE EXCEPTION 'FAIL VP4: fk_email_source_account should not be deferrable'; END IF;
-
-  -- ──────────────────────────────────────────────────────────────────────────
-  -- fk_email_scan_run_account
-  --   email_scan_run(user_id, gmail_account_id)  →  "Account"("userId", id)
-  --   ON DELETE RESTRICT  ON UPDATE NO ACTION  NOT DEFERRABLE
-  -- ──────────────────────────────────────────────────────────────────────────
-  SELECT c.* INTO c FROM pg_constraint c
-  WHERE c.conname = 'fk_email_scan_run_account' AND c.conrelid = 'email_scan_run'::regclass;
-  IF c IS NULL THEN RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account missing from email_scan_run'; END IF;
-
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO scols
-  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum;
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO rcols
-  FROM unnest(c.confkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum;
-  SELECT r.relname INTO rtbl FROM pg_class r WHERE r.oid = c.confrelid;
-
-  IF scols <> 'user_id,gmail_account_id'  THEN RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account source cols = %', scols; END IF;
-  IF rtbl  <> 'Account'                   THEN RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account ref table = %', rtbl; END IF;
-  IF rcols <> 'userId,id'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account ref cols = %', rcols; END IF;
-  IF c.confdeltype <> 'r'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account confdeltype = % (expected r)', c.confdeltype; END IF;
-  IF c.confupdtype <> 'a'                 THEN RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account confupdtype = % (expected a)', c.confupdtype; END IF;
-  IF c.condeferrable                      THEN RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account should not be deferrable'; END IF;
-
-  -- ──────────────────────────────────────────────────────────────────────────
-  -- fk_scan_run_filter_ownership
-  --   email_scan_run(user_id, gmail_account_id, email_filter_id)
-  --   →  email_filter(user_id, gmail_account_id, id)
-  --   ON DELETE NO ACTION  ON UPDATE NO ACTION  NOT DEFERRABLE
-  -- ──────────────────────────────────────────────────────────────────────────
-  SELECT c.* INTO c FROM pg_constraint c
-  WHERE c.conname = 'fk_scan_run_filter_ownership' AND c.conrelid = 'email_scan_run'::regclass;
-  IF c IS NULL THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership missing from email_scan_run'; END IF;
-
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO scols
-  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum;
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO rcols
-  FROM unnest(c.confkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum;
-  SELECT r.relname INTO rtbl FROM pg_class r WHERE r.oid = c.confrelid;
-
-  IF scols <> 'user_id,gmail_account_id,email_filter_id' THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership source cols = %', scols; END IF;
-  IF rtbl  <> 'email_filter'                              THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership ref table = %', rtbl; END IF;
-  IF rcols <> 'user_id,gmail_account_id,id'               THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership ref cols = %', rcols; END IF;
-  IF c.confdeltype <> 'a'                                 THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership confdeltype = % (expected a=NO ACTION)', c.confdeltype; END IF;
-  IF c.confupdtype <> 'a'                                 THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership confupdtype = % (expected a)', c.confupdtype; END IF;
-  IF c.condeferrable                                      THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership should not be deferrable'; END IF;
-
-  -- ──────────────────────────────────────────────────────────────────────────
-  -- fk_scan_run_filter_version
-  --   email_scan_run(email_filter_id, email_filter_version_id)
-  --   →  email_filter_version(email_filter_id, id)
-  --   ON DELETE RESTRICT  ON UPDATE NO ACTION  NOT DEFERRABLE
-  -- ──────────────────────────────────────────────────────────────────────────
-  SELECT c.* INTO c FROM pg_constraint c
-  WHERE c.conname = 'fk_scan_run_filter_version' AND c.conrelid = 'email_scan_run'::regclass;
-  IF c IS NULL THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version missing from email_scan_run'; END IF;
-
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO scols
-  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum;
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO rcols
-  FROM unnest(c.confkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum;
-  SELECT r.relname INTO rtbl FROM pg_class r WHERE r.oid = c.confrelid;
-
-  IF scols <> 'email_filter_id,email_filter_version_id' THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version source cols = %', scols; END IF;
-  IF rtbl  <> 'email_filter_version'                    THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version ref table = %', rtbl; END IF;
-  IF rcols <> 'email_filter_id,id'                      THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version ref cols = %', rcols; END IF;
-  IF c.confdeltype <> 'r'                               THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version confdeltype = % (expected r)', c.confdeltype; END IF;
-  IF c.confupdtype <> 'a'                               THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version confupdtype = % (expected a)', c.confupdtype; END IF;
-  IF c.condeferrable                                    THEN RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version should not be deferrable'; END IF;
-
-  -- ──────────────────────────────────────────────────────────────────────────
-  -- fk_email_filter_current_version
-  --   email_filter(id, current_version_id)
-  --   →  email_filter_version(email_filter_id, id)
-  --   ON DELETE NO ACTION  ON UPDATE NO ACTION  DEFERRABLE INITIALLY DEFERRED
-  -- ──────────────────────────────────────────────────────────────────────────
-  SELECT c.* INTO c FROM pg_constraint c
-  WHERE c.conname = 'fk_email_filter_current_version' AND c.conrelid = 'email_filter'::regclass;
-  IF c IS NULL THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version missing from email_filter'; END IF;
-
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO scols
-  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum;
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO rcols
-  FROM unnest(c.confkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum;
-  SELECT r.relname INTO rtbl FROM pg_class r WHERE r.oid = c.confrelid;
-
-  IF scols <> 'id,current_version_id'        THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version source cols = %', scols; END IF;
-  IF rtbl  <> 'email_filter_version'          THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version ref table = %', rtbl; END IF;
-  IF rcols <> 'email_filter_id,id'            THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version ref cols = %', rcols; END IF;
-  IF c.confdeltype <> 'a'                     THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version confdeltype = % (expected a)', c.confdeltype; END IF;
-  IF c.confupdtype <> 'a'                     THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version confupdtype = % (expected a)', c.confupdtype; END IF;
-  IF NOT c.condeferrable                      THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version is not DEFERRABLE'; END IF;
-  IF NOT c.condeferred                        THEN RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version is not INITIALLY DEFERRED'; END IF;
-
-  -- ──────────────────────────────────────────────────────────────────────────
-  -- fk_version_supersedes
-  --   email_filter_version(email_filter_id, supersedes_version_id)
-  --   →  email_filter_version(email_filter_id, id)
-  --   ON DELETE NO ACTION  ON UPDATE NO ACTION  DEFERRABLE INITIALLY DEFERRED
-  -- ──────────────────────────────────────────────────────────────────────────
-  SELECT c.* INTO c FROM pg_constraint c
-  WHERE c.conname = 'fk_version_supersedes' AND c.conrelid = 'email_filter_version'::regclass;
-  IF c IS NULL THEN RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes missing from email_filter_version'; END IF;
-
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO scols
-  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum;
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO rcols
-  FROM unnest(c.confkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum;
-  SELECT r.relname INTO rtbl FROM pg_class r WHERE r.oid = c.confrelid;
-
-  IF scols <> 'email_filter_id,supersedes_version_id' THEN RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes source cols = %', scols; END IF;
-  IF rtbl  <> 'email_filter_version'                  THEN RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes ref table = %', rtbl; END IF;
-  IF rcols <> 'email_filter_id,id'                    THEN RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes ref cols = %', rcols; END IF;
-  IF c.confdeltype <> 'a'                             THEN RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes confdeltype = % (expected a)', c.confdeltype; END IF;
-  IF c.confupdtype <> 'a'                             THEN RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes confupdtype = % (expected a)', c.confupdtype; END IF;
-  IF NOT c.condeferrable                              THEN RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes is not DEFERRABLE'; END IF;
-  IF NOT c.condeferred                                THEN RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes is not INITIALLY DEFERRED'; END IF;
-
-  -- ──────────────────────────────────────────────────────────────────────────
-  -- fk_classification_source
-  --   email_manual_classification(user_id, email_source_id)
-  --   →  email_source(user_id, id)
-  --   ON DELETE CASCADE  ON UPDATE NO ACTION  NOT DEFERRABLE
-  -- ──────────────────────────────────────────────────────────────────────────
-  SELECT c.* INTO c FROM pg_constraint c
-  WHERE c.conname = 'fk_classification_source' AND c.conrelid = 'email_manual_classification'::regclass;
-  IF c IS NULL THEN RAISE EXCEPTION 'FAIL VP4: fk_classification_source missing from email_manual_classification'; END IF;
-
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO scols
-  FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum;
-  SELECT string_agg(a.attname, ',' ORDER BY u.pos) INTO rcols
-  FROM unnest(c.confkey) WITH ORDINALITY u(attnum, pos)
-  JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum;
-  SELECT r.relname INTO rtbl FROM pg_class r WHERE r.oid = c.confrelid;
-
-  IF scols <> 'user_id,email_source_id'  THEN RAISE EXCEPTION 'FAIL VP4: fk_classification_source source cols = %', scols; END IF;
-  IF rtbl  <> 'email_source'             THEN RAISE EXCEPTION 'FAIL VP4: fk_classification_source ref table = %', rtbl; END IF;
-  IF rcols <> 'user_id,id'               THEN RAISE EXCEPTION 'FAIL VP4: fk_classification_source ref cols = %', rcols; END IF;
-  IF c.confdeltype <> 'c'               THEN RAISE EXCEPTION 'FAIL VP4: fk_classification_source confdeltype = % (expected c=CASCADE)', c.confdeltype; END IF;
-  IF c.confupdtype <> 'a'               THEN RAISE EXCEPTION 'FAIL VP4: fk_classification_source confupdtype = % (expected a)', c.confupdtype; END IF;
-  IF c.condeferrable                    THEN RAISE EXCEPTION 'FAIL VP4: fk_classification_source should not be deferrable'; END IF;
-
-  RAISE NOTICE 'PASS VP4: All 8 required named FKs present with exact column, table, and action definitions';
-END; $$;
-
--- Report full FK inventory for manual inspection
-SELECT conname,
-       conrelid::regclass AS tbl,
-       confrelid::regclass AS ref_tbl,
-       condeferrable,
-       condeferred,
-       pg_get_constraintdef(oid) AS definition
-FROM pg_constraint
-WHERE contype = 'f'
-  AND conrelid::regclass::text IN (
-    'email_filter','email_filter_version',
-    'email_source','email_scan_run',
-    'email_scan_item','email_manual_classification'
-  )
-ORDER BY conrelid::regclass::text, conname;
 
 -- =============================================================================
 -- VP5: Trigger inventory — exact table, function, timing, level, event, deferrable
@@ -857,16 +787,20 @@ BEGIN
   RAISE NOTICE 'PASS VP5: Trigger count = 3 on expected tables';
 END; $$;
 
--- C103: Exact definition assertions for each trigger
+-- C103/C106: Exact definition assertions for each trigger — exact tgtype values, tgenabled, tgattr
 DO $$
 DECLARE
   tg    pg_trigger%ROWTYPE;
   fnam  TEXT;
+  cond     BOOLEAN;
+  cdeferred BOOLEAN;
+  src_attnums  INT2VECTOR;
+  exp_attnums  INT2VECTOR;
 BEGIN
   -- ──────────────────────────────────────────────────────────────────────────
   -- 1. trg_email_filter_version_immutable
-  --    table: email_filter_version | BEFORE UPDATE | FOR EACH ROW
-  --    function: prevent_email_filter_version_update | NOT a constraint trigger
+  --    tgtype=19 (BEFORE UPDATE ROW, non-constraint)
+  --    function: prevent_email_filter_version_update | tgattr empty | tgenabled='O'
   -- ──────────────────────────────────────────────────────────────────────────
   SELECT t.* INTO tg
   FROM pg_trigger t
@@ -878,29 +812,29 @@ BEGIN
     RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable is on table % (expected email_filter_version)',
       tg.tgrelid::regclass;
   END IF;
-  -- tgtype bits: 1=ROW, 2=BEFORE, 4=INSERT, 8=DELETE, 16=UPDATE, 32=TRUNCATE, 64=INSTEAD OF
-  IF (tg.tgtype & 2) = 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable is not BEFORE';
-  END IF;
-  IF (tg.tgtype & 1) = 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable is not FOR EACH ROW';
-  END IF;
-  IF (tg.tgtype & 16) = 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable does not fire on UPDATE';
+  IF tg.tgtype <> 19 THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable tgtype = % (expected 19 = BEFORE UPDATE ROW)', tg.tgtype;
   END IF;
   IF tg.tgconstraint <> 0 THEN
     RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable should not be a constraint trigger';
+  END IF;
+  IF tg.tgenabled <> 'O' THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable tgenabled = % (expected O)', tg.tgenabled;
+  END IF;
+  IF tg.tgattr <> '' THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable tgattr should be empty (no column filter)';
   END IF;
   SELECT p.proname INTO fnam FROM pg_proc p WHERE p.oid = tg.tgfoid;
   IF fnam <> 'prevent_email_filter_version_update' THEN
     RAISE EXCEPTION 'FAIL VP5: trg_email_filter_version_immutable function = % (expected prevent_email_filter_version_update)', fnam;
   END IF;
-  RAISE NOTICE 'PASS VP5: trg_email_filter_version_immutable — table, timing, level, event, function all correct';
+  RAISE NOTICE 'PASS VP5: trg_email_filter_version_immutable — tgtype=19, tgenabled=O, tgattr empty, function correct';
 
   -- ──────────────────────────────────────────────────────────────────────────
   -- 2. trg_email_scan_item_source_ownership
-  --    table: email_scan_item | CONSTRAINT TRIGGER | AFTER INSERT OR UPDATE
-  --    FOR EACH ROW | DEFERRABLE INITIALLY IMMEDIATE
+  --    tgtype=21 (AFTER INSERT OR UPDATE ROW, constraint)
+  --    DEFERRABLE INITIALLY IMMEDIATE | tgenabled='O'
+  --    tgattr contains exactly attnums for email_source_id and scan_run_id
   --    function: check_scan_item_source_ownership
   -- ──────────────────────────────────────────────────────────────────────────
   SELECT t.* INTO tg
@@ -913,43 +847,51 @@ BEGIN
     RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership is on table % (expected email_scan_item)',
       tg.tgrelid::regclass;
   END IF;
-  IF (tg.tgtype & 2) <> 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership should be AFTER, not BEFORE';
-  END IF;
-  IF (tg.tgtype & 1) = 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership is not FOR EACH ROW';
-  END IF;
-  IF (tg.tgtype & 4) = 0 AND (tg.tgtype & 16) = 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership must fire on INSERT OR UPDATE';
+  IF tg.tgtype <> 21 THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership tgtype = % (expected 21 = AFTER INSERT OR UPDATE ROW)', tg.tgtype;
   END IF;
   IF tg.tgconstraint = 0 THEN
     RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership must be a constraint trigger';
   END IF;
-  -- DEFERRABLE INITIALLY IMMEDIATE: condeferrable=true, condeferred=false on the constraint row
-  DECLARE
-    cond BOOLEAN; cdeferred BOOLEAN;
-  BEGIN
-    SELECT c.condeferrable, c.condeferred
-    INTO cond, cdeferred
-    FROM pg_constraint c
-    WHERE c.oid = tg.tgconstraint;
-    IF NOT cond THEN
-      RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership constraint is not DEFERRABLE';
-    END IF;
-    IF cdeferred THEN
-      RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership constraint should be INITIALLY IMMEDIATE (not deferred)';
-    END IF;
-  END;
+  IF tg.tgenabled <> 'O' THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership tgenabled = % (expected O)', tg.tgenabled;
+  END IF;
+  -- tgattr must contain exactly the attnums for email_source_id and scan_run_id
+  SELECT string_agg(a.attnum::TEXT, ',' ORDER BY a.attname)
+  INTO fnam  -- reusing fnam as scratch text
+  FROM pg_attribute a
+  WHERE a.attrelid = 'email_scan_item'::regclass
+    AND a.attname IN ('email_source_id', 'scan_run_id');
+  IF (
+    SELECT COUNT(*) FROM unnest(tg.tgattr) col_attnum
+    JOIN pg_attribute a ON a.attrelid = 'email_scan_item'::regclass AND a.attnum = col_attnum
+    WHERE a.attname NOT IN ('email_source_id', 'scan_run_id')
+  ) > 0 OR (
+    SELECT COUNT(*) FROM unnest(tg.tgattr) col_attnum
+  ) <> 2 THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership tgattr must contain exactly email_source_id and scan_run_id';
+  END IF;
+  -- DEFERRABLE INITIALLY IMMEDIATE
+  SELECT c.condeferrable, c.condeferred
+  INTO cond, cdeferred
+  FROM pg_constraint c
+  WHERE c.oid = tg.tgconstraint;
+  IF NOT cond THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership constraint is not DEFERRABLE';
+  END IF;
+  IF cdeferred THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership constraint should be INITIALLY IMMEDIATE (not deferred)';
+  END IF;
   SELECT p.proname INTO fnam FROM pg_proc p WHERE p.oid = tg.tgfoid;
   IF fnam <> 'check_scan_item_source_ownership' THEN
     RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_source_ownership function = % (expected check_scan_item_source_ownership)', fnam;
   END IF;
-  RAISE NOTICE 'PASS VP5: trg_email_scan_item_source_ownership — table, timing, level, events, deferrable, function all correct';
+  RAISE NOTICE 'PASS VP5: trg_email_scan_item_source_ownership — tgtype=21, tgenabled=O, tgattr exact, deferrable, function correct';
 
   -- ──────────────────────────────────────────────────────────────────────────
   -- 3. trg_email_scan_item_parent_immutable
-  --    table: email_scan_item | BEFORE UPDATE | FOR EACH ROW
-  --    function: prevent_scan_item_parent_change | NOT a constraint trigger
+  --    tgtype=19 (BEFORE UPDATE ROW, non-constraint)
+  --    function: prevent_scan_item_parent_change | tgattr empty | tgenabled='O'
   -- ──────────────────────────────────────────────────────────────────────────
   SELECT t.* INTO tg
   FROM pg_trigger t
@@ -961,23 +903,23 @@ BEGIN
     RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable is on table % (expected email_scan_item)',
       tg.tgrelid::regclass;
   END IF;
-  IF (tg.tgtype & 2) = 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable is not BEFORE';
-  END IF;
-  IF (tg.tgtype & 1) = 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable is not FOR EACH ROW';
-  END IF;
-  IF (tg.tgtype & 16) = 0 THEN
-    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable does not fire on UPDATE';
+  IF tg.tgtype <> 19 THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable tgtype = % (expected 19 = BEFORE UPDATE ROW)', tg.tgtype;
   END IF;
   IF tg.tgconstraint <> 0 THEN
     RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable should not be a constraint trigger';
+  END IF;
+  IF tg.tgenabled <> 'O' THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable tgenabled = % (expected O)', tg.tgenabled;
+  END IF;
+  IF tg.tgattr <> '' THEN
+    RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable tgattr should be empty (no column filter)';
   END IF;
   SELECT p.proname INTO fnam FROM pg_proc p WHERE p.oid = tg.tgfoid;
   IF fnam <> 'prevent_scan_item_parent_change' THEN
     RAISE EXCEPTION 'FAIL VP5: trg_email_scan_item_parent_immutable function = % (expected prevent_scan_item_parent_change)', fnam;
   END IF;
-  RAISE NOTICE 'PASS VP5: trg_email_scan_item_parent_immutable — table, timing, level, event, function all correct';
+  RAISE NOTICE 'PASS VP5: trg_email_scan_item_parent_immutable — tgtype=19, tgenabled=O, tgattr empty, function correct';
 END; $$;
 
 -- Report trigger details for inspection

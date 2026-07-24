@@ -117,6 +117,12 @@
 >   pg_attribute FK validation replaces ILIKE checks; IF NOT EXISTS removed from Account
 >   ADD COLUMN statements; incorrect PL/pgSQL EXCEPTION comment and redundant DELETE removed;
 >   VP5 upgraded to exact trigger-definition assertions; metadata updated to C1–C104.
+> **Phase 0 revision 2026-07-25 (C105–C107):**
+> C105–C107: SQL-only corrections — VP4 replaced with bidirectional 22-FK EXCEPT-based
+>   structural set comparison (all 22 FKs encoded in VALUES table; no dependency on
+>   PostgreSQL-generated FK names); VP5 trigger assertions upgraded to exact tgtype values
+>   (19 / 21), tgenabled='O', tgattr assertions for all three triggers; metadata updated to
+>   C1–C107.
 > **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
 > **Pass 3 corrections:** 2026-07-14 — 6-tier ownership taxonomy, API method corrections,
 > SyncJobMessage cascade correction. Source: reviewer pass verified against code.

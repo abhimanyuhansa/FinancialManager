@@ -4,7 +4,7 @@
 > **Assessed by:** Senior Software Architect (incoming), per master prompt
 > `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`
 > **Baseline commit inspected:** `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
-> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C104 applied 2026-07-25.
+> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C107 applied 2026-07-25.
 > D-1: Pending final consolidation approval. D-2: Approved. D-3: Approved. D-4: Conditionally approved. D-5: Approved. D-6: Approved.
 > Awaiting explicit Phase 1A implementation approval before any code changes begin.
 > **Revision reason (2026-07-18):** D-1 schema rejected and respecified; D-2 changed to
@@ -407,6 +407,19 @@
 >   pg_proc + pg_constraint; wrong-table trigger with correct name fails the test.
 > C104 — Metadata updated: 14 status → C1–C104 applied 2026-07-25; SQL header → C81–C104;
 >   05 revision note added for C99–C104.
+> **Phase 0 revision 2026-07-25 (C105–C107):**
+> C105 — VP4 replaced: 8-FK named-FK validation + diagnostic SELECT removed; replaced with a
+>   single DO block performing a bidirectional 22-FK EXCEPT-based structural set comparison.
+>   Expected inventory encodes all 22 FKs across 6 tables as a VALUES table; comparison uses
+>   NOT EXISTS subqueries (expected MINUS actual = empty, actual MINUS expected = empty, count = 22,
+>   no structural duplicates); inline FK names are never referenced.
+> C106 — VP5 trigger assertions made exact: bit-mask event checks replaced with exact tgtype values
+>   (trg_email_filter_version_immutable: tgtype=19, trg_email_scan_item_parent_immutable: tgtype=19,
+>   trg_email_scan_item_source_ownership: tgtype=21); tgenabled='O' asserted for all three;
+>   tgattr empty asserted for non-column-filtered triggers; tgattr exactly {email_source_id,
+>   scan_run_id} asserted for trg_email_scan_item_source_ownership.
+> C107 — Metadata updated: 14 status → C1–C107 applied 2026-07-25; SQL header → C81–C107;
+>   05 revision note added for C105–C107.
 
 ---
 
