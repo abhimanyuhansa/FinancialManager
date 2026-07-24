@@ -4,7 +4,7 @@
 > **Assessed by:** Senior Software Architect (incoming), per master prompt
 > `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`
 > **Baseline commit inspected:** `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
-> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C89 applied 2026-07-23.
+> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C98 applied 2026-07-25.
 > D-1: Pending final consolidation approval. D-2: Approved. D-3: Approved. D-4: Conditionally approved. D-5: Approved. D-6: Approved.
 > Awaiting explicit Phase 1A implementation approval before any code changes begin.
 > **Revision reason (2026-07-18):** D-1 schema rejected and respecified; D-2 changed to
@@ -373,7 +373,21 @@
 >   to canonical C90 erasure order: manual_classification → scan_item → scan_run → source →
 >   filter (CASCADE removes versions) → Account → User; all 8 tables asserted zero.
 >   §7.8 table updated: CREATED+published → 409 scan_active; PAUSED → 409 scan_paused (C91); ACs updated.
->
+> **Phase 0 revision 2026-07-25 (C94–C98):**
+> C94 — `email_scan_run` canonical DDL corrected — `email_filter_id` and `email_filter_version_id`
+>   inline FKs now carry explicit `ON DELETE RESTRICT`; canonical DDL now identical to phase1a-dry-run.sql
+>   and 05 field table notes.
+> C95 — FK inventory assertion in phase1a-dry-run.sql VP4 upgraded — `fk_count >= 10` replaced with
+>   exact count = 22; all 8 required named FKs validated with source/ref columns and delete actions;
+>   `fk_email_filter_current_version` and `fk_version_supersedes` verified `DEFERRABLE INITIALLY DEFERRED`.
+> C96 — VP6 upgraded from metadata-only check to operational deferred-FK test — `SET CONSTRAINTS
+>   fk_email_filter_current_version, fk_version_supersedes IMMEDIATE` executed with bootstrap data;
+>   negative test proves cross-filter `supersedes_version_id` rejected.
+> C97 — VP13 erasure assertions corrected — stable synthetic IDs used directly; deleted-parent
+>   subqueries removed. VP14/VP15 upgraded — `\gset` captures baseline User and Account counts
+>   before `BEGIN`; post-ROLLBACK assertions compare exact baseline counts.
+> C98 — Metadata updated: 14 status → C1–C98 applied 2026-07-25; SQL header → C81–C98;
+>   05 revision note added for C94–C98.
 
 ---
 
@@ -959,8 +973,8 @@ CREATE TABLE email_scan_run (
   -- email_scan_run(email_filter_id, email_filter_version_id) → email_filter_version(email_filter_id, id)
   -- This requires UNIQUE(email_filter_id, id) on email_filter_version (added by C20).
   -- No trigger required for this invariant (C34, C45).
-  email_filter_id           TEXT        NOT NULL REFERENCES email_filter(id),
-  email_filter_version_id   TEXT        NOT NULL REFERENCES email_filter_version(id),
+  email_filter_id           TEXT        NOT NULL REFERENCES email_filter(id) ON DELETE RESTRICT,
+  email_filter_version_id   TEXT        NOT NULL REFERENCES email_filter_version(id) ON DELETE RESTRICT,
   -- Snapshots taken at scan start; immutable thereafter
   effective_gmail_query         TEXT        NOT NULL,   -- exact query string used; copy of email_filter_version.gmail_query
   filter_snapshot_json          JSONB       NOT NULL,   -- copy of email_filter_version include/exclude rules at scan start

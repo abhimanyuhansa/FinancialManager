@@ -104,6 +104,14 @@
 >   all 8 tables asserted zero.
 > C91: Retry decision table in 14 updated — CREATED+published → 409 scan_active; PAUSED → 409
 >   scan_paused; all 10 statuses now covered; ACs updated.
+> **Phase 0 revision 2026-07-25 (C94–C98):**
+> C94: `email_scan_run` field table notes corrected — `email_filter_id` and `email_filter_version_id`
+>   notes now read "FK → email_filter RESTRICT" and "FK → email_filter_version RESTRICT" to match
+>   canonical DDL; explicit Account additive-migration SQL block added (ALTER TABLE UNIQUE constraint,
+>   ADD COLUMN disconnected_at/disconnection_reason, CREATE INDEX account_disconnected_idx).
+> C95–C97: SQL-only corrections (exact 22-FK assertion, operational deferred-FK tests, stable-ID
+>   erasure assertions, \gset baseline capture).
+> C98: Metadata updated — 14 status to C1–C98 applied 2026-07-25; SQL header to C81–C98.
 > **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
 > **Pass 3 corrections:** 2026-07-14 — 6-tier ownership taxonomy, API method corrections,
 > SyncJobMessage cascade correction. Source: reviewer pass verified against code.
@@ -249,6 +257,22 @@ the Account row. Future Gmail calls are blocked in `getGmailToken()` by checking
 Reconnection re-OAuths the same Account row and clears `disconnected_at`. This additive migration
 requires D-1 approval. See `14-phase0-assessment.md §6.7`.
 
+**Account additive migration (Phase 1A, requires D-1 approval):**
+
+```sql
+ALTER TABLE "Account"
+  ADD CONSTRAINT account_user_id_id_unique
+  UNIQUE ("userId", id);
+
+ALTER TABLE "Account"
+  ADD COLUMN disconnected_at      TIMESTAMPTZ,
+  ADD COLUMN disconnection_reason TEXT;
+
+CREATE INDEX account_disconnected_idx
+  ON "Account"(id)
+  WHERE disconnected_at IS NOT NULL;
+```
+
 **email_filter_version DB-level immutability (C12, C19):** A `BEFORE UPDATE` trigger on `email_filter_version`
 raises an exception on any UPDATE. SECURITY DEFINER does **not** bypass this trigger (it bypasses RLS/ownership,
 not triggers — C19). Erasure workflows delete the parent `email_filter` row; ON DELETE CASCADE propagates
@@ -346,8 +370,8 @@ Each `email_scan_run` stores `email_filter_id` + `email_filter_version_id` to re
 | `user_id` | FK → User CASCADE | |
 | `client_request_id` | TEXT NOT NULL | Client-supplied idempotency key; `UNIQUE(user_id, client_request_id)` prevents duplicate scans on POST retry (C61) |
 | `gmail_account_id` | TEXT NOT NULL FK → Account RESTRICT | RESTRICT: historical scan metadata survives account disconnection |
-| `email_filter_id` | TEXT NOT NULL FK → email_filter | Derived from `email_filter_version_id`; both must belong to the same filter (C2) |
-| `email_filter_version_id` | TEXT NOT NULL FK → email_filter_version | NOT NULL — every scan requires an immutable filter version (C2) |
+| `email_filter_id` | TEXT NOT NULL FK → email_filter RESTRICT | Derived from `email_filter_version_id`; both must belong to the same filter (C2) |
+| `email_filter_version_id` | TEXT NOT NULL FK → email_filter_version RESTRICT | NOT NULL — every scan requires an immutable filter version (C2) |
 | `effective_gmail_query` | TEXT NOT NULL | Exact query string used; immutable after scan start |
 | `from_date` | DATE NOT NULL | Scan window start date (inclusive) |
 | `to_date` | DATE NOT NULL | Scan window end date (inclusive); NOT NULL — Phase 1A scans always bounded |

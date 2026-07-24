@@ -1,5 +1,5 @@
 -- =============================================================================
--- Financial Manager Phase 1A — Canonical DDL Dry Run (C81–C89 applied)
+-- Financial Manager Phase 1A — Canonical DDL Dry Run (C81–C98 applied)
 -- Execute against an isolated, disposable PostgreSQL database.
 -- ON_ERROR_STOP=1 is required: any failure aborts immediately.
 -- ROLLBACK at end leaves no permanent changes.
@@ -9,6 +9,16 @@
 --   psql -X -v ON_ERROR_STOP=1 "$ISOLATED_DATABASE_URL" \
 --     -f docs/consolidated/phase1a-dry-run.sql \
 --     2>&1 | tee /tmp/fm_phase1a_dry_run.log
+
+-- =============================================================================
+-- C97: Capture baseline counts BEFORE BEGIN so they survive ROLLBACK.
+-- psql \gset assigns result columns as client-side variables.
+-- =============================================================================
+\echo '--- Baseline capture (pre-transaction) ---'
+SELECT COUNT(*) AS baseline_user_count    FROM "User"    WHERE id NOT LIKE 'dryrun-%';
+\gset
+SELECT COUNT(*) AS baseline_account_count FROM "Account" WHERE id NOT LIKE 'dryrun-%';
+\gset
 
 BEGIN;
 
@@ -555,6 +565,7 @@ END; $$;
 -- =============================================================================
 \echo '--- VP4: FK inventory ---'
 
+-- C95: Exact 22-FK assertion (replaces fk_count >= 10)
 DO $$
 DECLARE
   fk_count INT;
@@ -567,11 +578,118 @@ BEGIN
       'email_source','email_scan_run',
       'email_scan_item','email_manual_classification'
     );
-  -- 22 composite declarative FKs as defined in canonical schema
-  IF fk_count < 10 THEN
-    RAISE EXCEPTION 'FAIL VP4: FK count = % (expected >= 10 for six-table schema)', fk_count;
+  IF fk_count <> 22 THEN
+    RAISE EXCEPTION 'FAIL VP4: FK count = % (expected exactly 22)', fk_count;
   END IF;
-  RAISE NOTICE 'PASS VP4: FK inventory count = %', fk_count;
+  RAISE NOTICE 'PASS VP4: FK count = 22 (exact)';
+END; $$;
+
+-- C95: Named FK inventory — exact definition assertion for each required named FK
+DO $$
+DECLARE
+  r RECORD;
+  def TEXT;
+BEGIN
+  -- fk_email_filter_account: email_filter(user_id,gmail_account_id) → Account("userId",id) RESTRICT
+  SELECT pg_get_constraintdef(oid) INTO def
+  FROM pg_constraint
+  WHERE conname = 'fk_email_filter_account' AND conrelid = 'email_filter'::regclass;
+  IF def IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account missing from email_filter';
+  END IF;
+  IF def NOT ILIKE '%RESTRICT%' THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_filter_account wrong delete action (expected RESTRICT): %', def;
+  END IF;
+
+  -- fk_email_source_account: email_source(user_id,gmail_account_id) → Account("userId",id) RESTRICT
+  SELECT pg_get_constraintdef(oid) INTO def
+  FROM pg_constraint
+  WHERE conname = 'fk_email_source_account' AND conrelid = 'email_source'::regclass;
+  IF def IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_source_account missing from email_source';
+  END IF;
+  IF def NOT ILIKE '%RESTRICT%' THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_source_account wrong delete action (expected RESTRICT): %', def;
+  END IF;
+
+  -- fk_email_scan_run_account: email_scan_run(user_id,gmail_account_id) → Account("userId",id) RESTRICT
+  SELECT pg_get_constraintdef(oid) INTO def
+  FROM pg_constraint
+  WHERE conname = 'fk_email_scan_run_account' AND conrelid = 'email_scan_run'::regclass;
+  IF def IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account missing from email_scan_run';
+  END IF;
+  IF def NOT ILIKE '%RESTRICT%' THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_scan_run_account wrong delete action (expected RESTRICT): %', def;
+  END IF;
+
+  -- fk_scan_run_filter_ownership: email_scan_run(user_id,gmail_account_id,email_filter_id)
+  --   → email_filter(user_id,gmail_account_id,id) — no ON DELETE clause (defaults to NO ACTION)
+  SELECT pg_get_constraintdef(oid) INTO def
+  FROM pg_constraint
+  WHERE conname = 'fk_scan_run_filter_ownership' AND conrelid = 'email_scan_run'::regclass;
+  IF def IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership missing from email_scan_run';
+  END IF;
+  IF def ILIKE '%CASCADE%' OR def ILIKE '%SET NULL%' OR def ILIKE '%SET DEFAULT%' THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_ownership unexpected delete action: %', def;
+  END IF;
+
+  -- fk_scan_run_filter_version: email_scan_run(email_filter_id,email_filter_version_id)
+  --   → email_filter_version(email_filter_id,id) RESTRICT
+  SELECT pg_get_constraintdef(oid) INTO def
+  FROM pg_constraint
+  WHERE conname = 'fk_scan_run_filter_version' AND conrelid = 'email_scan_run'::regclass;
+  IF def IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version missing from email_scan_run';
+  END IF;
+  IF def NOT ILIKE '%RESTRICT%' THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_scan_run_filter_version wrong delete action (expected RESTRICT): %', def;
+  END IF;
+
+  -- fk_email_filter_current_version: email_filter(id,current_version_id)
+  --   → email_filter_version(email_filter_id,id) — DEFERRABLE INITIALLY DEFERRED
+  SELECT condeferrable, condeferred INTO r
+  FROM pg_constraint
+  WHERE conname = 'fk_email_filter_current_version' AND conrelid = 'email_filter'::regclass;
+  IF r IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version missing from email_filter';
+  END IF;
+  IF NOT r.condeferrable THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version is not DEFERRABLE';
+  END IF;
+  IF NOT r.condeferred THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_email_filter_current_version is not INITIALLY DEFERRED';
+  END IF;
+
+  -- fk_version_supersedes: email_filter_version(email_filter_id,supersedes_version_id)
+  --   → email_filter_version(email_filter_id,id) — DEFERRABLE INITIALLY DEFERRED
+  SELECT condeferrable, condeferred INTO r
+  FROM pg_constraint
+  WHERE conname = 'fk_version_supersedes' AND conrelid = 'email_filter_version'::regclass;
+  IF r IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes missing from email_filter_version';
+  END IF;
+  IF NOT r.condeferrable THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes is not DEFERRABLE';
+  END IF;
+  IF NOT r.condeferred THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_version_supersedes is not INITIALLY DEFERRED';
+  END IF;
+
+  -- fk_classification_source: email_manual_classification(user_id,email_source_id)
+  --   → email_source(user_id,id) CASCADE
+  SELECT pg_get_constraintdef(oid) INTO def
+  FROM pg_constraint
+  WHERE conname = 'fk_classification_source' AND conrelid = 'email_manual_classification'::regclass;
+  IF def IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_classification_source missing from email_manual_classification';
+  END IF;
+  IF def NOT ILIKE '%CASCADE%' THEN
+    RAISE EXCEPTION 'FAIL VP4: fk_classification_source wrong delete action (expected CASCADE): %', def;
+  END IF;
+
+  RAISE NOTICE 'PASS VP4: All 8 required named FKs present with correct definitions';
 END; $$;
 
 -- Report full FK inventory for manual inspection
@@ -589,24 +707,6 @@ WHERE contype = 'f'
     'email_scan_item','email_manual_classification'
   )
 ORDER BY conrelid::regclass::text, conname;
-
--- Assert the two deferred circular FKs are present and deferrable
-DO $$
-DECLARE
-  missing TEXT;
-BEGIN
-  SELECT string_agg(required_con, ', ')
-  INTO missing
-  FROM (VALUES ('fk_email_filter_current_version'),('fk_version_supersedes')) AS t(required_con)
-  WHERE NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = t.required_con AND condeferrable = true
-  );
-  IF missing IS NOT NULL THEN
-    RAISE EXCEPTION 'FAIL VP4: Deferred circular FK(s) missing or not deferrable: %', missing;
-  END IF;
-  RAISE NOTICE 'PASS VP4: Both deferred circular FKs present and deferrable';
-END; $$;
 
 -- =============================================================================
 -- VP5: Trigger inventory (assertion: exactly 3 application triggers)
@@ -709,41 +809,63 @@ INSERT INTO email_manual_classification (
 ) VALUES ('dryrun-mc1','dryrun-u1','dryrun-es1','UNREVIEWED','FINANCIAL',1);
 
 -- =============================================================================
--- VP6: Deferred circular-FK test
+-- VP6: Deferred circular-FK operational test (C96)
 -- =============================================================================
-\echo '--- VP6: Deferred circular FK bootstrap (fk_email_filter_current_version) ---'
+\echo '--- VP6: Deferred circular FK operational test ---'
 
+-- C96 positive test: insert filter + two versions (v2 supersedes v1), set current_version_id,
+-- then force both deferred FKs IMMEDIATE to prove constraints actually evaluate correctly.
 DO $$
-DECLARE
-  filter_id TEXT;
-  version_id TEXT;
 BEGIN
-  SELECT ef.id, ef.current_version_id
-  INTO filter_id, version_id
-  FROM email_filter ef
-  JOIN email_filter_version efv ON efv.id = ef.current_version_id
-  WHERE ef.id = 'dryrun-f1';
-  IF filter_id IS NULL THEN
-    RAISE EXCEPTION 'FAIL VP6: Deferred FK fk_email_filter_current_version did not resolve for dryrun-f1';
-  END IF;
-  RAISE NOTICE 'PASS VP6: Deferred FK resolved — filter % → version %', filter_id, version_id;
+  -- Bootstrap: second version that supersedes dryrun-fv1 (same filter dryrun-f1)
+  INSERT INTO email_filter_version (id, email_filter_id, version, gmail_query, created_by, supersedes_version_id)
+    VALUES ('dryrun-fv2', 'dryrun-f1', 2, 'from:bank@example.com v2', 'dryrun-u1', 'dryrun-fv1');
+
+  -- Advance current_version_id to the new version
+  UPDATE email_filter SET current_version_id = 'dryrun-fv2' WHERE id = 'dryrun-f1';
+
+  -- Force both deferred FKs to immediate evaluation; must not raise an exception
+  SET CONSTRAINTS fk_email_filter_current_version, fk_version_supersedes IMMEDIATE;
+
+  RAISE NOTICE 'PASS VP6 positive: SET CONSTRAINTS IMMEDIATE succeeded — both deferred FKs evaluate correctly';
+
+  -- Restore to DEFERRED so the rest of the transaction can proceed freely
+  SET CONSTRAINTS fk_email_filter_current_version, fk_version_supersedes DEFERRED;
 END; $$;
 
+-- C96 negative test: a supersedes_version_id from a DIFFERENT filter must be rejected
+-- when fk_version_supersedes is forced IMMEDIATE.
 DO $$
-DECLARE
-  missing TEXT;
 BEGIN
-  SELECT string_agg(required_con, ', ')
-  INTO missing
-  FROM (VALUES ('fk_email_filter_current_version'),('fk_version_supersedes')) AS t(required_con)
-  WHERE NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = t.required_con AND condeferrable = true
-  );
-  IF missing IS NOT NULL THEN
-    RAISE EXCEPTION 'FAIL VP6: Deferrable constraint(s) not found: %', missing;
-  END IF;
-  RAISE NOTICE 'PASS VP6: Both deferrable circular FKs confirmed in pg_constraint';
+  -- Create a second filter and a version belonging to it
+  INSERT INTO email_filter (id, user_id, gmail_account_id, name)
+    VALUES ('dryrun-f2', 'dryrun-u1', 'dryrun-a1', 'Other Filter');
+  INSERT INTO email_filter_version (id, email_filter_id, version, gmail_query, created_by)
+    VALUES ('dryrun-fv-other', 'dryrun-f2', 1, 'from:other@example.com', 'dryrun-u1');
+  UPDATE email_filter SET current_version_id = 'dryrun-fv-other' WHERE id = 'dryrun-f2';
+
+  BEGIN
+    -- Attempt: version for f1 that references a version belonging to f2
+    INSERT INTO email_filter_version (id, email_filter_id, version, gmail_query, created_by, supersedes_version_id)
+      VALUES ('dryrun-fv-bad', 'dryrun-f1', 3, 'q', 'dryrun-u1', 'dryrun-fv-other');
+
+    SET CONSTRAINTS fk_version_supersedes IMMEDIATE;
+
+    -- Should never reach here
+    RAISE EXCEPTION 'FAIL VP6 negative: cross-filter supersedes_version_id was NOT rejected';
+  EXCEPTION
+    WHEN foreign_key_violation THEN
+      RAISE NOTICE 'PASS VP6 negative: cross-filter supersedes_version_id correctly rejected by fk_version_supersedes';
+    WHEN OTHERS THEN
+      RAISE EXCEPTION 'FAIL VP6 negative: unexpected error %: %', SQLSTATE, SQLERRM;
+  END;
+
+  -- Ensure bad version is not present (rollback of inner block not available; delete manually)
+  -- Inner BEGIN/EXCEPTION does NOT roll back DML in PostgreSQL; clean up explicitly
+  DELETE FROM email_filter_version WHERE id = 'dryrun-fv-bad';
+
+  -- Restore deferred for subsequent steps
+  SET CONSTRAINTS fk_email_filter_current_version, fk_version_supersedes DEFERRED;
 END; $$;
 
 -- =============================================================================
@@ -995,35 +1117,35 @@ DELETE FROM "Account" WHERE "userId" = 'dryrun-uerase';
 -- Step 7: User
 DELETE FROM "User" WHERE id = 'dryrun-uerase';
 
--- Assert all 8 relevant tables have zero rows for the erased user/filter/scan
+-- C97: Assert using stable synthetic IDs captured before deletion.
+-- Do NOT derive child checks through parent tables already deleted.
 DO $$
 DECLARE
   cnt_mc    INT; cnt_si    INT; cnt_sr    INT; cnt_es    INT;
   cnt_fv    INT; cnt_ef    INT; cnt_acc   INT; cnt_usr   INT;
 BEGIN
-  SELECT COUNT(*) INTO cnt_mc  FROM email_manual_classification WHERE user_id = 'dryrun-uerase';
-  SELECT COUNT(*) INTO cnt_si  FROM email_scan_item WHERE scan_run_id IN (SELECT id FROM email_scan_run WHERE user_id = 'dryrun-uerase');
-  SELECT COUNT(*) INTO cnt_sr  FROM email_scan_run WHERE user_id = 'dryrun-uerase';
-  SELECT COUNT(*) INTO cnt_es  FROM email_source WHERE user_id = 'dryrun-uerase';
-  SELECT COUNT(*) INTO cnt_fv  FROM email_filter_version WHERE email_filter_id IN (SELECT id FROM email_filter WHERE user_id = 'dryrun-uerase');
-  SELECT COUNT(*) INTO cnt_ef  FROM email_filter WHERE user_id = 'dryrun-uerase';
-  SELECT COUNT(*) INTO cnt_acc FROM "Account" WHERE "userId" = 'dryrun-uerase';
-  SELECT COUNT(*) INTO cnt_usr FROM "User" WHERE id = 'dryrun-uerase';
+  -- Direct stable-ID assertions — no subquery through already-deleted parents
+  SELECT COUNT(*) INTO cnt_mc  FROM email_manual_classification WHERE id = 'dryrun-mcerase';
+  SELECT COUNT(*) INTO cnt_si  FROM email_scan_item            WHERE scan_run_id = 'dryrun-srerase';
+  SELECT COUNT(*) INTO cnt_sr  FROM email_scan_run             WHERE id = 'dryrun-srerase';
+  SELECT COUNT(*) INTO cnt_es  FROM email_source               WHERE id = 'dryrun-eserase';
+  SELECT COUNT(*) INTO cnt_fv  FROM email_filter_version       WHERE email_filter_id = 'dryrun-ferase';
+  SELECT COUNT(*) INTO cnt_ef  FROM email_filter               WHERE id = 'dryrun-ferase';
+  SELECT COUNT(*) INTO cnt_acc FROM "Account"                  WHERE id = 'dryrun-aerase';
+  SELECT COUNT(*) INTO cnt_usr FROM "User"                     WHERE id = 'dryrun-uerase';
 
   IF cnt_mc + cnt_si + cnt_sr + cnt_es + cnt_fv + cnt_ef + cnt_acc + cnt_usr <> 0 THEN
     RAISE EXCEPTION
       'FAIL VP13: Erasure left non-zero rows — mc:% si:% sr:% es:% fv:% ef:% acc:% usr:%',
       cnt_mc, cnt_si, cnt_sr, cnt_es, cnt_fv, cnt_ef, cnt_acc, cnt_usr;
   END IF;
-  RAISE NOTICE 'PASS VP13: All 8 tables have 0 rows after canonical erasure';
+  RAISE NOTICE 'PASS VP13: All 8 stable-ID checks have 0 rows after canonical erasure';
 END; $$;
 
 -- =============================================================================
--- VP14: Full rollback — pre-rollback baseline counts
+-- VP14: Full rollback
 -- =============================================================================
-\echo '--- VP14: Pre-rollback baseline counts ---'
-SELECT COUNT(*) AS user_count_before_rollback FROM "User" WHERE id NOT LIKE 'dryrun-%';
-SELECT COUNT(*) AS account_count_before_rollback FROM "Account" WHERE id NOT LIKE 'dryrun-%';
+\echo '--- VP14: Rolling back all dry-run changes ---'
 
 ROLLBACK;
 
@@ -1100,17 +1222,36 @@ BEGIN
   RAISE NOTICE 'PASS VP15: account_disconnected_idx removed by rollback';
 END; $$;
 
--- Assert baseline User count unchanged (no production rows leaked)
+-- C97: Assert exact User count equals captured baseline (client variable survives ROLLBACK).
+-- Every mismatch terminates the script (ON_ERROR_STOP=1 required).
 DO $$
 DECLARE
-  usr_count INT;
+  usr_count     INT;
+  acc_count     INT;
+  usr_baseline  INT := :baseline_user_count;
+  acc_baseline  INT := :baseline_account_count;
 BEGIN
   SELECT COUNT(*) INTO usr_count FROM "User";
-  -- If any dryrun- rows somehow survive rollback, this will catch them
+  SELECT COUNT(*) INTO acc_count FROM "Account";
+
+  IF usr_count <> usr_baseline THEN
+    RAISE EXCEPTION 'FAIL VP15: User count after ROLLBACK = % (expected baseline %)',
+      usr_count, usr_baseline;
+  END IF;
+  IF acc_count <> acc_baseline THEN
+    RAISE EXCEPTION 'FAIL VP15: Account count after ROLLBACK = % (expected baseline %)',
+      acc_count, acc_baseline;
+  END IF;
+
   IF EXISTS (SELECT 1 FROM "User" WHERE id LIKE 'dryrun-%') THEN
     RAISE EXCEPTION 'FAIL VP15: dryrun- User rows survive rollback';
   END IF;
-  RAISE NOTICE 'PASS VP15: Baseline User table intact — % row(s), no dryrun- rows', usr_count;
+  IF EXISTS (SELECT 1 FROM "Account" WHERE id LIKE 'dryrun-%') THEN
+    RAISE EXCEPTION 'FAIL VP15: dryrun- Account rows survive rollback';
+  END IF;
+
+  RAISE NOTICE 'PASS VP15: User count = % (baseline %), Account count = % (baseline %), no dryrun- rows',
+    usr_count, usr_baseline, acc_count, acc_baseline;
 END; $$;
 
 \echo '--- VP15: ROLLBACK COMPLETE — all dry-run objects removed ---'
