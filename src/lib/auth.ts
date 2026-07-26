@@ -33,6 +33,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "database" },
   callbacks: {
     ...authConfig.callbacks,
+    async signIn({ account }) {
+      if (account?.provider === "google" && account.providerAccountId) {
+        await prisma.account.updateMany({
+          where: {
+            provider: account.provider,
+            providerAccountId: account.providerAccountId,
+          },
+          data: {
+            ...(account.access_token !== undefined
+              ? { access_token: account.access_token }
+              : {}),
+            ...(account.refresh_token
+              ? { refresh_token: account.refresh_token }
+              : {}),
+            ...(account.expires_at !== undefined
+              ? { expires_at: account.expires_at }
+              : {}),
+            ...(account.token_type !== undefined
+              ? { token_type: account.token_type }
+              : {}),
+            ...(account.scope !== undefined ? { scope: account.scope } : {}),
+            ...(account.id_token !== undefined
+              ? { id_token: account.id_token }
+              : {}),
+          },
+        });
+      }
+      return true;
+    },
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;
