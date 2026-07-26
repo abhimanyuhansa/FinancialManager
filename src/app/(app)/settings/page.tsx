@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { IconPicker } from "@/components/IconPicker";
+import { SignOutButton } from "@/components/SignOutButton";
 import { invalidateCategoryCache, invalidateSubCategoryCache } from "@/hooks/useCategories";
 
 type EmailFilter = {
@@ -1698,6 +1699,14 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      <section className="mt-8 border-t border-[#D9DBE3] pt-6">
+        <h2 className="text-sm font-semibold text-[#44475B]">Account</h2>
+        <p className="mb-3 mt-1 text-sm text-[#7C7E8C]">
+          Sign out of Financial Manager on this device. Your Google Gmail access and financial data are retained.
+        </p>
+        <SignOutButton placement="settings" />
+      </section>
     </div>
   );
 }

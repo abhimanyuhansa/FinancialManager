@@ -1,5 +1,6 @@
 "use client";
 import { NavItem } from "./NavItem";
+import { SignOutButton } from "./SignOutButton";
 import { SyncProgressBanner } from "./SyncProgressBanner";
 
 const DashboardIcon = () => (
@@ -115,6 +116,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         {navItems.map((item) => (
           <NavItem key={item.href} href={item.href} label={item.label} icon={item.icon} />
         ))}
+        <SignOutButton placement="sidebar" />
       </nav>
 
       {/* Main content */}
