@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type Asset = {
   id: string;
@@ -39,15 +39,18 @@ export default function AssetsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const fetchAssets = () => {
+  const fetchAssets = useCallback(() => {
     setLoading(true);
     fetch("/api/assets")
       .then((r) => r.json())
       .then((d: { assets: Asset[] }) => setAssets(d.assets ?? []))
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(() => { fetchAssets(); }, []);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(fetchAssets, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [fetchAssets]);
 
   const totalValue = assets.reduce((sum, a) => sum + a.value, 0);
 

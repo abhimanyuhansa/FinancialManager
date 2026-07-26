@@ -26,6 +26,11 @@
 > **Phase 0 revision 2026-07-19 pass 9 (C50):**
 > C50: §8.4 `error_message` field references replaced with `last_error_message_sanitized` (two
 >   occurrences — both in prose and in implementation note).
+> **Dependency security update 2026-07-26 (C122–C123):** Auth.js was upgraded to
+> `next-auth@5.0.0-beta.32`, `@auth/core@0.41.3`, and `@auth/prisma-adapter@2.11.3`;
+> Next.js was upgraded to 16.2.12. Reviewed patched transitive versions are locked for PostCSS,
+> sharp, find-my-way, and Valibot. The production dependency audit reports zero vulnerabilities,
+> and focused authentication tests plus the production build pass.
 
 > Per PM decision: **document + verify git state; no code or secret changes this pass.** All
 > git/secret claims below were re-verified read-only at consolidation time (2026-07-14). Tags

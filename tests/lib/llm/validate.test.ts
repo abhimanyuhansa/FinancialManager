@@ -1,5 +1,5 @@
 import { validateProviderResults } from "../../../src/lib/llm/validate";
-import { ProviderParseError, ProviderContractError } from "../../../src/lib/llm/providers/types";
+import { ProviderContractError } from "../../../src/lib/llm/providers/types";
 
 const makeItem = (emailIndex: number, isTransaction = true) => ({
   emailIndex,

@@ -29,7 +29,8 @@
 
 > §1–§7: As-built current state. Components cite their source files. State machines and the
 > parse chain are reconstructed from the actual routes/libs, not from prior docs.
-> §8: Proposed Phase 1A target architecture — all items tagged `[Planned — pending approval]`.
+> §8: Proposed Phase 1A target architecture — not implemented. The bounded Stage 1 schema
+> design was approved on 2026-07-26; runtime architecture remains planned.
 > Tags per `00-index.md`.
 
 ---
@@ -238,9 +239,11 @@ NFR budgets (60s, CHUNK_SIZE=25, quotas) → `03`; models/routes → `05`; what'
 
 ---
 
-## 8. Phase 1A target architecture `[Planned — pending approval]`
+## 8. Phase 1A target architecture `[Schema approved; runtime not implemented]`
 
-> All items in this section are **`[Planned — pending approval]`**. None are implemented.
+> The six-table schema and approved additive Account changes are approved for bounded Stage 1
+> migration work. No Prisma migration, runtime component, route, scheduler, or deployment in this
+> section is implemented.
 > Source of truth: `14-phase0-assessment.md`. Full acceptance criteria in §15 of that document.
 
 ### 8.1 Current-state limitations
@@ -313,7 +316,7 @@ Upstash QStash (free tier: 1,000 msg/day, at-least-once delivery)
 Both flags default to **false** (safe). The existing sync path (`/api/gmail/sync/*`) is protected
 by `LEGACY_TRANSACTION_INGESTION_ENABLED`; Phase 1A does not remove it — both paths coexist.
 
-### 8.3 Migration / coexistence architecture `[Planned — pending approval]`
+### 8.3 Migration / coexistence architecture `[Stage 1 schema approved — not implemented]`
 
 Phase 1A uses an **additive, non-breaking migration strategy**:
 

@@ -14,7 +14,8 @@ export function OnboardingOverlay({ hasRealData, onStartSync }: Props) {
   useEffect(() => {
     if (hasRealData) return;
     if (typeof window !== "undefined" && sessionStorage.getItem(SESSION_KEY)) return;
-    setVisible(true);
+    const timeoutId = window.setTimeout(() => setVisible(true), 0);
+    return () => window.clearTimeout(timeoutId);
   }, [hasRealData]);
 
   if (!visible) return null;

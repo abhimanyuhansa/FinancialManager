@@ -27,7 +27,7 @@
 | Property | Value |
 |----------|-------|
 | Platform | **Vercel Hobby** |
-| Runtime | Node.js (Next.js 16.2.10 App Router) |
+| Runtime | Node.js (Next.js 16.2.12 App Router) |
 | Region | Vercel default (single region) **[Unverified — External Platform Configuration]** |
 | Instance count | **1** (Hobby plan; no horizontal scaling) **[Unverified — External Platform Configuration]** — Vercel Hobby is documented by Vercel as single-instance and single-region, but this is a platform-level constraint not specified in `vercel.json`. |
 | Build command | `npx prisma generate && next build` |
@@ -155,11 +155,11 @@ used exclusively.
 | Property | Value |
 |----------|-------|
 | Provider | Neon serverless PostgreSQL (free tier) |
-| ORM | Prisma 7.8 |
+| ORM | Prisma 7.9 |
 | Adapter | `@prisma/adapter-neon` (serverless connection pooling) |
 | Config | `prisma.config.ts` — loads `.env.local` via `dotenv`, then `defineConfig` |
-| Migrations | `prisma/migrations/` — 13 migrations as of baseline |
-| Schema | `prisma/schema.prisma` — 27 models |
+| Migrations | `prisma/migrations/` — 18 migrations including reconciliation and Stage 1 |
+| Schema | `prisma/schema.prisma` — 33 models |
 
 **Run migrations (deploy):**
 ```bash
@@ -170,6 +170,13 @@ npx prisma migrate deploy
 ```bash
 npx prisma generate
 ```
+
+The Prisma CLI is a development dependency; deployment/build environments that execute
+`prisma migrate deploy` or `prisma generate` must install development dependencies for that
+step. The runtime continues to use `@prisma/client` and `@prisma/adapter-neon` as production
+dependencies. Do not remove or loosen the reviewed `package.json` overrides for PostCSS, sharp,
+find-my-way, or Valibot without rerunning production audit, lint, tests, build, Prisma validation,
+both drift modes, and migration verification.
 
 **Seed demo data:**
 ```bash
@@ -278,9 +285,11 @@ cron advance behavior → `04-architecture.md §3`; operational risks → `10-ri
 
 ---
 
-## 9. Phase 1A operational changes `[Planned — pending approval]`
+## 9. Phase 1A operational changes `[Stage 1 database implemented; deployment pending]`
 
-> All items in this section are **`[Planned — pending approval]`**. None are deployed.
+> The bounded Stage 1 Prisma schema, migration, rollback, fixture, and verifier exist and passed
+> isolated execution on 2026-07-26. Runtime code, external resources, and production deployment
+> described here do not exist yet.
 > Full rationale in `14-phase0-assessment.md §18` (config changes) and §19 (external resources).
 
 ### 9.1 Vercel configuration changes
@@ -316,18 +325,20 @@ cron advance behavior → `04-architecture.md §3`; operational risks → `10-ri
 
 > **Action required:** Monitor the QStash DLQ (Dead Letter Queue) for failed messages.
 > A message enters DLQ if the worker returns 5xx three times. This indicates a scan stuck
-> in a failed state — inspect `email_scan_run.error_message` for the scan run ID.
+> in a failed state — inspect the sanitized `email_scan_run.last_error_code` and
+> `last_error_message_sanitized` for the scan run ID. Never place Gmail IDs or PII in those fields.
 
 ### 9.3 Database migration prerequisites
 
 Before deploying Phase 1A:
 
 ```bash
-# 1. Run the Phase 1A schema migration
+# 1. Take and record an approved snapshot, then apply all pending migrations.
+# This includes the checksum-preserving replay bridge, Stage 1, and nullable LLM drift columns.
 npx prisma migrate deploy
 # This adds 6 new tables: email_filter, email_filter_version, email_source,
-# email_scan_run, email_scan_item, email_manual_classification.
-# Existing tables are not modified.
+# email_scan_run, email_scan_item, email_manual_classification; and adds approved
+# Account uniqueness, disconnection columns, coherence CHECK, and recovery index.
 
 # 2. Verify migration completed
 npx prisma migrate status
@@ -336,8 +347,32 @@ npx prisma migrate status
 npx prisma generate
 ```
 
-**Safe to run against existing prod data** — migration is additive only; no columns added or
-dropped from existing tables; no data migration required.
+**Do not deploy directly from the design SQL.** First run the canonical dry run against an empty
+baseline and a sanitized representative pre-migration database, take an approved snapshot, inspect
+existing Account rows for compatibility, and review lock duration for the Account constraint/index
+creation. The migration is additive but modifies an existing table and is therefore not zero-risk.
+Use the exact interruption, forward/rollback, and reapply commands in
+`09-testing-quality.md §7 Stage 1 schema dry-run evidence gate`.
+
+**Reconciliation behavior:** On an already-migrated database, the bridge validates the stored
+checksums of both historical migrations and confirms ParseTemplate/ParseLog state. It does not
+drop or recreate production ParseTemplate data. On clean replay only, it creates an empty
+transient bootstrap, removes it before the historical ParseTemplate migration, normalizes the
+final index/default, and removes the marker. A checksum or state mismatch aborts the transaction.
+
+After deploy, run:
+
+```bash
+npx prisma migrate status
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL" \
+  -f docs/consolidated/migration-reconciliation-verify.sql
+npx prisma migrate diff --exit-code \
+  --from-config-datasource --to-schema prisma/schema.prisma
+```
+
+Do not edit either historical migration, manually update its checksum, or delete individual
+bridge history rows. Restore the snapshot and prior application commit together if reconciliation
+must be reversed.
 
 ### 9.4 Cron behavior during Phase 1A
 
@@ -348,28 +383,40 @@ Phase 1A. Its behavior depends on `LEGACY_TRANSACTION_INGESTION_ENABLED`:
 - **Flag = true:** `advance` runs normally, processing any pending `SyncJob` records.
 
 The new scan path (`/api/gmail/scan/worker`) is **not** triggered by Vercel Cron. It is triggered
-exclusively by Upstash QStash messages initiated by `POST /api/gmail/scan/start`.
+exclusively by Upstash QStash messages initiated by `POST /api/gmail/scan`.
 
 ### 9.5 Deployment sequence for Phase 1A
 
 **Recommended order** (minimizes risk of partially-deployed state):
 
-1. Run `npx prisma migrate deploy` (adds 6 new tables — safe at any time, additive only)
-2. Set `LLM_PARSING_ENABLED=false`, `LEGACY_TRANSACTION_INGESTION_ENABLED=false` in Vercel
-3. Set `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` in Vercel
-4. Remove `NEXT_PUBLIC_CRON_SECRET` from Vercel environment variables
-5. Deploy Phase 1A code (`git push` → Vercel CI)
-6. Verify `/api/health` returns 200; verify `/api/gmail/scan/start` returns expected response
-7. Test one scan end-to-end with `LLM_PARSING_ENABLED=false` and `LEGACY_TRANSACTION_INGESTION_ENABLED=false`
-8. Confirm `SELECT COUNT(*) FROM "Transaction"` = 0 after scan completes (AC-01)
+1. Complete the empty and representative database dry runs and record snapshot/restore evidence.
+2. Run `npx prisma migrate deploy` in the approved maintenance window (adds 6 tables and the
+   approved Account additions)
+3. Set `LLM_PARSING_ENABLED=false`, `LEGACY_TRANSACTION_INGESTION_ENABLED=false` in Vercel
+4. Set `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` in Vercel
+5. Remove `NEXT_PUBLIC_CRON_SECRET` from Vercel environment variables
+6. Deploy Phase 1A code (`git push` → Vercel CI)
+7. Verify `/api/health` returns 200; verify `POST /api/gmail/scan` returns the expected response
+8. Record the `Transaction` count, run one end-to-end scan with both flags false, then prove the
+   post-scan count is unchanged (delta = 0)
 9. (Optional) Enable `LEGACY_TRANSACTION_INGESTION_ENABLED=true` to restore legacy sync path
 
 ### 9.6 Rollback procedure
 
 If Phase 1A must be rolled back:
 
-1. Set `LEGACY_TRANSACTION_INGESTION_ENABLED=false` (disables new scan path — no-op if already false)
-2. Set `LLM_PARSING_ENABLED=false` (disables LLM)
-3. Revert to the previous deployed commit in Vercel (instant rollback)
-4. The 6 new Phase 1A tables can be retained or dropped; no existing table references them
-5. To restore full legacy functionality, re-enable `LEGACY_TRANSACTION_INGESTION_ENABLED=true`
+1. Set both ingestion flags false; stop publication and drain or clear QStash in the operator console.
+2. Revert to the previous deployed commit and wait for in-flight functions to finish.
+3. Restore from the approved database snapshot if retained Phase 1A data is required. Otherwise,
+   execute the reviewed Stage 1 `rollback.sql`, which drops the six tables in dependency order
+   and removes the three trigger functions.
+4. Drop `account_disconnected_idx`, `chk_account_disconnection_coherence`,
+   `account_user_id_id_unique`, `disconnected_at`, and `disconnection_reason`, after proving
+   no dependent FK remains.
+5. Reconcile Prisma migration history through the approved restore procedure, verify the exact
+   baseline schema and row counts, then reapply forward in an isolated validation database.
+6. Regenerate Prisma Client and run legacy regression checks.
+7. To restore full legacy functionality, re-enable `LEGACY_TRANSACTION_INGESTION_ENABLED=true`.
+
+Exact SQL and interruption-recovery cases are authoritative in
+`14-phase0-assessment.md §14`; this summary must not be used independently.

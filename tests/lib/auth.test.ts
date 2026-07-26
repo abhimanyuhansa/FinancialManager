@@ -35,7 +35,11 @@ describe("auth config", () => {
   });
 
   it("session callback sets user.id", async () => {
-    const callbacks = capturedConfig.callbacks as Record<string, Function>;
+    type SessionCallback = (args: {
+      session: { user: Record<string, unknown> };
+      user: { id: string };
+    }) => Promise<unknown>;
+    const callbacks = capturedConfig.callbacks as { session: SessionCallback };
     const mockSession = { user: {} as Record<string, unknown> };
     const result = await callbacks.session({ session: mockSession, user: { id: "user-123" } });
     expect((result as typeof mockSession).user).toEqual({ id: "user-123" });

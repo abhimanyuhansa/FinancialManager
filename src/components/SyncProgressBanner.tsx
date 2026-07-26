@@ -61,10 +61,13 @@ export function SyncProgressBanner() {
   }, []);
 
   useEffect(() => {
-    tick();
+    const initialTimeout = window.setTimeout(() => void tick(), 0);
     const isActive = job?.status === "scanning" || job?.status === "running";
     const interval = setInterval(tick, isActive ? POLL_ACTIVE_MS : POLL_IDLE_MS);
-    return () => clearInterval(interval);
+    return () => {
+      window.clearTimeout(initialTimeout);
+      clearInterval(interval);
+    };
   }, [tick, job?.status]);
 
   // Auto-dismiss complete banner

@@ -1,4 +1,4 @@
-import { parseEmailBatchLLM, parseStatementLLM } from "../../../src/lib/llm/index";
+import { parseEmailBatchLLM } from "../../../src/lib/llm/index";
 import { LlmCallContext } from "../../../src/lib/llm/providers/types";
 
 jest.mock("../../../src/lib/llm/router");

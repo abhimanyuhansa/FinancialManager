@@ -8,12 +8,35 @@
 > **Phase 0 Assessment:** 2026-07-16 — Document 14 added: full architecture audit per master
 > prompt `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`. Assessed against
 > commit `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`. 10 root causes confirmed. 6 blocking
-> decisions (D-1 through D-6) pending PM/architect approval before Phase 1A begins.
+> decisions (D-1 through D-6) originally required PM/architect approval before Phase 1A begins.
 > **Phase 0 Corrections 2026-07-19:** C1–C8 applied to `14-phase0-assessment.md` and propagated
-> to companion documents 00, 05, 07, 08, 09, 10, 12, 13. Decision outcomes recorded: D-1 pending
+> to companion documents 00, 05, 07, 08, 09, 10, 12, 13. Decision outcomes recorded: D-1 initially pending
 > final schema approval; D-2 approved (QStash); D-3 approved (no body storage); D-4 conditionally
 > approved (feature flags + legacy-path shutdown); D-5 approved (defer SYSTEM_GLOBAL migration);
-> D-6 approved (remove ?secret= query param; QStash signature verification). Phase 1A blocked on D-1.
+> D-6 approved (remove ?secret= query param; QStash signature verification).
+> **Stage 1 blocker resolution 2026-07-26 (C108–C116):** The user's explicit instruction to
+> resolve the Phase 1A Stage 1 schema and dry-run blockers records D-1 approval for the bounded
+> schema/migration stage. The canonical SQL now includes named row-local integrity constraints,
+> complete baseline/Phase 1A fingerprints, corrected composite-FK duplicate detection, duplicate
+> and negative fixtures, recovery indexes, and exact erasure/rollback validation.
+> **Stage 1 implementation and executable verification 2026-07-26:** The Prisma schema and
+> migration `20260726000000_phase1a_stage1_scan_schema` now implement the six-table database
+> layer and additive Account changes. Forward deploy, intentional interruption, reviewed rollback
+> (including trigger-function removal), forward reapply, and full migrated-schema validation passed
+> on an empty baseline and a synthetic representative baseline. Runtime APIs, workers, flags, UI,
+> external resources, and production deployment remain unimplemented and excluded.
+> **Migration-history reconciliation 2026-07-26:** Three checksum-preserving bridge migrations
+> now repair the historical ParseTemplate/LLM replay order without editing either applied
+> migration. A fourth additive migration supplies the three previously drifted nullable LLM
+> columns. Full 18-migration replay, already-migrated production-like reconciliation,
+> representative-row preservation, negative checksum rejection, and both Prisma drift modes
+> passed on isolated PostgreSQL 17.10 databases.
+> **Quality and dependency blocker resolution 2026-07-26 (C121–C124):** The 17-error/6-warning
+> ESLint baseline is resolved without disabling rules. Auth.js, Next.js, and Prisma were upgraded
+> to patched compatible releases; reviewed transitive overrides close the remaining production
+> advisory paths. `npm run lint`, 29 Jest suites / 248 tests, Prisma validation/generation,
+> production build, and both Prisma drift modes pass. `npm audit --omit=dev` reports zero
+> vulnerabilities. Browser E2E remains unexecuted because `e2e/.env` and test auth state are absent.
 > **Phase 0 Corrections 2026-07-19 pass 5 (C14–C23):** Applied to `14-phase0-assessment.md` and
 > propagated to companion documents 00, 05, 07, 09, 12. C14 — progress formula corrected
 > (filter_excluded_count is subset of fetch_success_count; CANCELLED items excluded from
@@ -28,7 +51,7 @@
 > 4 of 7 constraint triggers replaced by declarative composite FKs; 2 new UNIQUE constraints
 > added (email_filter_version, email_source); 3 triggers remain. C21 — User CASCADE does not
 > overcome Account RESTRICT; explicit erasure transaction defined; Account additive migration
-> requires D-1 approval; actual NextAuth field names corrected (access_token, refresh_token).
+> was D-1 gated; actual NextAuth field names corrected (access_token, refresh_token).
 > C22 — QStash quota recovery: no automatic midnight recovery; manual resume approved for
 > Phase 1A; Vercel daily cron sweeper optional. C23 — rule_schema_version and
 > filter_evaluator_version added to email_filter_version; scan snapshot records both;
@@ -130,7 +153,7 @@ Every claim cites its source file where practical (e.g., `prisma/schema.prisma`,
 | 02 | [02-functional-requirements.md](02-functional-requirements.md) | PM, QA, Architect | Feature-by-feature functional requirements + end-to-end user flows. |
 | 03 | [03-non-functional-requirements.md](03-non-functional-requirements.md) | Architect, Auditor, Ops | Cost, quota, latency, scale, reliability, privacy constraints. |
 | 04 | [04-architecture.md](04-architecture.md) | Architect, Security, QA | Components + responsibilities, sync state machine, parse chain, LLM subsystem. |
-| 05 | [05-data-model-apis.md](05-data-model-apis.md) | Architect, Auditor, QA | 27 Prisma models, 36 API routes (method/auth/purpose), integrations, migrations. |
+| 05 | [05-data-model-apis.md](05-data-model-apis.md) | Architect, Auditor, QA | 33 Prisma models, 36 API routes (method/auth/purpose), integrations, migrations. |
 | 06 | [06-security-authentication.md](06-security-authentication.md) | Security Reviewer, Auditor | Auth model, session, cron auth, verified git state, security findings + severity. |
 | 07 | [07-design-decisions.md](07-design-decisions.md) | Architect, PM | ADR-style rationale for 12 key architectural decisions. |
 | 08 | [08-implementation-status.md](08-implementation-status.md) | All | Implemented / Partial / Planned / Undocumented / Stale classification + conflict table. |
@@ -161,8 +184,9 @@ Every claim cites its source file where practical (e.g., `prisma/schema.prisma`,
 
 ## Source inventory (what was reviewed)
 
-- `prisma/schema.prisma` — 27 models (authoritative data model).
-- `prisma/migrations/` — 13 migrations, `20260708…init` through `20260714…add_parse_template`.
+- `prisma/schema.prisma` — 33 models (authoritative data model).
+- `prisma/migrations/` — 18 migrations, `20260708…init` through
+  `20260726010000_reconcile_llm_schema_drift`.
 - `src/app/api/**/route.ts` — 36 API routes.
 - `src/lib/` — 17 library modules + `src/lib/llm/` subsystem (router, breaker, quota, lock, idempotency, providers, prompts, validate).
 - `tests/` — 26 unit-test files, ~178 `it()/test()` blocks.

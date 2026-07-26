@@ -34,7 +34,7 @@ test("T7.5 delete a filter removes it", async ({ page, request }) => {
   const res = await request.post("/api/settings/filters", {
     data: { type: "sender_domain", value: "e2e-delete-test.com", sourceRank: 1 },
   });
-  const { id } = await res.json();
+  expect(res.ok()).toBe(true);
 
   await page.goto("/settings");
   await page.getByRole("tab", { name: /filter/i }).click();

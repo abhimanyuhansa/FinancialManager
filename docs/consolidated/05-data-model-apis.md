@@ -94,7 +94,8 @@
 >   all marked NOT NULL; `created_at`/`updated_at` marked NOT NULL DEFAULT now().
 > C87: `/api/gmail/scan/{id}/retry` route description corrected — FAILED removed as retryable option;
 >   stalled active-scan recovery (expired lease) added.
-> C88: Earlier C77–C80 dry-run claim superseded; final isolated C84 dry run pending Stage 1 approval.
+> C88: Earlier C77–C80 dry-run claim superseded; the then-pending isolated C84 drill was
+> subsequently executed successfully during Stage 1 on 2026-07-26.
 > **Phase 0 revision 2026-07-23 (C89–C91):**
 > C89: Constraint name confirmed `account_user_id_id_unique`; `account_disconnected_idx` added to SQL;
 >   SQL header updated to C81–C89; psql usage updated to `docs/consolidated/phase1a-dry-run.sql`.
@@ -123,6 +124,11 @@
 >   PostgreSQL-generated FK names); VP5 trigger assertions upgraded to exact tgtype values
 >   (19 / 21), tgenabled='O', tgattr assertions for all three triggers; metadata updated to
 >   C1–C107.
+> **Phase 1A Stage 1 readiness corrections 2026-07-26 (C108–C116):**
+> D-1 approved for the bounded schema/migration stage. Named row-local CHECK constraints,
+> Account disconnection coherence, exact schema fingerprints, classification consistency
+> fixtures, corrected FK duplicate detection, canonical erasure/rollback, and recovery/review
+> indexes are now part of the approved design. Runtime Phase 1A behavior remains unimplemented.
 > **Pass 7 corrections:** 2026-07-15 — Frozen metadata standardized. J-01.
 > **Pass 3 corrections:** 2026-07-14 — 6-tier ownership taxonomy, API method corrections,
 > SyncJobMessage cascade correction. Source: reviewer pass verified against code.
@@ -136,12 +142,12 @@
 > **Pass 6 corrections:** 2026-07-15 — Frozen metadata corrected; route-count formula
 > corrected (33 routes call auth(), 3 do not = 36 total). I-01, I-05.
 
-> Authoritative sources: `prisma/schema.prisma` (27 models), `src/app/api/**/route.ts`
-> (36 routes), `prisma/migrations/` (13 migrations). Tags per `00-index.md`.
+> Authoritative sources: `prisma/schema.prisma` (33 models), `src/app/api/**/route.ts`
+> (36 routes), `prisma/migrations/` (18 migrations). Tags per `00-index.md`.
 
 ---
 
-## 1. Data model — 27 Prisma models
+## 1. Data model — 33 Prisma models
 
 Grouped by concern. **Ownership classification (7-tier):**
 
@@ -226,16 +232,18 @@ Grouped by concern. **Ownership classification (7-tier):**
 | `LlmBatchIdempotency` | OPERATIONAL_GLOBAL | Batch dedup | `batchKey` unique, `result` (Json), `expiresAt`; **no `userId` field** |
 | `GeminiUsageLog` | OPERATIONAL_GLOBAL | Per-day Gemini counter | `date` (YYYY-MM-DD) unique, `callCount`; **no `userId` field** |
 
-> **Model count = 27** (current). After Phase 1A migration: **33 models** (27 + 6 new). See §1.9.
+> **Model count = 33** (27 baseline + 6 Stage 1 models). See §1.9.
 > Verified `grep -c "^model " prisma/schema.prisma`. *(Memory said 25 — **[Stale]**; the two extra
 > are additions from later migrations.)*
 
 ---
 
-## 1.9 Phase 1A models — 6 new tables `[Planned — pending approval]`
+## 1.9 Phase 1A models — 6 new tables `[Stage 1 implemented; runtime pending]`
 
-> All items in this section are **`[Planned — pending approval]`**. None exist in the current schema.
-> Full SQL DDL and rationale in `14-phase0-assessment.md §6`. After this migration: **33 Prisma models**.
+> The bounded Stage 1 database layer exists in `prisma/schema.prisma` and
+> `prisma/migrations/20260726000000_phase1a_stage1_scan_schema/`. Runtime Phase 1A behavior
+> remains outside this stage and is not implemented. Full SQL rationale is in
+> `14-phase0-assessment.md §6`.
 > Migration strategy: additive only — no FKs into `SyncJob`, `ParseLog`, or `Transaction`.
 
 **Cross-table referential integrity (C1, C10, C20, C34):** Most invariants across these tables are
@@ -255,20 +263,27 @@ as its scan run — no declarative FK can express this three-table join check),
 `email_source_id` on an existing scan item; prevents structural reparenting even to a valid same-user scan).
 Full DDL and FK definitions in `14-phase0-assessment.md §6`.
 
+**Row-local CHECK enforcement (C109):** Named constraints cover Account disconnection;
+positive filter/version values and JSON arrays; source fetch, classification, and timestamps;
+scan date/counters/stage/lease/retry/continuation/terminal state; item
+state/lease/retry/filter/timestamps; and classification version/change/timestamps. Cross-row
+scan completion and source/history classification equality remain transaction + integration-test
+responsibilities because PostgreSQL CHECK constraints cannot query child or history rows.
+
 **UNIQUE(userId, id) on Account (C10, C20):** The `Account` table must have `UNIQUE("userId", id)` to enable
 composite FKs from `email_filter`, `email_source`, and `email_scan_run` to `Account("userId", id)`.
 This replaces ownership triggers for Account-scoped cross-tenant enforcement (C20). Add via
 `ALTER TABLE "Account" ADD CONSTRAINT account_user_id_id_unique UNIQUE ("userId", id)` in the Phase 1A
-migration — requires D-1 approval (additive, non-destructive).
+migration — D-1 approved 2026-07-26 (additive, non-destructive).
 
 **Gmail account disconnection model (C11, C21):** The `Account` table must be extended with `disconnected_at TIMESTAMPTZ`
 and `disconnection_reason TEXT` to support soft-disconnection. Disconnection clears OAuth tokens
 (`access_token`, `refresh_token` set to NULL — actual Prisma field names; C21) without deleting
 the Account row. Future Gmail calls are blocked in `getGmailToken()` by checking `disconnected_at IS NOT NULL`.
 Reconnection re-OAuths the same Account row and clears `disconnected_at`. This additive migration
-requires D-1 approval. See `14-phase0-assessment.md §6.7`.
+is approved under D-1. See `14-phase0-assessment.md §6.7`.
 
-**Account additive migration (Phase 1A, requires D-1 approval):**
+**Account additive migration (Phase 1A, D-1 approved):**
 
 ```sql
 ALTER TABLE "Account"
@@ -278,6 +293,14 @@ ALTER TABLE "Account"
 ALTER TABLE "Account"
   ADD COLUMN disconnected_at      TIMESTAMPTZ,
   ADD COLUMN disconnection_reason TEXT;
+
+ALTER TABLE "Account"
+  ADD CONSTRAINT chk_account_disconnection_coherence CHECK (
+    (disconnected_at IS NULL AND disconnection_reason IS NULL)
+    OR
+    (disconnected_at IS NOT NULL
+     AND disconnection_reason IN ('user_request','token_revoked','invalid_grant'))
+  );
 
 CREATE INDEX account_disconnected_idx
   ON "Account"(id)
@@ -372,6 +395,8 @@ Each `email_scan_run` stores `email_filter_id` + `email_filter_version_id` to re
 | `deleted_at` | TIMESTAMPTZ NULLABLE | Soft-delete timestamp |
 | **Unique** | `(user_id, gmail_account_id, gmail_message_id)` | Idempotency — second scan produces no duplicates |
 | **Unique** | `(user_id, id)` | Enables composite FK references from child tables (C20) |
+| **CHECK set** | `chk_email_source_*` named constraints | Enforces fetch/classification values, nonnegative classification version, and timestamp order |
+| **Index** | `email_source_manual_review_idx` | Supports per-user/account UNREVIEWED and UNCERTAIN review queries |
 
 ### email_scan_run
 
@@ -428,6 +453,7 @@ Each `email_scan_run` stores `email_filter_id` + `email_filter_version_id` to re
 | `paused_at` | TIMESTAMPTZ NULLABLE | Set when status transitions to `PAUSED` |
 | **CHECK** | `CONSTRAINT chk_pending_continuation_coherence` | All four `pending_continuation_*` fields must be collectively NULL or collectively non-null (except `pending_continuation_published_at` which may be NULL until confirmed) |
 | **CHECK** | `CONSTRAINT chk_pending_sequence_matches_scan_sequence` | `pending_continuation_sequence` must equal `batch_sequence` when non-NULL; enforces sequence coherence across checkpoint, resume, and retry transactions (C75) |
+| **CHECK set** | `chk_scan_run_*` named constraints | Enforces status/stage values, date order, nonnegative values, counter bounds, stage/started-at coherence, lease owner/expiry coherence, RETRY_WAIT timing, pending-continuation status, terminal cleanup/timestamps, and timestamp ordering (C109) |
 | **Derived (API only)** | `worker_last_active_at` | Not a persisted DB column; computed from `worker_lease_expires_at` for API responses |
 | **Derived (API only)** | `estimated_completion_at` | Not a persisted DB column; estimated from counters and average item fetch time for API responses |
 
@@ -455,6 +481,7 @@ Each `email_scan_run` stores `email_filter_id` + `email_filter_version_id` to re
 | `fetch_completed_at` | TIMESTAMPTZ NULLABLE | Set on terminal fetch transition (FETCHED or PERMANENTLY_FAILED) |
 | `updated_at` | TIMESTAMPTZ NOT NULL | Updated on every state transition |
 | **Unique** | `(scan_run_id, email_source_id)` | One item per message per scan run |
+| **CHECK set** | `chk_scan_item_*` named constraints | Enforces status/filter values, nonnegative versions/attempts, lease and retry coherence, filter-decision timing, terminal timestamps, and timestamp order (C109) |
 
 ### email_manual_classification
 
@@ -469,14 +496,15 @@ Each `email_scan_run` stores `email_filter_id` + `email_filter_version_id` to re
 | `classified_by` | TEXT NULLABLE FK → User **ON DELETE SET NULL** | User who made the classification; nullable so user deletion cannot block erasure (C11) |
 | `classified_at` | TIMESTAMPTZ NOT NULL | |
 | `classification_version` | INTEGER NOT NULL | Value of `email_source.classification_version` at time of this entry; optimistic concurrency |
-| `created_at` | TIMESTAMPTZ | Append-only — rows are never updated or deleted |
+| `created_at` | TIMESTAMPTZ | Append-only in normal operation; authorized erasure/retention may delete |
 | **Unique** | `(email_source_id, classification_version)` | One classification entry per version |
+| **CHECK set** | `chk_manual_*` named constraints | Enforces allowed values, version > 0, actual classification change, and timestamp order |
 
 **Current classification** is materialized on `email_source.current_manual_classification` and
 kept consistent via a transactional 4-step update (validate `classification_version` → insert
 history row → update `current_manual_classification` → increment `classification_version`). The
-`email_manual_classification` table is the authoritative audit history; no `UPDATE` or `DELETE`
-operations are ever performed on it.
+`email_manual_classification` table is the authoritative audit history. Runtime classification
+routes are insert-only; authorized erasure/retention is the documented DELETE exception.
 
 ---
 
@@ -620,7 +648,7 @@ Methods are indicative (per route handler exports).
 
 ---
 
-## 4. Migration timeline (13 migrations)
+## 4. Migration timeline (18 migrations)
 
 | Date-ordered migration | Introduces |
 |------------------------|-----------|
@@ -634,26 +662,46 @@ Methods are indicative (per route handler exports).
 | `20260712154013_gmail_sync_redesign_v2` | Sync redesign v2 |
 | `20260712203815_add_vpa_merchant_map` | `VpaMerchantMap` |
 | `20260713000000_add_category_slug` | `Category.slug` |
+| `20260713150000_prepare_parse_template_replay` | Checksum-validating, clean-replay-only transient ParseTemplate bootstrap |
 | `20260713222953_add_llm_routing_tables` | `LlmCallLog`, `LlmQuotaWindow`, `LlmCircuitBreaker`, `LlmBatchIdempotency`, `SyncJobLock` |
 | `20260714000000_add_subcategory` | `SubCategory`, `SubCategoryMaster` |
+| `20260714050000_reset_parse_template_replay` | Removes only the empty transient clean-replay bootstrap; production-like path is a no-op |
 | `20260714100000_add_parse_template` | `ParseTemplate` |
+| `20260714150000_finalize_parse_template_replay` | Normalizes ParseTemplate default/index state and removes the transient marker |
+| `20260726000000_phase1a_stage1_scan_schema` | Six Stage 1 scan/filter tables plus additive Account ownership/disconnection constraints |
+| `20260726010000_reconcile_llm_schema_drift` | Nullable `effectiveTimeoutMs`, `finishReason`, and `probeLeaseExpiresAt` columns |
 
 **[Confirmed]** — `ls prisma/migrations/`.
 
-### Phase 1A migration `[Planned — pending approval]`
+### Phase 1A migration `[Stage 1 implemented and verified]`
 
-One additional migration will be added during Phase 1A:
+The bounded Stage 1 migration is:
 
 | Migration | Introduces |
 |-----------|-----------|
-| `20260718000000_phase1a_scan_schema` | `email_filter`, `email_filter_version`, `email_source`, `email_scan_run`, `email_scan_item`, `email_manual_classification` (6 tables; 27→33 models) |
+| `20260726000000_phase1a_stage1_scan_schema` | `email_filter`, `email_filter_version`, `email_source`, `email_scan_run`, `email_scan_item`, `email_manual_classification` (6 tables; 27→33 models) |
 
 **Strategy:** Additive only. No FKs into `SyncJob`, `ParseLog`, `Transaction`, or `SyncJobMessage`.
 The migration creates six new tables and also performs the explicitly approved additive Account
 changes: adding `UNIQUE(userId,id)`, `disconnected_at`, and `disconnection_reason` to the
 existing `Account` table. It is not accurate to state that no existing columns are added.
 Rollback is not only DROP TABLE and is not risk-free — see `07-design-decisions.md` ADR-14
-rollback sequencing. **[Planned — pending approval]**
+rollback sequencing. Forward, rollback, reapply, interruption recovery, and synthetic
+representative-data validation passed on PostgreSQL 17.10 on 2026-07-26. Production deployment
+has not been performed.
+
+### Historical replay reconciliation `[Implemented and verified]`
+
+The three bridge migrations preserve the original SHA-256 checksums of
+`20260713222953_add_llm_routing_tables` and `20260714100000_add_parse_template`.
+On clean replay they create and remove an empty transient ParseTemplate bootstrap so the
+historical LLM migration can run in lexical order. On an already-migrated database they validate
+the recorded checksums and required objects, then make no business-data change. The finalizer
+normalizes the index/default state and removes the marker. Any checksum mismatch fails closed.
+
+`20260726010000_reconcile_llm_schema_drift` adds three nullable columns without backfill and
+validates their exact types. Full `migrate deploy`, `migrate diff --from-migrations`, and live
+database-to-schema diff all report no difference.
 
 ---
 

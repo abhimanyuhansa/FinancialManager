@@ -69,7 +69,6 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
     fetch("/api/analytics/dashboard")
       .then((r) => r.json())
       .then((d) => setData(d as DashboardData))
@@ -100,7 +99,10 @@ export default function DashboardPage() {
   const handleSyncComplete = (newTx: number) => {
     setSyncJobId(null);
     setSyncing(false);
-    if (newTx > 0) setRefreshKey((k) => k + 1);
+    if (newTx > 0) {
+      setLoading(true);
+      setRefreshKey((k) => k + 1);
+    }
   };
 
   const handleSyncCancel = () => {

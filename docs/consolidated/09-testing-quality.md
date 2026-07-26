@@ -62,6 +62,13 @@
 > C38: Phase 1A unit test targets — `/api/gmail/scan/tick` renamed to `POST /api/gmail/scan/worker`;
 >   `/api/gmail/scan/start` renamed to `POST /api/gmail/scan`; DATABASE_URL note corrected to
 >   "must point to dedicated isolated test database, never the development database".
+> **Stage 1 blocker resolution 2026-07-26 (C108–C116):** D-1 approved for the bounded
+> schema/migration stage. `phase1a-dry-run.sql` now verifies exact baseline migration/column
+> inventories, the exact six-table column fingerprint, named CHECK/index inventories, correct
+> composite-FK duplicate detection, row-local negative cases, duplicate prevention,
+> source/history classification coherence, erasure, rollback, and Account restoration.
+> The corrected script has not yet been executed because this workspace has no `psql` and no
+> isolated empty/representative PostgreSQL URLs; executable evidence remains required.
 
 > Authoritative sources: `jest.config.ts`, `playwright.config.ts`, `tests/` (26 files),
 > `e2e/` (15 specs). Counts verified at baseline commit.
@@ -330,8 +337,94 @@ e2e/15-email-scan.spec.ts
   row is created by a fetch failure.
 - **Idempotent re-scan**: two complete scans of the same inbox produce no duplicate `email_source`
   rows (UNIQUE constraint on `(user_id, gmail_account_id, gmail_message_id)`).
-- **Complete AC-01 through AC-76 matrix**: every acceptance criterion listed in
+- **Complete acceptance-criteria matrix**: every acceptance criterion listed in
   `14-phase0-assessment.md §15` must have a mapped test. No AC may be left untested.
+
+### Stage 1 schema dry-run evidence gate
+
+Before a migration can be marked verified, execute `docs/consolidated/phase1a-dry-run.sql`
+with `ON_ERROR_STOP=1` against both a freshly migrated empty baseline database and a sanitized
+representative pre-migration database. Preserve the script output and prove forward migration,
+negative and duplicate cases, erasure, rollback, exact baseline restoration, and forward
+reapplication. A static review of the SQL is not a substitute for this evidence.
+
+Exact sequence (the first command is an intentional non-zero interruption drill):
+
+```bash
+psql -X -v ON_ERROR_STOP=1 -v PHASE1A_FAIL_AFTER_DDL=1 "$EMPTY_DATABASE_URL" -L /tmp/fm_phase1a_empty_interruption.log -f docs/consolidated/phase1a-dry-run.sql
+psql -X -v ON_ERROR_STOP=1 "$EMPTY_DATABASE_URL" -L /tmp/fm_phase1a_empty_forward_rollback.log -f docs/consolidated/phase1a-dry-run.sql
+psql -X -v ON_ERROR_STOP=1 "$EMPTY_DATABASE_URL" -L /tmp/fm_phase1a_empty_reapply.log -f docs/consolidated/phase1a-dry-run.sql
+psql -X -v ON_ERROR_STOP=1 "$REPRESENTATIVE_DATABASE_URL" -L /tmp/fm_phase1a_representative_forward_rollback.log -f docs/consolidated/phase1a-dry-run.sql
+psql -X -v ON_ERROR_STOP=1 "$REPRESENTATIVE_DATABASE_URL" -L /tmp/fm_phase1a_representative_reapply.log -f docs/consolidated/phase1a-dry-run.sql
+```
+
+The representative database must be isolated and sanitized. The logs may contain only schema
+metadata, aggregate counts, synthetic `dryrun-*` identifiers, and sanitized error messages;
+review them before retention or attachment to an audit record.
+
+**Executed evidence (2026-07-26, PostgreSQL 17.10, isolated local cluster):**
+
+- Empty baseline design-mode interruption exited 3 at the injected checkpoint; the immediate
+  normal rerun passed VP1–VP15 and proved connection-close rollback.
+- `prisma migrate deploy` applied `20260726000000_phase1a_stage1_scan_schema`; migrated-mode
+  interruption exited 3 and the immediate full rerun passed.
+- Reviewed `rollback.sql` restored 0 Phase 1A tables, 0 Stage 1 trigger functions, 0 Account
+  additions, and unchanged baseline counts; Prisma reapply then passed.
+- The synthetic representative fixture retained 2 users, 3 accounts, 1 sync job, 2 sync messages,
+  and 1 transaction through deploy and full migrated-mode verification; all new Account fields
+  remained NULL for existing rows.
+- Full verifier evidence: exact six-table columns, 22 FKs, 3 triggers, 38 new-table CHECKs plus
+  the Account CHECK, 19 supporting indexes, negative tenant/account cases, duplicate rejection,
+  immutable parents/versions, canonical erasure, and fixture rollback all passed.
+- `npx prisma validate`, `npx prisma generate`, 29 Jest suites / 248 tests, and production build
+  passed. The then-existing 17-error/6-warning lint blocker was resolved later on 2026-07-26;
+  current dependency-upgrade evidence follows.
+- The then-existing ParseTemplate/LLM clean-replay blocker was resolved later on 2026-07-26;
+  evidence follows.
+
+**Migration-history and schema-drift reconciliation evidence (2026-07-26):**
+
+- Fresh empty `prisma migrate deploy` applied all 18 migrations in lexical order.
+- `prisma migrate diff --exit-code --from-migrations ... --to-schema ...` and live
+  database-to-schema diff both returned `No difference detected`.
+- An already-migrated 14-migration production-like database accepted the four pending
+  reconciliation migrations even though three bridge names sort before previously applied rows.
+- Historical migration SQL files remained byte-identical at SHA-256
+  `f471552d...f09a` and `d7720550...c4a0f`; database history retained those checksums.
+- Synthetic representative counts and rows remained unchanged: 2 users, 3 accounts,
+  1 transaction, 1 ParseTemplate, 1 LlmCallLog, and 1 LlmCircuitBreaker.
+- New LLM fields were NULL for existing rows. Drift rollback removed exactly three columns while
+  preserving all rows; forward reapply restored the columns and the verifier passed.
+- A separate production-like case began with all three compatible columns and synthetic non-NULL
+  values already present; `ADD COLUMN IF NOT EXISTS` preserved values `321`,
+  `synthetic-finish`, and `2026-01-05 00:05:00`, and Prisma still reported zero drift.
+- A deliberately corrupted historical checksum caused the bridge to fail closed before creating
+  its marker or columns; baseline counts remained unchanged.
+- A between-migration interruption was simulated after the production-like preflight committed
+  with `clean_replay_bootstrap=false`; the next `migrate deploy` resumed at reset/finalize/drift,
+  removed the marker, preserved all representative rows, and passed the verifier.
+- `migration-reconciliation-verify.sql` passed exact 18-migration history, checksum, marker,
+  ParseTemplate normalization, LLM column, and representative-row assertions.
+- The updated Phase 1A verifier passed both the exact 16-migration pre-Stage-1 baseline and exact
+  18-migration migrated modes.
+
+**Quality and dependency blocker evidence (2026-07-26):**
+
+- `npm run lint` passes with zero errors and zero warnings. Effect-triggered fetches are deferred
+  to cancellable timer callbacks, hook dependencies are stable, unsafe test function typing is
+  replaced with an explicit callback signature, and unused declarations were removed.
+- Production dependencies upgraded to Next.js 16.2.12, next-auth 5.0.0-beta.32,
+  @auth/core 0.41.3, @auth/prisma-adapter 2.11.3, and Prisma 7.9.0. Patched transitive overrides
+  are locked for PostCSS 8.5.23, sharp 0.35.3, find-my-way 9.7.0, and Valibot 1.4.2.
+- `npm audit --omit=dev --audit-level=critical` reports zero vulnerabilities. The full
+  development-tree audit still reports 27 high findings through brace-expansion in ESLint/Jest
+  tooling; npm's proposed forced fix would downgrade Next ESLint configuration and Jest to
+  incompatible versions, so it was rejected. This path is absent from the production tree.
+- Four focused Auth/LLM suites passed 33 tests; the complete 29-suite test run passed 248 tests.
+  Prisma 7.9 validation/generation, Next.js production build, clean/representative 18-migration
+  status, both drift modes, and both reconciliation-verifier modes passed.
+- Browser E2E was not executed: `e2e/.env` and cached test-auth state are absent. No production
+  or development database was substituted.
 
 ---
 

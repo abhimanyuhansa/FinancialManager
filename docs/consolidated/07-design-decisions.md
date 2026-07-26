@@ -107,7 +107,7 @@ services.
 
 **Decision:** Next.js 16 (App Router), deployed as a single monolith on Vercel Hobby.
 All server logic lives in API routes (`src/app/api/**/route.ts`) and shared libs
-(`src/lib/**`). No microservices. **[Confirmed]** — `package.json` (`next: 16.2.10`),
+(`src/lib/**`). No microservices. **[Confirmed]** — `package.json` (`next: 16.2.12`),
 `vercel.json`.
 
 **Rationale:** Single repo, single deploy, zero inter-service networking, Vercel's
@@ -116,7 +116,7 @@ first-class Next.js support, and the App Router's co-located server components.
 **Alternatives considered:** Separate Next.js frontend + Express API; Remix; SvelteKit.
 All rejected: extra operational complexity or unfamiliarity.
 
-**Status:** Confirmed active. *(Spec said "Next.js 14"; running `16.2.10` — **[Stale]** in
+**Status:** Confirmed active. *(Spec said "Next.js 14"; running `16.2.12` — **[Stale]** in
 `08`.)*
 
 ---
@@ -429,7 +429,7 @@ accidental bypass through any of the 4 parse tiers.
 
 ---
 
-## ADR-14 — Additive scan tables alongside existing SyncJob (Phase 1A, pending approval)
+## ADR-14 — Additive scan tables alongside existing SyncJob (Phase 1A Stage 1 approved)
 
 **Context:** Phase 1A needs a persistent email inventory (`email_source`) and scan session
 tracking (`email_scan_run`, `email_scan_item`). Two options: extend `SyncJob` / `SyncJobMessage`
@@ -456,8 +456,7 @@ explicitly approved additive Account changes: UNIQUE(userId,id), `disconnected_a
 `User`, `Account`, `email_filter`, `email_filter_version`, `email_scan_run`, and `email_source`.
 
 The final schema uses a composite-FK model: four of the seven original trigger-enforced invariants
-are replaced by composite declarative foreign keys. Three cross-table invariants that PostgreSQL
-cannot express as declarative FKs are still enforced via `CONSTRAINT TRIGGER`:
+are replaced by composite declarative foreign keys. Exactly three trigger-enforced invariants remain:
 - `trg_email_filter_version_immutable` — prevents any UPDATE on `email_filter_version` rows
 - `trg_email_scan_item_source_ownership` — rejects `email_scan_item` rows whose `email_source_id`
   does not belong to the same `user_id`/`gmail_account_id` as the scan run
@@ -480,12 +479,17 @@ are DEFERRABLE INITIALLY DEFERRED to permit single-transaction bootstrap.
    DROP TABLE IF EXISTS email_filter_version CASCADE;
    DROP TABLE IF EXISTS email_filter CASCADE;
    ```
-4. Remove Account additions (`UNIQUE(userId,id)`, `disconnected_at`, `disconnection_reason`)
-   only after verifying no remaining dependency references them.
-5. Regenerate Prisma client and validate legacy operation (`npx prisma generate`; run legacy
-   E2E suite).
+4. Drop the three Stage 1 trigger functions after their owning tables/triggers are gone.
+5. Remove the Account additions (`account_disconnected_idx`,
+   `chk_account_disconnection_coherence`, `account_user_id_id_unique`, `disconnected_at`,
+   `disconnection_reason`) only after verifying no remaining dependency references them.
+6. Reconcile the Phase 1A migration-history row through the approved restore procedure, reapply
+   the migration in an isolated validation database, regenerate Prisma Client, and run the exact
+   baseline-schema and legacy regression checks.
 
-**Status:** [Planned — pending D-1 approval]. **[Not Implemented]** at assessment date 2026-07-16.
+**Status:** **Approved for bounded Stage 1 schema/migration work on 2026-07-26.**
+**[Stage 1 implemented and verified 2026-07-26]** — the Prisma migration and reviewed rollback
+exist; runtime code remains unimplemented.
 Full schema: `14-phase0-assessment.md §6`. Model detail: `05-data-model-apis.md §1.9`.
 
 ---
@@ -593,7 +597,8 @@ Configurable TTLs are deliberately below the 60s Vercel limit to ensure lease ex
 function itself times out. `FOR UPDATE SKIP LOCKED` prevents contention stalls under concurrent
 delivery without a separate lock table or advisory lock.
 
-**Status:** [Planned — pending D-1 approval]. **[Not Implemented]** at assessment date 2026-07-16.
+**Status:** Schema fields and constraints approved under D-1 on 2026-07-26; runtime protocol
+remains **[Not Implemented]**.
 
 ---
 

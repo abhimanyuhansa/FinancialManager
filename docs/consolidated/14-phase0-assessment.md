@@ -4,9 +4,10 @@
 > **Assessed by:** Senior Software Architect (incoming), per master prompt
 > `/Downloads/FinancialManager-Claude-Code-Master-Prompt-Reviewed.md`
 > **Baseline commit inspected:** `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
-> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C107 applied 2026-07-25.
-> D-1: Pending final consolidation approval. D-2: Approved. D-3: Approved. D-4: Conditionally approved. D-5: Approved. D-6: Approved.
-> Awaiting explicit Phase 1A implementation approval before any code changes begin.
+> **Status:** Schema decisions Q1–Q4 applied 2026-07-19; final corrections C1–C116 applied 2026-07-26.
+> D-1: Approved for the bounded Phase 1A Stage 1 schema/migration implementation. D-2: Approved.
+> D-3: Approved. D-4: Conditionally approved. D-5: Approved. D-6: Approved.
+> Runtime Phase 1A application work remains excluded until separately assigned.
 > **Revision reason (2026-07-18):** D-1 schema rejected and respecified; D-2 changed to
 > QStash; D-3 corrected; D-4 expanded with `LEGACY_TRANSACTION_INGESTION_ENABLED`; D-5/D-6
 > approved. Eight required Phase 0 corrections applied.
@@ -375,8 +376,9 @@
 >   §7.8 table updated: CREATED+published → 409 scan_active; PAUSED → 409 scan_paused (C91); ACs updated.
 > **Phase 0 revision 2026-07-25 (C94–C98):**
 > C94 — `email_scan_run` canonical DDL corrected — `email_filter_id` and `email_filter_version_id`
->   inline FKs now carry explicit `ON DELETE RESTRICT`; canonical DDL now identical to phase1a-dry-run.sql
->   and 05 field table notes.
+>   inline FKs now carry explicit `ON DELETE RESTRICT`; canonical DDL and
+>   `phase1a-dry-run.sql` carry the same column and constraint sets, with 05 field-table notes
+>   summarizing those sets.
 > C95 — FK inventory assertion in phase1a-dry-run.sql VP4 upgraded — `fk_count >= 10` replaced with
 >   exact count = 22; all 8 required named FKs validated with source/ref columns and delete actions;
 >   `fk_email_filter_current_version` and `fk_version_supersedes` verified `DEFERRABLE INITIALLY DEFERRED`.
@@ -420,6 +422,61 @@
 >   scan_run_id} asserted for trg_email_scan_item_source_ownership.
 > C107 — Metadata updated: 14 status → C1–C107 applied 2026-07-25; SQL header → C81–C107;
 >   05 revision note added for C105–C107.
+> **Phase 1A Stage 1 readiness corrections 2026-07-26 (C108–C116):**
+> C108 — Repository-owner instruction "Resolve Phase 1A Stage 1 schema and dry-run blockers"
+>   recorded as approval of D-1 for the bounded schema/migration stage only. Runtime APIs,
+>   workers, Gmail access, filtering, classification endpoints, parsing, UI, deployment, and
+>   production migration remain outside this approval.
+> C109 — Canonical row-local CHECK constraints added for Account disconnection, filter/version
+>   timestamps and positive versions, JSON rule arrays, source classification/timestamps,
+>   scan date/counter/stage/lease/retry/continuation/terminal/timestamp coherence, item
+>   state/lease/retry/filter/timestamp coherence, and classification version/change/timestamps.
+>   Cross-row completion remains a transactional query because PostgreSQL CHECK constraints
+>   cannot reference email_scan_item rows.
+> C110 — Classification dry-run fixtures corrected: every history insert is paired with the
+>   matching email_source materialization update in the same outer transaction; source and
+>   history versions are asserted equal. Duplicate classification versions and no-op
+>   classification events are rejected. The approved trigger count remains exactly three;
+>   normal-operation append-only enforcement remains an application authorization/transaction
+>   responsibility so approved erasure can issue DELETE.
+> C111 — VP4 duplicate-FK detection fixed. It now constructs one catalog row per FK before
+>   grouping structural definitions; composite FK columns no longer form a Cartesian product
+>   and no longer false-fail as duplicates.
+> C112 — Dry-run baseline validation strengthened with exact User/Account column and 13-migration
+>   fingerprints, exact six-table column fingerprints, and exact named CHECK inventories.
+> C113 — Erasure and rollback text canonicalized to classification → item → run → source →
+>   filter/version cascade → Account → User, including explicit reversal of Account additions.
+> C114 — Traceability, risks, and operations corrected for ≤500-ID discovery, RETRY_WAIT,
+>   invalid-filter failure, three-condition completion, current classification materialization,
+>   canonical /api/gmail/scan route, and transaction-count delta semantics.
+> C115 — Supporting indexes added and asserted for manual-review lookup, scan/item lease recovery,
+>   continuation publication recovery, and filter-decision reconciliation.
+> C116 — The dry-run now supports a deterministic `PHASE1A_FAIL_AFTER_DDL` interruption drill.
+>   Connection-close rollback is proven by the next run's exact VP1 baseline checks; documented
+>   empty/representative forward, rollback, and reapply commands preserve separate audit logs.
+> **Migration reconciliation corrections 2026-07-26 (C117–C120):**
+> C117 — Historical migration SQL/checksums remain immutable. Three new bridge migrations repair
+>   clean lexical replay and validate/no-op on already-migrated databases.
+> C118 — The bridge uses a transient empty marker/bootstrap only on clean replay, fails closed on
+>   checksum or unexpected-state mismatch, and removes all transient objects after finalization.
+> C119 — A separate additive migration creates the three nullable LLM columns previously present
+>   only in Prisma schema; no backfill or existing-row mutation occurs.
+> C120 — Exact migration fingerprints are now 16 before Stage 1 and 18 after reconciliation.
+>   Empty replay, production-like reconciliation, representative preservation, rollback/reapply,
+>   negative checksum rejection, and both Prisma zero-drift modes passed on PostgreSQL 17.10.
+> **Quality and dependency blocker corrections 2026-07-26 (C121–C124):**
+> C121 — The 17 ESLint errors and 6 warnings were resolved without disabling rules. Effect-started
+>   state changes now run in cancellable asynchronous callbacks; hook dependencies and test types
+>   are explicit; unused declarations were removed.
+> C122 — Auth.js was upgraded to next-auth 5.0.0-beta.32 / @auth/core 0.41.3 /
+>   @auth/prisma-adapter 2.11.3, removing both critical authentication advisories.
+> C123 — Next.js 16.2.12 and Prisma 7.9.0 were adopted with locked patched transitive versions
+>   for PostCSS, sharp, find-my-way, and Valibot. Prisma CLI moved to development dependencies.
+>   The production dependency audit now reports zero vulnerabilities.
+> C124 — Lint, 33 focused tests, all 248 unit tests, production build, Prisma
+>   validation/generation, clean and representative migration status, both drift modes, and both
+>   reconciliation verifier modes pass. Browser E2E remains unexecuted because the isolated
+>   `e2e/.env` and cached authentication state are absent.
 
 ---
 
@@ -579,11 +636,13 @@ point, no gate, and no flag.
 
 ## 5. Decision Outcomes
 
-### D-1 — New scan tables alongside `SyncJob` (pending final consolidation approval)
+### D-1 — New scan tables alongside `SyncJob` (approved for Stage 1)
 
 **Approved direction:** New tables. Do not extend `SyncJob` or `SyncJobMessage`.
 
-**Schema revision required.** See §6 (Normalized Schema) for the full revised design.
+**Approval recorded 2026-07-26:** The repository-owner instruction to resolve the Stage 1
+schema and dry-run blockers approves the corrected C1–C116 schema for the bounded database
+schema/migration stage. See §6 for the full design. Runtime Phase 1A work remains excluded.
 
 ### D-2 — QStash for server-side scan progression (approved with corrections)
 
@@ -676,7 +735,7 @@ Do not modify the existing route during this Phase 0 revision.
 
 ---
 
-## 6. Revised Normalized Schema [Planned — pending approval]
+## 6. Revised Normalized Schema [Stage 1 implemented; runtime not implemented]
 
 The revised schema separates six concerns clearly:
 
@@ -717,7 +776,8 @@ CREATE TABLE email_filter (
   -- REFERENCES Account("userId", id). Requires UNIQUE("userId", id) on Account (additive — C10).
   -- DB-layer backup: UNIQUE(user_id, gmail_account_id) index below prevents one user
   -- from referencing another user's gmail_account_id by accident.
-  UNIQUE(user_id, gmail_account_id, id)  -- enables composite FK references from child tables
+  UNIQUE(user_id, gmail_account_id, id), -- enables composite FK references from child tables
+  CONSTRAINT chk_email_filter_timestamps CHECK (updated_at >= created_at)
 );
 -- FK back to email_filter_version is deferred (circular reference); added after version table.
 CREATE INDEX email_filter_user_idx ON email_filter(user_id);
@@ -758,7 +818,16 @@ CREATE TABLE email_filter_version (
   created_by              TEXT        NOT NULL,  -- user_id of publishing user
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(email_filter_id, version),
-  UNIQUE(email_filter_id, id)   -- enables composite FK references from child tables (C20)
+  UNIQUE(email_filter_id, id),  -- enables composite FK references from child tables (C20)
+  CONSTRAINT chk_email_filter_version_numbers CHECK (
+    version > 0
+    AND rule_schema_version > 0
+    AND filter_evaluator_version > 0
+  ),
+  CONSTRAINT chk_email_filter_version_rule_arrays CHECK (
+    jsonb_typeof(include_rules_json) = 'array'
+    AND jsonb_typeof(exclude_rules_json) = 'array'
+  )
 );
 -- supersedes_version_id → email_filter_version(email_filter_id, id): declarative composite FK (C20)
 -- Requires UNIQUE(email_filter_id, id) added above. trg_email_filter_version_supersedes removed.
@@ -791,7 +860,9 @@ attempt to UPDATE an `email_filter_version` row. Editing a filter creates a new 
 ```sql
 -- Raises exception on any UPDATE; immutability is enforced at DB level.
 CREATE OR REPLACE FUNCTION prevent_email_filter_version_update()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
   RAISE EXCEPTION 'email_filter_version rows are immutable; create a new version row instead';
 END;
@@ -932,14 +1003,12 @@ CREATE TABLE email_source (
   -- Discovery and fetch state (observational — authoritative retry/terminal state is on email_scan_item)
   -- last_fetch_status reflects the outcome of the most recent fetch attempt across all scans.
   -- It does NOT permanently prevent future scans from retrying this source.
-  last_fetch_status             TEXT        NOT NULL DEFAULT 'DISCOVERED'
-                                  CHECK (last_fetch_status IN ('DISCOVERED','FETCHING','FETCHED','PERMANENTLY_FAILED')),
+  last_fetch_status             TEXT        NOT NULL DEFAULT 'DISCOVERED',
   last_fetch_attempt_at         TIMESTAMPTZ,
   last_fetch_error_code         TEXT,       -- sanitized error code; no PII
   last_fetch_error_message_sanitized TEXT,  -- sanitized; must not contain PII
   -- Classification denormalization (see §6 email_manual_classification for append-only audit history)
-  current_manual_classification TEXT        NOT NULL DEFAULT 'UNREVIEWED'
-                                  CHECK (current_manual_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')),
+  current_manual_classification TEXT        NOT NULL DEFAULT 'UNREVIEWED',
   classification_version        INTEGER     NOT NULL DEFAULT 0,  -- optimistic concurrency for classification updates
   first_discovered_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_fetched_at               TIMESTAMPTZ,
@@ -949,7 +1018,24 @@ CREATE TABLE email_source (
   retained_until                TIMESTAMPTZ, -- NULL = retain indefinitely
   deleted_at                    TIMESTAMPTZ, -- soft-delete timestamp
   UNIQUE(user_id, gmail_account_id, gmail_message_id),
-  UNIQUE(user_id, id)   -- enables composite FK references from child tables (C20)
+  UNIQUE(user_id, id),  -- enables composite FK references from child tables (C20)
+  CONSTRAINT chk_email_source_last_fetch_status CHECK (
+    last_fetch_status IN ('DISCOVERED','FETCHING','FETCHED','PERMANENTLY_FAILED')
+  ),
+  CONSTRAINT chk_email_source_manual_classification CHECK (
+    current_manual_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')
+  ),
+  CONSTRAINT chk_email_source_classification_version CHECK (classification_version >= 0),
+  CONSTRAINT chk_email_source_fetch_timestamps CHECK (
+    last_fetch_attempt_at IS NULL OR last_fetch_attempt_at >= first_discovered_at
+  ),
+  CONSTRAINT chk_email_source_fetched_timestamp CHECK (
+    last_fetched_at IS NULL OR last_fetched_at >= first_discovered_at
+  ),
+  CONSTRAINT chk_email_source_timestamps CHECK (
+    updated_at >= created_at
+    AND (deleted_at IS NULL OR deleted_at >= created_at)
+  )
 );
 CREATE INDEX email_source_user_account_fetch_idx
   ON email_source(user_id, gmail_account_id, last_fetch_status)
@@ -957,6 +1043,10 @@ CREATE INDEX email_source_user_account_fetch_idx
 CREATE INDEX email_source_user_account_discovered_idx
   ON email_source(user_id, gmail_account_id, first_discovered_at DESC)
   WHERE deleted_at IS NULL;
+CREATE INDEX email_source_manual_review_idx
+  ON email_source(user_id, gmail_account_id, current_manual_classification)
+  WHERE deleted_at IS NULL
+    AND current_manual_classification IN ('UNREVIEWED','UNCERTAIN');
 ```
 
 **Uniqueness:** `(user_id, gmail_account_id, gmail_message_id)` — enforces idempotency.
@@ -1016,14 +1106,12 @@ CREATE TABLE email_scan_run (
   to_date                   DATE        NOT NULL,   -- NOT NULL: Phase 1A scans are always bounded
   scan_limit                INTEGER,                -- max messages to discover (NULL = unlimited)
   -- Status and state machine
-  status                    TEXT        NOT NULL DEFAULT 'CREATED'
-    CHECK (status IN ('CREATED','DISCOVERING','FETCHING','RETRY_WAIT','PAUSED',
-                      'CANCELLING','CANCELLED','COMPLETED','COMPLETED_WITH_ERRORS','FAILED')),
+  status                    TEXT        NOT NULL DEFAULT 'CREATED',
   -- Stage tracking: preserves which processing stage a paused or retry-wait scan should resume to.
   -- current_stage is set when a worker begins active processing (DISCOVERING or FETCHING).
   -- resume_stage is set when the scan enters RETRY_WAIT or PAUSED; must equal the last current_stage.
-  current_stage             TEXT        CHECK (current_stage IN ('DISCOVERY','FETCH')),
-  resume_stage              TEXT        CHECK (resume_stage IN ('DISCOVERY','FETCH')),
+  current_stage             TEXT,
+  resume_stage              TEXT,
   state_version             INTEGER     NOT NULL DEFAULT 0,  -- optimistic concurrency
   -- Progress counters (denormalized for fast display; reconcilable from email_scan_item)
   total_discovered          INTEGER     NOT NULL DEFAULT 0,
@@ -1070,7 +1158,7 @@ CREATE TABLE email_scan_run (
   -- pending_continuation_not_before: scheduled delivery time; now() for immediate, future for delayed.
   -- pending_continuation_published_at: set after QStash accepts publication; NULL = not yet published.
   pending_continuation_sequence     BIGINT,
-  pending_continuation_stage        TEXT        CHECK (pending_continuation_stage IN ('DISCOVERY','FETCH')),
+  pending_continuation_stage        TEXT,
   pending_continuation_not_before   TIMESTAMPTZ,
   pending_continuation_published_at TIMESTAMPTZ,
   -- C51: all four pending fields must be collectively NULL or collectively non-null (except published_at
@@ -1092,6 +1180,119 @@ CREATE TABLE email_scan_run (
   CONSTRAINT chk_pending_sequence_matches_scan_sequence CHECK (
     pending_continuation_sequence IS NULL
     OR pending_continuation_sequence = batch_sequence
+  ),
+  CONSTRAINT chk_scan_run_status CHECK (
+    status IN ('CREATED','DISCOVERING','FETCHING','RETRY_WAIT','PAUSED',
+               'COMPLETED','COMPLETED_WITH_ERRORS','FAILED','CANCELLING','CANCELLED')
+  ),
+  CONSTRAINT chk_scan_run_current_stage CHECK (
+    current_stage IS NULL OR current_stage IN ('DISCOVERY','FETCH')
+  ),
+  CONSTRAINT chk_scan_run_resume_stage CHECK (
+    resume_stage IS NULL OR resume_stage IN ('DISCOVERY','FETCH')
+  ),
+  CONSTRAINT chk_scan_run_pending_stage CHECK (
+    pending_continuation_stage IS NULL
+    OR pending_continuation_stage IN ('DISCOVERY','FETCH')
+  ),
+  CONSTRAINT chk_scan_run_date_range CHECK (from_date <= to_date),
+  CONSTRAINT chk_scan_run_nonnegative_values CHECK (
+    (scan_limit IS NULL OR scan_limit > 0)
+    AND state_version >= 0
+    AND retry_count >= 0
+    AND max_retries >= 0
+    AND max_item_retries >= 0
+    AND total_discovered >= 0
+    AND fetch_pending_count >= 0
+    AND fetch_in_progress_count >= 0
+    AND fetch_success_count >= 0
+    AND fetch_failed_count >= 0
+    AND filter_included_count >= 0
+    AND filter_excluded_count >= 0
+    AND manual_review_count >= 0
+    AND batch_sequence >= 0
+  ),
+  CONSTRAINT chk_scan_run_counter_bounds CHECK (
+    fetch_pending_count
+      + fetch_in_progress_count
+      + fetch_success_count
+      + fetch_failed_count <= total_discovered
+    AND fetch_pending_count <= total_discovered
+    AND fetch_in_progress_count <= total_discovered
+    AND fetch_success_count <= total_discovered
+    AND fetch_failed_count <= total_discovered
+    AND filter_included_count <= fetch_success_count
+    AND filter_excluded_count <= fetch_success_count
+    AND filter_included_count + filter_excluded_count <= fetch_success_count
+    AND manual_review_count <= fetch_success_count
+  ),
+  CONSTRAINT chk_scan_run_stage_coherence CHECK (
+    (status = 'CREATED' AND current_stage IS NULL AND resume_stage IS NULL AND started_at IS NULL)
+    OR (status = 'DISCOVERING' AND current_stage = 'DISCOVERY' AND resume_stage IS NULL AND started_at IS NOT NULL)
+    OR (status = 'FETCHING' AND current_stage = 'FETCH' AND resume_stage IS NULL AND started_at IS NOT NULL)
+    OR (status IN ('RETRY_WAIT','PAUSED') AND current_stage IS NULL AND resume_stage IS NOT NULL AND started_at IS NOT NULL)
+    OR (
+      status = 'CANCELLING'
+      AND started_at IS NOT NULL
+      AND (
+        (current_stage IS NOT NULL AND resume_stage IS NULL)
+        OR (current_stage IS NULL AND resume_stage IS NOT NULL)
+      )
+    )
+    OR (
+      status IN ('CANCELLED','COMPLETED','COMPLETED_WITH_ERRORS','FAILED')
+      AND current_stage IS NULL
+      AND resume_stage IS NULL
+      AND (status = 'CANCELLED' OR started_at IS NOT NULL)
+    )
+  ),
+  CONSTRAINT chk_scan_run_lease_coherence CHECK (
+    (worker_lease_owner IS NULL AND worker_lease_expires_at IS NULL)
+    OR (
+      worker_lease_owner IS NOT NULL
+      AND worker_lease_expires_at IS NOT NULL
+      AND status IN ('CREATED','DISCOVERING','FETCHING','RETRY_WAIT','CANCELLING')
+    )
+  ),
+  CONSTRAINT chk_scan_run_retry_coherence CHECK (
+    status <> 'RETRY_WAIT' OR next_retry_at IS NOT NULL
+  ),
+  CONSTRAINT chk_scan_run_pending_status CHECK (
+    pending_continuation_sequence IS NULL
+    OR status IN ('CREATED','DISCOVERING','FETCHING','RETRY_WAIT','PAUSED','CANCELLING')
+  ),
+  CONSTRAINT chk_scan_run_terminal_coherence CHECK (
+    status NOT IN ('CANCELLED','COMPLETED','COMPLETED_WITH_ERRORS','FAILED')
+    OR (
+      worker_lease_owner IS NULL
+      AND worker_lease_expires_at IS NULL
+      AND next_retry_at IS NULL
+      AND pending_continuation_sequence IS NULL
+      AND pending_continuation_stage IS NULL
+      AND pending_continuation_not_before IS NULL
+      AND pending_continuation_published_at IS NULL
+    )
+  ),
+  CONSTRAINT chk_scan_run_terminal_timestamps CHECK (
+    (status NOT IN ('COMPLETED','COMPLETED_WITH_ERRORS') OR completed_at IS NOT NULL)
+    AND (status <> 'CANCELLED' OR cancelled_at IS NOT NULL)
+    AND (status <> 'PAUSED' OR paused_at IS NOT NULL)
+  ),
+  CONSTRAINT chk_scan_run_timestamps CHECK (
+    updated_at >= created_at
+    AND (started_at IS NULL OR started_at >= created_at)
+    AND (last_checkpoint_at IS NULL OR started_at IS NULL OR last_checkpoint_at >= started_at)
+    AND (last_batch_started_at IS NULL OR started_at IS NULL OR last_batch_started_at >= started_at)
+    AND (
+      last_batch_completed_at IS NULL
+      OR (
+        last_batch_started_at IS NOT NULL
+        AND last_batch_completed_at >= last_batch_started_at
+      )
+    )
+    AND (completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at)
+    AND (paused_at IS NULL OR started_at IS NULL OR paused_at >= started_at)
+    AND (cancelled_at IS NULL OR started_at IS NULL OR cancelled_at >= started_at)
   ),
   -- Idempotency: one scan per (user, client request) — prevents duplicate scans on POST retry (C61)
   UNIQUE(user_id, client_request_id),
@@ -1121,6 +1322,13 @@ CREATE INDEX email_scan_run_user_account_idx
 CREATE INDEX email_scan_run_retry_idx
   ON email_scan_run(next_retry_at)
   WHERE status = 'RETRY_WAIT';
+CREATE INDEX email_scan_run_lease_idx
+  ON email_scan_run(worker_lease_expires_at)
+  WHERE worker_lease_owner IS NOT NULL;
+CREATE INDEX email_scan_run_continuation_recovery_idx
+  ON email_scan_run(pending_continuation_not_before)
+  WHERE pending_continuation_sequence IS NOT NULL
+    AND pending_continuation_published_at IS NULL;
 ```
 
 **Lease:** `worker_lease_owner` is a `crypto.randomUUID()` generated server-side per
@@ -1402,8 +1610,7 @@ CREATE TABLE email_scan_item (
   -- gmail_message_id is intentionally NOT stored here; derive via email_source.gmail_message_id
   -- through the email_source_id FK. Denormalizing it here would risk divergence.
   -- Item execution state
-  status                        TEXT        NOT NULL DEFAULT 'DISCOVERED'
-    CHECK (status IN ('DISCOVERED','FETCHING','FETCHED','RETRY_WAIT','PERMANENTLY_FAILED','CANCELLED')),
+  status                        TEXT        NOT NULL DEFAULT 'DISCOVERED',
   state_version                 INTEGER     NOT NULL DEFAULT 0,
   fetch_attempt_count           INTEGER     NOT NULL DEFAULT 0,
   next_retry_at                 TIMESTAMPTZ,
@@ -1414,8 +1621,7 @@ CREATE TABLE email_scan_item (
   item_lease_expires_at         TIMESTAMPTZ,
   -- Filter decision (separate from fetch status; populated after filter evaluation)
   -- filter_decision is PENDING until filter rules are evaluated after fetch.
-  filter_decision               TEXT        NOT NULL DEFAULT 'PENDING'
-    CHECK (filter_decision IN ('PENDING','INCLUDED','EXCLUDED')),
+  filter_decision               TEXT        NOT NULL DEFAULT 'PENDING',
   -- Matched rule IDs (stable rule_id values from email_filter_version JSON).
   -- Arrays of rule_id strings, not patterns.
   matched_include_rule_ids      TEXT[],
@@ -1427,7 +1633,44 @@ CREATE TABLE email_scan_item (
   fetch_started_at              TIMESTAMPTZ,
   fetch_completed_at            TIMESTAMPTZ,
   updated_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(scan_run_id, email_source_id)
+  UNIQUE(scan_run_id, email_source_id),
+  CONSTRAINT chk_scan_item_status CHECK (
+    status IN ('DISCOVERED','FETCHING','FETCHED','RETRY_WAIT','PERMANENTLY_FAILED','CANCELLED')
+  ),
+  CONSTRAINT chk_scan_item_filter_decision CHECK (
+    filter_decision IN ('PENDING','INCLUDED','EXCLUDED')
+  ),
+  CONSTRAINT chk_scan_item_nonnegative_values CHECK (
+    state_version >= 0 AND fetch_attempt_count >= 0
+  ),
+  CONSTRAINT chk_scan_item_lease_coherence CHECK (
+    (status = 'FETCHING' AND item_lease_owner IS NOT NULL AND item_lease_expires_at IS NOT NULL)
+    OR
+    (status <> 'FETCHING' AND item_lease_owner IS NULL AND item_lease_expires_at IS NULL)
+  ),
+  CONSTRAINT chk_scan_item_retry_coherence CHECK (
+    (status = 'RETRY_WAIT' AND next_retry_at IS NOT NULL)
+    OR
+    (status <> 'RETRY_WAIT' AND next_retry_at IS NULL)
+  ),
+  CONSTRAINT chk_scan_item_filter_coherence CHECK (
+    status = 'FETCHED' OR filter_decision = 'PENDING'
+  ),
+  CONSTRAINT chk_scan_item_terminal_timestamps CHECK (
+    (status NOT IN ('FETCHED','PERMANENTLY_FAILED') OR fetch_completed_at IS NOT NULL)
+    AND (status <> 'FETCHING' OR fetch_started_at IS NOT NULL)
+  ),
+  CONSTRAINT chk_scan_item_timestamps CHECK (
+    updated_at >= discovered_at
+    AND (fetch_started_at IS NULL OR fetch_started_at >= discovered_at)
+    AND (
+      fetch_completed_at IS NULL
+      OR (
+        fetch_started_at IS NOT NULL
+        AND fetch_completed_at >= fetch_started_at
+      )
+    )
+  )
 );
 CREATE INDEX email_scan_item_run_status_idx
   ON email_scan_item(scan_run_id, status);
@@ -1439,13 +1682,18 @@ CREATE INDEX email_scan_item_retry_idx
 CREATE INDEX email_scan_item_lease_idx
   ON email_scan_item(item_lease_expires_at)
   WHERE item_lease_owner IS NOT NULL;
+CREATE INDEX email_scan_item_filter_decision_idx
+  ON email_scan_item(scan_run_id, filter_decision)
+  WHERE status = 'FETCHED';
 
 -- Cross-table integrity: scan item source must belong to same user and gmail_account_id as scan run.
 -- No declarative FK can express this — it requires a three-table join across email_scan_item,
 -- email_source, and email_scan_run. fk_classification_source only protects
 -- email_manual_classification → email_source and does NOT cover this invariant.
 CREATE OR REPLACE FUNCTION check_scan_item_source_ownership()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
   IF NEW.email_source_id IS NOT NULL THEN
     IF NOT EXISTS (
@@ -1471,7 +1719,9 @@ CREATE CONSTRAINT TRIGGER trg_email_scan_item_source_ownership
 -- Parent-field immutability: scan_run_id and email_source_id must not change after creation.
 -- This is separate from cross-tenant validation — it enforces structural immutability.
 CREATE OR REPLACE FUNCTION prevent_scan_item_parent_change()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
   IF NEW.scan_run_id IS DISTINCT FROM OLD.scan_run_id THEN
     RAISE EXCEPTION 'email_scan_item.scan_run_id is immutable after creation';
@@ -1598,12 +1848,8 @@ CREATE TABLE email_manual_classification (
   -- FOREIGN KEY (user_id, email_source_id) REFERENCES email_source(user_id, id) ON DELETE CASCADE
   -- previous_classification is NOT NULL: every change must record its predecessor.
   -- For the first classification of an UNREVIEWED source, use 'UNREVIEWED'.
-  previous_classification   TEXT        NOT NULL
-                              CHECK (previous_classification IN
-                              ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')),
-  new_classification        TEXT        NOT NULL
-                              CHECK (new_classification IN
-                              ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')),
+  previous_classification   TEXT        NOT NULL,
+  new_classification        TEXT        NOT NULL,
   reason                    TEXT,       -- optional free-text note; must not contain sensitive data
   -- classified_by: nullable; FK ON DELETE SET NULL ensures user deletion cannot block erasure
   -- or cascade-delete classification history. When the classifying user is deleted, classified_by
@@ -1617,7 +1863,20 @@ CREATE TABLE email_manual_classification (
   -- producing duplicate rows at the same version.
   classification_version    INTEGER     NOT NULL,
   created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(email_source_id, classification_version)
+  UNIQUE(email_source_id, classification_version),
+  CONSTRAINT chk_manual_previous_classification CHECK (
+    previous_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')
+  ),
+  CONSTRAINT chk_manual_new_classification CHECK (
+    new_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')
+  ),
+  CONSTRAINT chk_manual_classification_version CHECK (classification_version > 0),
+  CONSTRAINT chk_manual_classification_change CHECK (
+    previous_classification <> new_classification
+  ),
+  CONSTRAINT chk_manual_classification_timestamps CHECK (
+    created_at >= classified_at
+  )
 );
 CREATE INDEX email_manual_classification_source_idx
   ON email_manual_classification(email_source_id, classified_at DESC);
@@ -1684,6 +1943,28 @@ The history row inserted in step 3 is rolled back with the transaction.
 **Divergence prevention:** `current_manual_classification` must never be updated outside this
 5-step sequence. Direct `UPDATE email_source SET current_manual_classification = ...` is
 prohibited; all classification changes must go through this procedure.
+
+**Database/application enforcement boundary (C109/C110):**
+
+- Row-local validity is enforced by named CHECK constraints: positive classification version,
+  allowed enum values, a real state change (`previous_classification <> new_classification`),
+  and timestamp order.
+- `UNIQUE(email_source_id, classification_version)` prevents duplicate concurrent events.
+- `fk_classification_source` enforces source ownership.
+- Cross-row equality between the newest history version and
+  `email_source.classification_version` is performed by the approved transaction and verified
+  by migration/integration tests. PostgreSQL CHECK constraints cannot query another row/table.
+- The trigger inventory remains exactly three. A classification UPDATE/DELETE-prevention
+  trigger is intentionally not added because authorized retention and user-erasure workflows
+  must be able to delete history. Normal classification routes are insert-only and must be
+  covered by authorization and query-shape tests during their later runtime stage.
+
+**Scan CHECK enforcement boundary (C109):** Named CHECK constraints enforce every row-local
+scan and item invariant: enum membership, date range, nonnegative counters/versions, counter
+bounds, status/stage/started-at coherence, lease owner/expiry coherence, retry timestamps,
+pending-continuation state, terminal lease/continuation cleanup, and timestamp ordering.
+The completion guard remains a transactional cross-row query over `email_scan_item`; a
+PostgreSQL CHECK constraint cannot reference child rows safely.
 
 ---
 
@@ -1889,12 +2170,12 @@ await prisma.account.update({
 The Account row identity is preserved, so all historical `email_source`, `email_scan_run`, and
 `email_filter` rows remain valid and traceable.
 
-**`Account` schema additions required (additive migration — requires D-1 approval):**
+**`Account` schema additions required (additive migration — D-1 approved for Stage 1):**
 
-Phase 1A proposes the following additive, non-destructive changes to the existing `Account`
-table. These changes add new columns and constraints only; they do not remove, rename, or
-alter existing columns or data. Because Account is an existing production table, these changes
-are subject to D-1 (final schema approval) and must not be migrated until D-1 is approved.
+Stage 1 implements the following additive, non-destructive changes to the existing `Account`
+table. These changes add new columns and constraints only; they do not remove, rename, or alter
+existing columns or data. The empty and synthetic representative database drills, reviewed
+rollback, and forward reapply passed on 2026-07-26. No production migration was executed.
 
 ```sql
 -- Additive: composite uniqueness (enables composite FK from Phase 1A tables)
@@ -1905,6 +2186,14 @@ ALTER TABLE "Account"
 ALTER TABLE "Account"
   ADD COLUMN disconnected_at        TIMESTAMPTZ,
   ADD COLUMN disconnection_reason   TEXT;
+
+ALTER TABLE "Account"
+  ADD CONSTRAINT chk_account_disconnection_coherence CHECK (
+    (disconnected_at IS NULL AND disconnection_reason IS NULL)
+    OR
+    (disconnected_at IS NOT NULL
+     AND disconnection_reason IN ('user_request','token_revoked','invalid_grant'))
+  );
 
 CREATE INDEX account_disconnected_idx
   ON "Account"(id)
@@ -3357,7 +3646,7 @@ and validated as belonging to the authenticated user — never accepted from req
 
 ---
 
-## 13. Retention and Deletion Model [Planned — pending approval]
+## 13. Retention and Deletion Model [Stage 1 constraints implemented; runtime workflow not implemented]
 
 ### email_source retention
 
@@ -3377,27 +3666,26 @@ soft-delete only. Hard delete requires removing all referencing scan items first
 
 ### email_manual_classification retention
 
-- Classification history rows are never deleted (audit trail).
+- Classification history rows are append-only during normal operation.
 - If the parent `email_source` is hard-deleted, classification rows cascade-delete.
+- Approved user erasure and retention workflows may delete history after authorization.
 
 ### User account deletion
 
-When a `User` row is deleted, `ON DELETE CASCADE` propagates to all owned rows in:
-`email_source`, `email_scan_run`, `email_filter`, `email_filter_version`,
-`email_manual_classification`. All scan items cascade from `email_scan_run`.
+Do not rely on direct `User` cascade ordering. `Account` is itself deleted by User cascade,
+while Phase 1A filter/source/run rows hold RESTRICT references to Account. The application
+erasure path must use the canonical explicit order from §6.7:
 
-**Cascade ordering constraint (DDL dry-run finding):** A direct `DELETE FROM "User"` may fail
-if `email_scan_item` rows exist, because `email_scan_item.email_source_id` is `ON DELETE RESTRICT`.
-PostgreSQL may attempt the `User → email_source` cascade before the `User → email_scan_run → email_scan_item`
-cascade completes. The application erasure path must therefore delete in this explicit order:
+1. Delete `email_manual_classification` rows owned by the user.
+2. Delete `email_scan_item` rows via scan-run IDs owned by the user.
+3. Delete `email_scan_run` rows owned by the user.
+4. Delete `email_source` rows owned by the user.
+5. Delete `email_filter` rows owned by the user; this cascades to `email_filter_version`.
+   Do not delete versions directly.
+6. Delete `"Account"` rows for the user.
+7. Delete the `"User"` row.
 
-1. Delete `email_scan_item` rows (via scan run IDs owned by the user).
-2. Delete `email_scan_run` rows owned by the user.
-3. Delete `email_source` rows owned by the user.
-4. Delete `email_manual_classification` rows owned by the user.
-5. Delete `email_filter_version` rows (via filter IDs owned by the user).
-6. Delete `email_filter` rows owned by the user.
-7. Delete `"User"` row (no Phase 1A RESTRICT FK remains at this point).
+The dry run must assert zero rows for all eight affected tables after this sequence.
 
 ---
 
@@ -3415,11 +3703,11 @@ Phase 1A rollback is NOT zero-risk. The following steps must be completed in ord
 
 1. Set `LEGACY_TRANSACTION_INGESTION_ENABLED=false` and `LLM_PARSING_ENABLED=false` in Vercel
    (already set as part of Phase 1A deploy). If reverting to legacy behavior, set to `true`.
-2. Drain QStash messages: navigate to Upstash console → QStash → DLQ → clear pending messages.
-   Cancel any scheduled messages for `scanRunId`s via the QStash API.
+2. Stop new publication and drain or clear QStash through the operator console. Phase 1A does
+   not persist QStash message IDs and therefore does not claim per-scan remote cancellation.
 3. Deploy the previous application commit (Vercel → Deployments → Instant Rollback).
 4. Wait for all in-flight Vercel functions to complete (up to 60 seconds).
-5. Drop new tables from the database (no existing data is touched):
+5. Drop new tables from the database:
    ```sql
    DROP TABLE IF EXISTS email_manual_classification CASCADE;
    DROP TABLE IF EXISTS email_scan_item CASCADE;
@@ -3427,12 +3715,29 @@ Phase 1A rollback is NOT zero-risk. The following steps must be completed in ord
    DROP TABLE IF EXISTS email_source CASCADE;
    DROP TABLE IF EXISTS email_filter_version CASCADE;
    DROP TABLE IF EXISTS email_filter CASCADE;
+   DROP FUNCTION IF EXISTS prevent_scan_item_parent_change();
+   DROP FUNCTION IF EXISTS check_scan_item_source_ownership();
+   DROP FUNCTION IF EXISTS prevent_email_filter_version_update();
    ```
    **Effects:** All scan metadata, filter definitions, manual classifications, and email inventory
    are permanently lost. This is acceptable because no transactions or parse logs are in the new
    tables.
-6. Run Prisma migrate deploy on the rolled-back code to ensure migration history is consistent.
-7. Post-rollback validation: confirm `SyncJob` state machine is intact; run existing E2E suite.
+   The reviewed executable form is
+   `prisma/migrations/20260726000000_phase1a_stage1_scan_schema/rollback.sql`.
+6. After confirming no dependent FK remains, reverse the Account additions:
+   ```sql
+   DROP INDEX IF EXISTS account_disconnected_idx;
+   ALTER TABLE "Account"
+     DROP CONSTRAINT IF EXISTS chk_account_disconnection_coherence,
+     DROP CONSTRAINT IF EXISTS account_user_id_id_unique,
+     DROP COLUMN IF EXISTS disconnected_at,
+     DROP COLUMN IF EXISTS disconnection_reason;
+   ```
+7. Reconcile Prisma migration history using the approved restore procedure; do not run a
+   rolled-back migration blindly against a schema whose migration row still reports success.
+8. Reapply the forward migration in the isolated validation database and prove it succeeds.
+9. Post-rollback validation: confirm the exact baseline schema/row counts and legacy SyncJob
+   state, then run the existing quality suite.
 
 **QStash messages arriving after rollback:**
 
@@ -3598,7 +3903,7 @@ All criteria must be demonstrated before Phase 1A is approved as complete.
 
 | # | Criterion | Test type |
 |---|-----------|-----------|
-| AC-69 | Deleting a `User` cascades to all owned scan/source/filter/classification rows | Integration |
+| AC-69 | Canonical explicit erasure transaction deletes classification → item → run → source → filter/version cascade → Account → User; all eight table counts are zero and RESTRICT constraints do not block | Integration |
 | AC-70 | An `email_source` referenced by multiple scans cannot be hard-deleted (RESTRICT) | Integration |
 
 ### 15.13 Quality gates
@@ -3670,6 +3975,15 @@ All criteria must be demonstrated before Phase 1A is approved as complete.
 |---|-----------|-----------|
 | AC-81 | A worker invocation that encounters an unrecognized filter rule type transitions the scan to `FAILED` with `last_error_code = 'INVALID_FILTER_SCHEMA'` under the held lease (step 6), clears pending continuation, releases the lease, and returns HTTP 200 — before any items are claimed or processed; HTTP 489 is NOT returned for domain configuration errors (C69) | Unit |
 
+**Stage 1 schema and dry-run blocker resolution (AC-82–AC-85):**
+
+| # | Criterion | Test type |
+|---|-----------|-----------|
+| AC-82 | The migrated schema has exactly 38 named CHECK constraints across the six Phase 1A tables plus `chk_account_disconnection_coherence`; negative fixtures reject invalid Account, scan, item, and classification states | Migration |
+| AC-83 | The dry run rejects any baseline whose exact User/Account columns or active 16-migration pre-Stage-1 fingerprint differs, rejects any migrated database outside the exact 18-migration history, and rejects any Phase 1A result whose six-table column, FK, trigger, CHECK, or explicit-support-index inventory differs | Migration |
+| AC-84 | Composite-FK duplicate detection constructs one catalog row per FK before grouping, while operational duplicate fixtures prove source identity, request idempotency, filter-version, and classification-version uniqueness | Migration |
+| AC-85 | The fail-after-DDL drill exits non-zero, connection close rolls back all open-transaction changes, the next run passes the exact baseline checks, and a second normal run proves forward reapplication after rollback on empty and sanitized representative databases | Migration / recovery |
+
 ---
 
 ## 16. Test Design Corrections
@@ -3727,7 +4041,12 @@ scan enters `RETRY_WAIT` rather than `FAILED`.
 - `src/app/api/email-filters/[id]/route.ts` — GET + PATCH + DELETE
 - `src/app/api/email-filters/[id]/versions/route.ts` — GET list + POST new version
 - `src/app/api/email-filters/[id]/versions/[versionId]/route.ts` — GET version snapshot
-- `prisma/migrations/20260718000001_add_email_scan_tables/migration.sql` — 6 new tables
+- `prisma/migrations/20260726000000_phase1a_stage1_scan_schema/migration.sql` — **implemented
+  in Stage 1:** 6 new tables and additive Account changes
+- `prisma/migrations/20260726000000_phase1a_stage1_scan_schema/rollback.sql` — **implemented
+  in Stage 1:** reviewed destructive rollback/restore drill
+- `prisma/fixtures/phase1a-stage1-representative-baseline.sql` — **implemented in Stage 1:**
+  synthetic representative pre-migration fixture
 - `tests/lib/featureFlags.test.ts` — AC-50 through AC-56
 - `tests/lib/scan/scanDomainService.test.ts`
 - `tests/lib/scan/leases.test.ts`

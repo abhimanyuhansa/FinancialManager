@@ -45,8 +45,11 @@ export function useCategories() {
   const [loading, setLoading] = useState(cache === null);
 
   useEffect(() => {
-    if (cache) { setCategories(cache); setLoading(false); return; }
-    fetchCategories().then((cats) => { setCategories(cats); setLoading(false); });
+    const timeoutId = window.setTimeout(() => {
+      if (cache) { setCategories(cache); setLoading(false); return; }
+      fetchCategories().then((cats) => { setCategories(cats); setLoading(false); });
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   const refetch = () => {
@@ -97,11 +100,14 @@ export function useSubCategories(parentSlug: string | null) {
   const [loading, setLoading] = useState(parentSlug !== null && existing === null);
 
   useEffect(() => {
-    if (!parentSlug) { setSubCategories([]); setLoading(false); return; }
-    const cached = subCache.get(parentSlug);
-    if (cached) { setSubCategories(cached); setLoading(false); return; }
-    setLoading(true);
-    fetchSubCategories(parentSlug).then((subs) => { setSubCategories(subs); setLoading(false); });
+    const timeoutId = window.setTimeout(() => {
+      if (!parentSlug) { setSubCategories([]); setLoading(false); return; }
+      const cached = subCache.get(parentSlug);
+      if (cached) { setSubCategories(cached); setLoading(false); return; }
+      setLoading(true);
+      fetchSubCategories(parentSlug).then((subs) => { setSubCategories(subs); setLoading(false); });
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [parentSlug]);
 
   const refetch = () => {

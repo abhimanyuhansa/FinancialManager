@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { triggerCronAdvance } from "./helpers/api";
 
 test("T3.1 sync button visible when no active job", async ({ page }) => {
   await page.goto("/dashboard");

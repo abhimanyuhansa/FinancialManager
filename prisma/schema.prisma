@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -7,46 +8,61 @@ datasource db {
 }
 
 model User {
-  id            String              @id @default(cuid())
-  email         String              @unique
-  name          String?
-  image         String?
-  syncFromDate  DateTime?
-  gmailSyncedAt DateTime?
-  lastMessageId String?
-  createdAt     DateTime            @default(now())
-  emailVerified DateTime?
-  accounts      Account[]
-  assets        Asset[]
-  categories    Category[]
-  reconLogs     ReconciliationLog[]
-  sessions      Session[]
-  syncJobs           SyncJob[]
-  transactions       Transaction[]
-  merchantRules      MerchantRule[]
-  statementPasswords StatementPassword[]
-  parseLogs          ParseLog[]
-  vpaMerchantMaps    VpaMerchantMap[]
-  subCategories      SubCategory[]
-  parseTemplates     ParseTemplate[]
+  id                   String                      @id @default(cuid())
+  email                String                      @unique
+  name                 String?
+  image                String?
+  syncFromDate         DateTime?
+  gmailSyncedAt        DateTime?
+  lastMessageId        String?
+  createdAt            DateTime                    @default(now())
+  emailVerified        DateTime?
+  accounts             Account[]
+  assets               Asset[]
+  categories           Category[]
+  reconLogs            ReconciliationLog[]
+  sessions             Session[]
+  syncJobs             SyncJob[]
+  transactions         Transaction[]
+  merchantRules        MerchantRule[]
+  statementPasswords   StatementPassword[]
+  parseLogs            ParseLog[]
+  vpaMerchantMaps      VpaMerchantMap[]
+  subCategories        SubCategory[]
+  parseTemplates       ParseTemplate[]
+  userEmailFilters     UserEmailFilter[]
+  emailSources         EmailSource[]
+  emailScanRuns        EmailScanRun[]
+  emailClassifications EmailManualClassification[] @relation("ClassificationOwner")
+  classificationsMade  EmailManualClassification[] @relation("ClassificationActor")
 }
 
 model Account {
-  id                String  @id @default(cuid())
-  userId            String
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String?
-  access_token      String?
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String?
-  session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                   String            @id @default(cuid())
+  userId               String
+  type                 String
+  provider             String
+  providerAccountId    String
+  refresh_token        String?
+  access_token         String?
+  expires_at           Int?
+  token_type           String?
+  scope                String?
+  id_token             String?
+  session_state        String?
+  disconnectedAt       DateTime?         @map("disconnected_at") @db.Timestamptz(6)
+  disconnectionReason  String?           @map("disconnection_reason")
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userEmailFilters     UserEmailFilter[]
+  userEmailFiltersById UserEmailFilter[] @relation("FilterAccountById")
+  emailSources         EmailSource[]
+  emailSourcesById     EmailSource[]     @relation("SourceAccountById")
+  emailScanRuns        EmailScanRun[]
+  emailScanRunsById    EmailScanRun[]    @relation("ScanRunAccountById")
 
   @@unique([provider, providerAccountId])
+  @@unique([userId, id], map: "account_user_id_id_unique")
+  @@index([id], map: "account_disconnected_idx", where: raw("(disconnected_at IS NOT NULL)"))
 }
 
 model Session {
@@ -225,7 +241,7 @@ model ParseLog {
   parsedAmount     Float?
   transactionId    String?
   errorDetail      String?
-  resolvedBy       String?   // "static" | "template" | "gemini" | "exact_cache"
+  resolvedBy       String? // "static" | "template" | "gemini" | "exact_cache"
   createdAt        DateTime  @default(now())
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -235,16 +251,16 @@ model ParseLog {
 }
 
 model GeminiUsageLog {
-  id        String   @id @default(cuid())
-  date      String   // YYYY-MM-DD (UTC) — one row per calendar day
-  callCount Int      @default(0)
+  id        String @id @default(cuid())
+  date      String // YYYY-MM-DD (UTC) — one row per calendar day
+  callCount Int    @default(0)
 
   @@unique([date])
 }
 
 model GmailQueryKeyword {
   id        String   @id @default(cuid())
-  type      String   // "from" | "subject"
+  type      String // "from" | "subject"
   value     String
   isActive  Boolean  @default(true)
   isDefault Boolean  @default(true)
@@ -255,7 +271,7 @@ model GmailQueryKeyword {
 
 model ExclusionRule {
   id       String   @id @default(cuid())
-  type     String   // "sender_domain" | "sender_email"
+  type     String // "sender_domain" | "sender_email"
   value    String
   isActive Boolean  @default(true)
   note     String?
@@ -266,11 +282,11 @@ model ExclusionRule {
 
 model MerchantMaster {
   id           String   @id @default(cuid())
-  merchantName String   @unique  // normalised lowercase
+  merchantName String   @unique // normalised lowercase
   category     String
   subCategory  String?
   confidence   Float    @default(0)
-  source       String   // "llm" | "user"
+  source       String // "llm" | "user"
   updatedAt    DateTime @updatedAt
 }
 
@@ -307,7 +323,7 @@ model ParseTemplate {
   templateHash         String
   parserVersion        String
   taxonomyVersion      String    @default("")
-  status               String    // SHADOW | ACTIVE | DEGRADED | DISABLED
+  status               String // SHADOW | ACTIVE | DEGRADED | DISABLED
   subjectTemplate      String
   bodyTemplate         String
   extractors           Json
@@ -328,25 +344,25 @@ model ParseTemplate {
 }
 
 model LlmCallLog {
-  id               String   @id @default(cuid())
-  syncJobId        String?
-  userId           String?
-  batchKey         String?
-  provider         String
-  model            String
-  candidateCount   Int
-  attemptNumber    Int
-  wasFallback      Boolean  @default(false)
-  fallbackReason   String?
-  outcome          String
-  errorDetail      String?
-  finishReason     String?
+  id                 String   @id @default(cuid())
+  syncJobId          String?
+  userId             String?
+  batchKey           String?
+  provider           String
+  model              String
+  candidateCount     Int
+  attemptNumber      Int
+  wasFallback        Boolean  @default(false)
+  fallbackReason     String?
+  outcome            String
+  errorDetail        String?
+  finishReason       String?
   effectiveTimeoutMs Int?
-  latencyMs        Int
-  inputTokens      Int
-  outputTokens     Int
-  estimatedCostUsd Decimal
-  createdAt        DateTime @default(now())
+  latencyMs          Int
+  inputTokens        Int
+  outputTokens       Int
+  estimatedCostUsd   Decimal
+  createdAt          DateTime @default(now())
 
   @@index([provider, createdAt])
   @@index([syncJobId])
@@ -366,13 +382,13 @@ model LlmQuotaWindow {
 }
 
 model LlmCircuitBreaker {
-  provider             String    @id
-  state                String    @default("CLOSED")
-  consecutiveFailures  Int       @default(0)
-  lastFailureAt        DateTime?
-  openedAt             DateTime?
-  probeLeaseExpiresAt  DateTime?
-  updatedAt            DateTime  @updatedAt
+  provider            String    @id
+  state               String    @default("CLOSED")
+  consecutiveFailures Int       @default(0)
+  lastFailureAt       DateTime?
+  openedAt            DateTime?
+  probeLeaseExpiresAt DateTime?
+  updatedAt           DateTime  @updatedAt
 }
 
 model LlmBatchIdempotency {
@@ -393,4 +409,218 @@ model SyncJobLock {
   expiresAt  DateTime
 
   @@index([expiresAt])
+}
+
+model UserEmailFilter {
+  id               String               @id @default(dbgenerated("(gen_random_uuid())::text")) @db.Text
+  userId           String               @map("user_id") @db.Text
+  gmailAccountId   String               @map("gmail_account_id") @db.Text
+  name             String               @db.Text
+  isActive         Boolean              @default(true) @map("is_active")
+  currentVersionId String?              @map("current_version_id") @db.Text
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  gmailAccount     Account              @relation(fields: [userId, gmailAccountId], references: [userId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_email_filter_account")
+  gmailAccountById Account              @relation("FilterAccountById", fields: [gmailAccountId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  versions         EmailFilterVersion[] @relation("FilterVersions")
+  currentVersion   EmailFilterVersion?  @relation("CurrentFilterVersion", fields: [id, currentVersionId], references: [emailFilterId, id], onDelete: NoAction, onUpdate: NoAction, map: "fk_email_filter_current_version")
+  scanRuns         EmailScanRun[]
+  ownedScanRuns    EmailScanRun[]       @relation("ScanRunFilterOwnership")
+
+  @@unique([userId, gmailAccountId, id], map: "email_filter_user_id_gmail_account_id_id_key")
+  @@index([userId], map: "email_filter_user_idx")
+  @@index([userId, gmailAccountId], map: "email_filter_user_account_idx")
+  @@map("email_filter")
+}
+
+model EmailFilterVersion {
+  id                     String               @id @default(dbgenerated("(gen_random_uuid())::text")) @db.Text
+  emailFilterId          String               @map("email_filter_id") @db.Text
+  version                Int
+  gmailQuery             String               @map("gmail_query") @db.Text
+  includeRulesJson       Json                 @default("[]") @map("include_rules_json")
+  excludeRulesJson       Json                 @default("[]") @map("exclude_rules_json")
+  ruleSchemaVersion      Int                  @default(1) @map("rule_schema_version")
+  filterEvaluatorVersion Int                  @default(1) @map("filter_evaluator_version")
+  supersedesVersionId    String?              @map("supersedes_version_id") @db.Text
+  createdBy              String               @map("created_by") @db.Text
+  createdAt              DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  emailFilter            UserEmailFilter      @relation("FilterVersions", fields: [emailFilterId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  currentForFilters      UserEmailFilter[]    @relation("CurrentFilterVersion")
+  supersedes             EmailFilterVersion?  @relation("FilterVersionSupersession", fields: [emailFilterId, supersedesVersionId], references: [emailFilterId, id], onDelete: NoAction, onUpdate: NoAction, map: "fk_version_supersedes")
+  supersededBy           EmailFilterVersion[] @relation("FilterVersionSupersession")
+  supersedesById         EmailFilterVersion?  @relation("FilterVersionSupersessionById", fields: [supersedesVersionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supersededById         EmailFilterVersion[] @relation("FilterVersionSupersessionById")
+  scanRuns               EmailScanRun[]       @relation("ScanRunFilterVersion")
+  scanRunsById           EmailScanRun[]       @relation("ScanRunFilterVersionById")
+
+  @@unique([emailFilterId, version], map: "email_filter_version_email_filter_id_version_key")
+  @@unique([emailFilterId, id], map: "email_filter_version_email_filter_id_id_key")
+  @@index([emailFilterId], map: "email_filter_version_filter_idx")
+  @@map("email_filter_version")
+}
+
+model EmailSource {
+  id                             String                      @id @default(dbgenerated("(gen_random_uuid())::text")) @db.Text
+  userId                         String                      @map("user_id") @db.Text
+  gmailAccountId                 String                      @map("gmail_account_id") @db.Text
+  gmailMessageId                 String                      @map("gmail_message_id") @db.Text
+  subject                        String?                     @db.Text
+  normalizedSubject              String?                     @map("normalized_subject") @db.Text
+  senderEmail                    String?                     @map("sender_email") @db.Text
+  senderName                     String?                     @map("sender_name") @db.Text
+  senderDomain                   String?                     @map("sender_domain") @db.Text
+  receivedAt                     DateTime?                   @map("received_at") @db.Timestamptz(6)
+  snippetRedacted                String?                     @map("snippet_redacted") @db.Text
+  gmailThreadId                  String?                     @map("gmail_thread_id") @db.Text
+  gmailLabels                    String[]                    @map("gmail_labels")
+  hasAttachment                  Boolean                     @default(false) @map("has_attachment")
+  attachmentMetadata             Json?                       @map("attachment_metadata")
+  sourceUrl                      String?                     @map("source_url") @db.Text
+  lastFetchStatus                String                      @default("DISCOVERED") @map("last_fetch_status") @db.Text
+  lastFetchAttemptAt             DateTime?                   @map("last_fetch_attempt_at") @db.Timestamptz(6)
+  lastFetchErrorCode             String?                     @map("last_fetch_error_code") @db.Text
+  lastFetchErrorMessageSanitized String?                     @map("last_fetch_error_message_sanitized") @db.Text
+  currentManualClassification    String                      @default("UNREVIEWED") @map("current_manual_classification") @db.Text
+  classificationVersion          Int                         @default(0) @map("classification_version")
+  firstDiscoveredAt              DateTime                    @default(now()) @map("first_discovered_at") @db.Timestamptz(6)
+  lastFetchedAt                  DateTime?                   @map("last_fetched_at") @db.Timestamptz(6)
+  createdAt                      DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                      DateTime                    @default(now()) @map("updated_at") @db.Timestamptz(6)
+  retainedUntil                  DateTime?                   @map("retained_until") @db.Timestamptz(6)
+  deletedAt                      DateTime?                   @map("deleted_at") @db.Timestamptz(6)
+  user                           User                        @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  gmailAccount                   Account                     @relation(fields: [userId, gmailAccountId], references: [userId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_email_source_account")
+  gmailAccountById               Account                     @relation("SourceAccountById", fields: [gmailAccountId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  scanItems                      EmailScanItem[]
+  classifications                EmailManualClassification[]
+
+  @@unique([userId, gmailAccountId, gmailMessageId], map: "email_source_user_id_gmail_account_id_gmail_message_id_key")
+  @@unique([userId, id], map: "email_source_user_id_id_key")
+  @@index([userId, gmailAccountId, lastFetchStatus], map: "email_source_user_account_fetch_idx", where: raw("(deleted_at IS NULL)"))
+  @@index([userId, gmailAccountId, firstDiscoveredAt(sort: Desc)], map: "email_source_user_account_discovered_idx", where: raw("(deleted_at IS NULL)"))
+  @@index([userId, gmailAccountId, currentManualClassification], map: "email_source_manual_review_idx", where: raw("((deleted_at IS NULL) AND (current_manual_classification = ANY (ARRAY['UNREVIEWED'::text, 'UNCERTAIN'::text])))"))
+  @@map("email_source")
+}
+
+model EmailScanRun {
+  id                             String             @id @default(dbgenerated("(gen_random_uuid())::text")) @db.Text
+  userId                         String             @map("user_id") @db.Text
+  clientRequestId                String             @map("client_request_id") @db.Text
+  gmailAccountId                 String             @map("gmail_account_id") @db.Text
+  emailFilterId                  String             @map("email_filter_id") @db.Text
+  emailFilterVersionId           String             @map("email_filter_version_id") @db.Text
+  effectiveGmailQuery            String             @map("effective_gmail_query") @db.Text
+  fromDate                       DateTime           @map("from_date") @db.Date
+  toDate                         DateTime           @map("to_date") @db.Date
+  scanLimit                      Int?               @map("scan_limit")
+  discoveryPageToken             String?            @map("discovery_page_token") @db.Text
+  discoveryComplete              Boolean            @default(false) @map("discovery_complete")
+  status                         String             @default("CREATED") @db.Text
+  currentStage                   String?            @map("current_stage") @db.Text
+  resumeStage                    String?            @map("resume_stage") @db.Text
+  stateVersion                   Int                @default(0) @map("state_version")
+  workerLeaseOwner               String?            @map("worker_lease_owner") @db.Text
+  workerLeaseExpiresAt           DateTime?          @map("worker_lease_expires_at") @db.Timestamptz(6)
+  nextRetryAt                    DateTime?          @map("next_retry_at") @db.Timestamptz(6)
+  retryCount                     Int                @default(0) @map("retry_count")
+  maxRetries                     Int                @default(5) @map("max_retries")
+  maxItemRetries                 Int                @default(3) @map("max_item_retries")
+  filterRuleSchemaVersion        Int                @map("filter_rule_schema_version")
+  filterEvaluatorVersion         Int                @map("filter_evaluator_version")
+  filterSnapshotJson             Json               @map("filter_snapshot_json")
+  totalDiscovered                Int                @default(0) @map("total_discovered")
+  fetchPendingCount              Int                @default(0) @map("fetch_pending_count")
+  fetchInProgressCount           Int                @default(0) @map("fetch_in_progress_count")
+  fetchSuccessCount              Int                @default(0) @map("fetch_success_count")
+  fetchFailedCount               Int                @default(0) @map("fetch_failed_count")
+  filterIncludedCount            Int                @default(0) @map("filter_included_count")
+  filterExcludedCount            Int                @default(0) @map("filter_excluded_count")
+  manualReviewCount              Int                @default(0) @map("manual_review_count")
+  lastErrorCode                  String?            @map("last_error_code") @db.Text
+  lastErrorMessageSanitized      String?            @map("last_error_message_sanitized") @db.Text
+  startedAt                      DateTime?          @map("started_at") @db.Timestamptz(6)
+  lastCheckpointAt               DateTime?          @map("last_checkpoint_at") @db.Timestamptz(6)
+  lastBatchStartedAt             DateTime?          @map("last_batch_started_at") @db.Timestamptz(6)
+  lastBatchCompletedAt           DateTime?          @map("last_batch_completed_at") @db.Timestamptz(6)
+  completedAt                    DateTime?          @map("completed_at") @db.Timestamptz(6)
+  pausedAt                       DateTime?          @map("paused_at") @db.Timestamptz(6)
+  cancelledAt                    DateTime?          @map("cancelled_at") @db.Timestamptz(6)
+  batchSequence                  BigInt             @default(0) @map("batch_sequence")
+  pendingContinuationSequence    BigInt?            @map("pending_continuation_sequence")
+  pendingContinuationStage       String?            @map("pending_continuation_stage") @db.Text
+  pendingContinuationNotBefore   DateTime?          @map("pending_continuation_not_before") @db.Timestamptz(6)
+  pendingContinuationPublishedAt DateTime?          @map("pending_continuation_published_at") @db.Timestamptz(6)
+  createdAt                      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                      DateTime           @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user                           User               @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  gmailAccount                   Account            @relation(fields: [userId, gmailAccountId], references: [userId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_email_scan_run_account")
+  gmailAccountById               Account            @relation("ScanRunAccountById", fields: [gmailAccountId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  emailFilter                    UserEmailFilter    @relation(fields: [emailFilterId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  ownedEmailFilter               UserEmailFilter    @relation("ScanRunFilterOwnership", fields: [userId, gmailAccountId, emailFilterId], references: [userId, gmailAccountId, id], onDelete: NoAction, onUpdate: NoAction, map: "fk_scan_run_filter_ownership")
+  emailFilterVersion             EmailFilterVersion @relation("ScanRunFilterVersion", fields: [emailFilterId, emailFilterVersionId], references: [emailFilterId, id], onDelete: Restrict, onUpdate: NoAction, map: "fk_scan_run_filter_version")
+  emailFilterVersionById         EmailFilterVersion @relation("ScanRunFilterVersionById", fields: [emailFilterVersionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  items                          EmailScanItem[]
+
+  @@unique([userId, clientRequestId], map: "email_scan_run_user_id_client_request_id_key")
+  @@index([userId, status], map: "email_scan_run_user_status_idx")
+  @@index([userId, gmailAccountId], map: "email_scan_run_user_account_idx")
+  @@index([nextRetryAt], map: "email_scan_run_retry_idx", where: raw("(status = 'RETRY_WAIT'::text)"))
+  @@index([workerLeaseExpiresAt], map: "email_scan_run_lease_idx", where: raw("(worker_lease_owner IS NOT NULL)"))
+  @@index([pendingContinuationNotBefore], map: "email_scan_run_continuation_recovery_idx", where: raw("((pending_continuation_sequence IS NOT NULL) AND (pending_continuation_published_at IS NULL))"))
+  @@map("email_scan_run")
+}
+
+model EmailScanItem {
+  id                            String       @id @default(dbgenerated("(gen_random_uuid())::text")) @db.Text
+  scanRunId                     String       @map("scan_run_id") @db.Text
+  emailSourceId                 String       @map("email_source_id") @db.Text
+  status                        String       @default("DISCOVERED") @db.Text
+  stateVersion                  Int          @default(0) @map("state_version")
+  fetchAttemptCount             Int          @default(0) @map("fetch_attempt_count")
+  nextRetryAt                   DateTime?    @map("next_retry_at") @db.Timestamptz(6)
+  lastErrorCode                 String?      @map("last_error_code") @db.Text
+  lastErrorMessageSanitized     String?      @map("last_error_message_sanitized") @db.Text
+  itemLeaseOwner                String?      @map("item_lease_owner") @db.Text
+  itemLeaseExpiresAt            DateTime?    @map("item_lease_expires_at") @db.Timestamptz(6)
+  filterDecision                String       @default("PENDING") @map("filter_decision") @db.Text
+  matchedIncludeRuleIds         String[]     @map("matched_include_rule_ids")
+  matchedExcludeRuleIds         String[]     @map("matched_exclude_rule_ids")
+  filterDecisionReasonSanitized String?      @map("filter_decision_reason_sanitized") @db.Text
+  discoveredAt                  DateTime     @default(now()) @map("discovered_at") @db.Timestamptz(6)
+  fetchStartedAt                DateTime?    @map("fetch_started_at") @db.Timestamptz(6)
+  fetchCompletedAt              DateTime?    @map("fetch_completed_at") @db.Timestamptz(6)
+  updatedAt                     DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
+  scanRun                       EmailScanRun @relation(fields: [scanRunId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  emailSource                   EmailSource  @relation(fields: [emailSourceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([scanRunId, emailSourceId], map: "email_scan_item_scan_run_id_email_source_id_key")
+  @@index([scanRunId, status], map: "email_scan_item_run_status_idx")
+  @@index([emailSourceId], map: "email_scan_item_source_idx")
+  @@index([nextRetryAt], map: "email_scan_item_retry_idx", where: raw("(status = 'RETRY_WAIT'::text)"))
+  @@index([itemLeaseExpiresAt], map: "email_scan_item_lease_idx", where: raw("(item_lease_owner IS NOT NULL)"))
+  @@index([scanRunId, filterDecision], map: "email_scan_item_filter_decision_idx", where: raw("(status = 'FETCHED'::text)"))
+  @@map("email_scan_item")
+}
+
+model EmailManualClassification {
+  id                     String      @id @default(dbgenerated("(gen_random_uuid())::text")) @db.Text
+  userId                 String      @map("user_id") @db.Text
+  emailSourceId          String      @map("email_source_id") @db.Text
+  previousClassification String      @map("previous_classification") @db.Text
+  newClassification      String      @map("new_classification") @db.Text
+  reason                 String?     @db.Text
+  classifiedBy           String?     @map("classified_by") @db.Text
+  classifiedAt           DateTime    @default(now()) @map("classified_at") @db.Timestamptz(6)
+  classificationVersion  Int         @map("classification_version")
+  createdAt              DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  user                   User        @relation("ClassificationOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  emailSource            EmailSource @relation(fields: [userId, emailSourceId], references: [userId, id], onDelete: Cascade, onUpdate: NoAction, map: "fk_classification_source")
+  classifier             User?       @relation("ClassificationActor", fields: [classifiedBy], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([emailSourceId, classificationVersion])
+  @@index([emailSourceId, classifiedAt(sort: Desc)], map: "email_manual_classification_source_idx")
+  @@index([userId, classifiedAt(sort: Desc)], map: "email_manual_classification_user_idx")
+  @@map("email_manual_classification")
 }

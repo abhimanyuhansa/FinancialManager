@@ -257,23 +257,28 @@ removed since `sixMonthsAgo` is the effective default in all cases?
 ## Phase 1A Blocking Decisions (D-1 through D-6) — added 2026-07-16
 
 These 6 decisions were identified during the Phase 0 architecture audit (see `14-phase0-assessment.md §12`).
-Decision outcomes recorded 2026-07-19: D-1 pending final consolidation approval; D-2 Approved; D-3 Approved; D-4 Conditionally approved; D-5 Approved; D-6 Approved
-(see `14-phase0-assessment.md §5` for full decision text and rationale). C1–C33 applied.
-**Phase 1A implementation remains blocked on D-1 final consolidation approval.**
+Decision outcomes recorded 2026-07-19 and updated 2026-07-26: D-1 Approved for the bounded
+Stage 1 schema/migration work; D-2 Approved; D-3 Approved; D-4 Conditionally approved; D-5
+Approved; D-6 Approved (see `14-phase0-assessment.md §5` for full decision text and rationale).
+C1–C116 applied. Runtime implementation is outside the D-1 Stage 1 approval and remains
+unimplemented.
 
 ---
 
 ## D-1 — New `email_scan_run` table vs. extending `SyncJob`
 
-**Status: PENDING — awaiting final consolidation approval. C1–C33 applied.**
+**Status: APPROVED FOR PHASE 1A STAGE 1 SCHEMA/MIGRATION — recorded 2026-07-26.**
 
 **Context:** Phase 1A needs a scan session record. Option A: create a new `email_scan_run`
 table. Option B: add new columns to the existing `SyncJob` table.
 
 **Why it matters:** Option B requires altering an existing production table and risks
-migrating in-flight sync jobs. Option A is purely additive with no rollback risk.
+migrating in-flight sync jobs. Option A isolates scan state, but rollback is not risk-free:
+the approved design also adds Account columns, a uniqueness constraint, a row-local CHECK,
+and an index that must be reversed explicitly.
 
-**Recommendation:** New table alongside (Option A). See ADR-14 in `07`.
+**Decision:** New tables alongside `SyncJob` (Option A), with only the explicitly approved
+additive Account changes. See ADR-14 in `07`.
 
 **Owner:** Architect / PM.
 

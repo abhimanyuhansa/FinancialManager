@@ -32,7 +32,7 @@ export type SelectedProvider = {
   effectiveTimeoutMs: number;
 };
 
-function getPrimaryProvider(_candidateCount: number): LLMProvider {
+function getPrimaryProvider(): LLMProvider {
   return (process.env.LLM_PRIMARY_PROVIDER as LLMProvider | undefined) ?? "gemini";
 }
 
@@ -82,7 +82,9 @@ export async function selectProvider(
   estimatedOutputTokens: number,
   invocationDeadlineMs?: number
 ): Promise<SelectedProvider> {
-  const primary = getPrimaryProvider(candidateCount);
+  // Candidate count affects token estimates upstream, but provider priority is configuration-only.
+  void candidateCount;
+  const primary = getPrimaryProvider();
   const fallback = getFallbackProvider(primary);
 
   const [primaryState, fallbackState] = await Promise.all([

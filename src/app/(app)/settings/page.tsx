@@ -149,7 +149,9 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    if (tab === "categories") void fetchCategories();
+    if (tab !== "categories") return;
+    const timeoutId = window.setTimeout(() => void fetchCategories(), 0);
+    return () => window.clearTimeout(timeoutId);
   }, [tab, fetchCategories]);
 
   /* ── Category edit/delete ── */
@@ -381,7 +383,7 @@ export default function SettingsPage() {
   const [parseMerchantFilter, setParseMerchantFilter] = useState("");
   const [reprocessingId, setReprocessingId] = useState<string | null>(null);
 
-  const loadParseLogs = async (page = 1) => {
+  const loadParseLogs = useCallback(async (page = 1) => {
     setParseLogsLoading(true);
     const params = new URLSearchParams({ page: String(page) });
     if (parseOutcomeFilter) params.set("outcome", parseOutcomeFilter);
@@ -393,7 +395,7 @@ export default function SettingsPage() {
     setParseLogsTotal(data.total ?? 0);
     setParseLogsPage(page);
     setParseLogsLoading(false);
-  };
+  }, [parseDomainFilter, parseMerchantFilter, parseOutcomeFilter]);
 
   const handleReprocess = async (id: string) => {
     setReprocessingId(id);
@@ -449,7 +451,10 @@ export default function SettingsPage() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { void loadUserInfo(); }, [loadUserInfo]);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => void loadUserInfo(), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadUserInfo]);
 
   const handleSyncNow = async () => {
     setSyncing(true);
@@ -477,10 +482,21 @@ export default function SettingsPage() {
       .finally(() => setFiltersLoading(false));
   };
 
-  useEffect(() => { if (tab === "filters") fetchFilters(); }, [tab]);
-  useEffect(() => { if (tab === "passwords") { void loadPasswords(); } }, [tab]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (tab === "parse-logs") { void loadParseLogs(1); } }, [tab, parseOutcomeFilter, parseDomainFilter, parseMerchantFilter]);
+  useEffect(() => {
+    if (tab !== "filters") return;
+    const timeoutId = window.setTimeout(fetchFilters, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [tab]);
+  useEffect(() => {
+    if (tab !== "passwords") return;
+    const timeoutId = window.setTimeout(() => void loadPasswords(), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [tab]);
+  useEffect(() => {
+    if (tab !== "parse-logs") return;
+    const timeoutId = window.setTimeout(() => void loadParseLogs(1), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [tab, loadParseLogs]);
 
   const handleAddFilter = async () => {
     if (!newValue.trim()) { setAddError("Value is required"); return; }
@@ -521,7 +537,10 @@ export default function SettingsPage() {
     setGmailKeywordsLoading(false);
   }, []);
 
-  useEffect(() => { void loadGmailKeywords(); }, [loadGmailKeywords]);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => void loadGmailKeywords(), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadGmailKeywords]);
 
   const handleAddKeyword = async () => {
     if (!newKwValue.trim()) return;
@@ -564,7 +583,10 @@ export default function SettingsPage() {
     setExclusionLoading(false);
   }, []);
 
-  useEffect(() => { void loadExclusionRules(); }, [loadExclusionRules]);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => void loadExclusionRules(), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadExclusionRules]);
 
   const handleAddExclusion = async () => {
     if (!newExValue.trim()) return;
@@ -607,7 +629,10 @@ export default function SettingsPage() {
     setSubcatLoading(false);
   }, []);
 
-  useEffect(() => { void loadSubcategories(); }, [loadSubcategories]);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => void loadSubcategories(), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [loadSubcategories]);
 
   const handleAddSubcat = async () => {
     if (!newSubcatValue.trim()) return;
@@ -666,13 +691,15 @@ export default function SettingsPage() {
   const [logsLoading, setLogsLoading] = useState(true);
 
   useEffect(() => {
-    if (tab === "audit") {
+    if (tab !== "audit") return;
+    const timeoutId = window.setTimeout(() => {
       setLogsLoading(true);
       fetch("/api/gmail/reconcile")
         .then((r) => r.json())
         .then((d: { logs: ReconciliationLog[] }) => setLogs(d.logs ?? []))
         .finally(() => setLogsLoading(false));
-    }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [tab]);
 
   /* group subcategories by category */

@@ -1,5 +1,5 @@
 -- =============================================================================
--- Financial Manager Phase 1A — Canonical DDL Dry Run (C81–C107 applied)
+-- Financial Manager Phase 1A — Canonical DDL Dry Run (C81–C116 applied)
 -- Execute against an isolated, disposable PostgreSQL database.
 -- ON_ERROR_STOP=1 is required: any failure aborts immediately.
 -- ROLLBACK at end leaves no permanent changes.
@@ -7,8 +7,16 @@
 -- =============================================================================
 -- Usage:
 --   psql -X -v ON_ERROR_STOP=1 "$ISOLATED_DATABASE_URL" \
---     -f docs/consolidated/phase1a-dry-run.sql \
---     2>&1 | tee /tmp/fm_phase1a_dry_run.log
+--     -L /tmp/fm_phase1a_dry_run.log \
+--     -f docs/consolidated/phase1a-dry-run.sql
+--
+-- Optional interruption-recovery drill (expected non-zero exit):
+--   psql -X -v ON_ERROR_STOP=1 -v PHASE1A_FAIL_AFTER_DDL=1 \
+--     "$ISOLATED_DATABASE_URL" \
+--     -L /tmp/fm_phase1a_interruption.log \
+--     -f docs/consolidated/phase1a-dry-run.sql
+-- A subsequent normal run must pass VP1 before applying DDL, proving that connection-close
+-- rollback removed the interrupted transaction.
 
 -- =============================================================================
 -- C99: Capture baseline counts in a session-local TEMP TABLE before BEGIN.
@@ -26,6 +34,50 @@ SELECT
   (SELECT COUNT(*) FROM "Account" WHERE id NOT LIKE 'dryrun-%');
 
 BEGIN;
+
+\if :{?PHASE1A_VALIDATE_MIGRATED}
+\echo '--- Migrated-schema mode: preserving installed DDL; validating it in place ---'
+DO $$
+DECLARE
+  actual_migrations   TEXT[];
+  expected_migrations TEXT[] := ARRAY[
+    '20260708235932_init',
+    '20260709083711_add_syncjob_messageids',
+    '20260709112945_add_user_email_verified',
+    '20260709194629_plan9a_schema',
+    '20260711150726_add_syncjob_scan_pagination',
+    '20260711160000_add_syncjobmessage_table',
+    '20260711220743_add_gemini_usage_log',
+    '20260712154013_gmail_sync_redesign_v2',
+    '20260712203815_add_vpa_merchant_map',
+    '20260713000000_add_category_slug',
+    '20260713150000_prepare_parse_template_replay',
+    '20260713222953_add_llm_routing_tables',
+    '20260714000000_add_subcategory',
+    '20260714050000_reset_parse_template_replay',
+    '20260714100000_add_parse_template',
+    '20260714150000_finalize_parse_template_replay',
+    '20260726000000_phase1a_stage1_scan_schema',
+    '20260726010000_reconcile_llm_schema_drift'
+  ];
+BEGIN
+  SELECT array_agg(migration_name ORDER BY migration_name)
+    INTO actual_migrations
+  FROM "_prisma_migrations"
+  WHERE finished_at IS NOT NULL
+    AND rolled_back_at IS NULL;
+
+  IF actual_migrations IS DISTINCT FROM expected_migrations THEN
+    RAISE EXCEPTION
+      'FAIL migrated fingerprint: actual %, expected %',
+      actual_migrations,
+      expected_migrations;
+  END IF;
+
+  RAISE NOTICE 'PASS migrated fingerprint: exact 18-migration history';
+END;
+$$;
+\else
 
 -- =============================================================================
 -- VP1: Baseline User and Account schema validation
@@ -66,6 +118,93 @@ BEGIN
     RAISE EXCEPTION 'FAIL VP1: Account table missing required columns: %', missing;
   END IF;
   RAISE NOTICE 'PASS VP1: Account required columns present';
+END; $$;
+
+-- C112: Exact pre-Phase-1A baseline fingerprint. A database with extra/missing User or
+-- Account columns, an incomplete migration chain, or an unexpected later migration must fail.
+DO $$
+DECLARE
+  actual_user_cols    TEXT[];
+  actual_account_cols TEXT[];
+  expected_user_cols  TEXT[] := ARRAY[
+    'createdAt','email','emailVerified','gmailSyncedAt','id',
+    'image','lastMessageId','name','syncFromDate'
+  ];
+  expected_account_cols TEXT[] := ARRAY[
+    'access_token','expires_at','id','id_token','provider','providerAccountId',
+    'refresh_token','scope','session_state','token_type','type','userId'
+  ];
+BEGIN
+  SELECT array_agg(column_name ORDER BY column_name)
+  INTO actual_user_cols
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'User';
+
+  SELECT array_agg(column_name ORDER BY column_name)
+  INTO actual_account_cols
+  FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'Account';
+
+  IF actual_user_cols IS DISTINCT FROM expected_user_cols THEN
+    RAISE EXCEPTION
+      'FAIL VP1: User column fingerprint mismatch. Actual: %, expected: %',
+      actual_user_cols, expected_user_cols;
+  END IF;
+  IF actual_account_cols IS DISTINCT FROM expected_account_cols THEN
+    RAISE EXCEPTION
+      'FAIL VP1: Account column fingerprint mismatch. Actual: %, expected: %',
+      actual_account_cols, expected_account_cols;
+  END IF;
+
+  RAISE NOTICE 'PASS VP1: Exact User and Account column fingerprints match';
+END; $$;
+
+DO $$
+DECLARE
+  actual_migrations   TEXT[];
+  expected_migrations TEXT[] := ARRAY[
+    '20260708235932_init',
+    '20260709083711_add_syncjob_messageids',
+    '20260709112945_add_user_email_verified',
+    '20260709194629_plan9a_schema',
+    '20260711150726_add_syncjob_scan_pagination',
+    '20260711160000_add_syncjobmessage_table',
+    '20260711220743_add_gemini_usage_log',
+    '20260712154013_gmail_sync_redesign_v2',
+    '20260712203815_add_vpa_merchant_map',
+    '20260713000000_add_category_slug',
+    '20260713150000_prepare_parse_template_replay',
+    '20260713222953_add_llm_routing_tables',
+    '20260714000000_add_subcategory',
+    '20260714050000_reset_parse_template_replay',
+    '20260714100000_add_parse_template',
+    '20260714150000_finalize_parse_template_replay'
+  ];
+BEGIN
+  IF to_regclass('public._prisma_migrations') IS NULL THEN
+    RAISE EXCEPTION 'FAIL VP1: _prisma_migrations table is missing';
+  END IF;
+
+  SELECT array_agg(migration_name ORDER BY migration_name)
+  INTO actual_migrations
+  FROM "_prisma_migrations"
+  WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL;
+
+  IF actual_migrations IS DISTINCT FROM expected_migrations THEN
+    RAISE EXCEPTION
+      'FAIL VP1: Applied migration fingerprint mismatch. Actual: %, expected: %',
+      actual_migrations, expected_migrations;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM "_prisma_migrations"
+    WHERE finished_at IS NULL AND rolled_back_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'FAIL VP1: Unfinished, non-rolled-back Prisma migration exists';
+  END IF;
+
+  RAISE NOTICE 'PASS VP1: Exact 16-migration pre-Stage-1 baseline fingerprint matches';
 END; $$;
 
 -- Assert Phase 1A tables do not yet exist
@@ -120,6 +259,23 @@ BEGIN
   RAISE NOTICE 'PASS VP1: account_disconnected_idx not yet present';
 END; $$;
 
+-- Assert Account disconnection CHECK does not yet exist
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_constraint
+  WHERE conrelid = '"Account"'::regclass
+    AND contype = 'c'
+    AND conname = 'chk_account_disconnection_coherence';
+  IF cnt > 0 THEN
+    RAISE EXCEPTION
+      'FAIL VP1: chk_account_disconnection_coherence already exists before additive migration';
+  END IF;
+  RAISE NOTICE 'PASS VP1: chk_account_disconnection_coherence not yet present';
+END; $$;
+
 -- C99: Assert no dryrun-% rows exist in User or Account before the dry run
 DO $$
 DECLARE
@@ -143,6 +299,13 @@ END; $$;
 ALTER TABLE "Account" ADD COLUMN disconnected_at TIMESTAMPTZ;
 ALTER TABLE "Account" ADD COLUMN disconnection_reason TEXT;
 ALTER TABLE "Account" ADD CONSTRAINT account_user_id_id_unique UNIQUE ("userId", id);
+ALTER TABLE "Account"
+  ADD CONSTRAINT chk_account_disconnection_coherence CHECK (
+    (disconnected_at IS NULL AND disconnection_reason IS NULL)
+    OR
+    (disconnected_at IS NOT NULL
+     AND disconnection_reason IN ('user_request','token_revoked','invalid_grant'))
+  );
 CREATE INDEX account_disconnected_idx
   ON "Account"(id)
   WHERE disconnected_at IS NOT NULL;
@@ -214,7 +377,8 @@ CREATE TABLE email_filter (
   current_version_id  TEXT,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(user_id, gmail_account_id, id)
+  UNIQUE(user_id, gmail_account_id, id),
+  CONSTRAINT chk_email_filter_timestamps CHECK (updated_at >= created_at)
 );
 CREATE INDEX email_filter_user_idx ON email_filter(user_id);
 CREATE INDEX email_filter_user_account_idx ON email_filter(user_id, gmail_account_id);
@@ -235,7 +399,16 @@ CREATE TABLE email_filter_version (
   created_by               TEXT        NOT NULL,
   created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(email_filter_id, version),
-  UNIQUE(email_filter_id, id)
+  UNIQUE(email_filter_id, id),
+  CONSTRAINT chk_email_filter_version_numbers CHECK (
+    version > 0
+    AND rule_schema_version > 0
+    AND filter_evaluator_version > 0
+  ),
+  CONSTRAINT chk_email_filter_version_rule_arrays CHECK (
+    jsonb_typeof(include_rules_json) = 'array'
+    AND jsonb_typeof(exclude_rules_json) = 'array'
+  )
 );
 
 -- Composite FK: supersedes_version_id must belong to same filter (deferred)
@@ -256,7 +429,9 @@ CREATE INDEX email_filter_version_filter_idx ON email_filter_version(email_filte
 
 -- Immutability trigger
 CREATE OR REPLACE FUNCTION prevent_email_filter_version_update()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
   RAISE EXCEPTION 'email_filter_version rows are immutable; create a new version row instead';
 END;
@@ -286,13 +461,11 @@ CREATE TABLE email_source (
   has_attachment                BOOLEAN     NOT NULL DEFAULT false,
   attachment_metadata           JSONB,
   source_url                    TEXT,
-  last_fetch_status             TEXT        NOT NULL DEFAULT 'DISCOVERED'
-                                  CHECK (last_fetch_status IN ('DISCOVERED','FETCHING','FETCHED','PERMANENTLY_FAILED')),
+  last_fetch_status             TEXT        NOT NULL DEFAULT 'DISCOVERED',
   last_fetch_attempt_at         TIMESTAMPTZ,
   last_fetch_error_code         TEXT,
   last_fetch_error_message_sanitized TEXT,
-  current_manual_classification TEXT        NOT NULL DEFAULT 'UNREVIEWED'
-                                  CHECK (current_manual_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')),
+  current_manual_classification TEXT        NOT NULL DEFAULT 'UNREVIEWED',
   classification_version        INTEGER     NOT NULL DEFAULT 0,
   first_discovered_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_fetched_at               TIMESTAMPTZ,
@@ -301,7 +474,24 @@ CREATE TABLE email_source (
   retained_until                TIMESTAMPTZ,
   deleted_at                    TIMESTAMPTZ,
   UNIQUE(user_id, gmail_account_id, gmail_message_id),
-  UNIQUE(user_id, id)
+  UNIQUE(user_id, id),
+  CONSTRAINT chk_email_source_last_fetch_status CHECK (
+    last_fetch_status IN ('DISCOVERED','FETCHING','FETCHED','PERMANENTLY_FAILED')
+  ),
+  CONSTRAINT chk_email_source_manual_classification CHECK (
+    current_manual_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')
+  ),
+  CONSTRAINT chk_email_source_classification_version CHECK (classification_version >= 0),
+  CONSTRAINT chk_email_source_fetch_timestamps CHECK (
+    last_fetch_attempt_at IS NULL OR last_fetch_attempt_at >= first_discovered_at
+  ),
+  CONSTRAINT chk_email_source_fetched_timestamp CHECK (
+    last_fetched_at IS NULL OR last_fetched_at >= first_discovered_at
+  ),
+  CONSTRAINT chk_email_source_timestamps CHECK (
+    updated_at >= created_at
+    AND (deleted_at IS NULL OR deleted_at >= created_at)
+  )
 );
 CREATE INDEX email_source_user_account_fetch_idx
   ON email_source(user_id, gmail_account_id, last_fetch_status)
@@ -309,6 +499,10 @@ CREATE INDEX email_source_user_account_fetch_idx
 CREATE INDEX email_source_user_account_discovered_idx
   ON email_source(user_id, gmail_account_id, first_discovered_at DESC)
   WHERE deleted_at IS NULL;
+CREATE INDEX email_source_manual_review_idx
+  ON email_source(user_id, gmail_account_id, current_manual_classification)
+  WHERE deleted_at IS NULL
+    AND current_manual_classification IN ('UNREVIEWED','UNCERTAIN');
 
 -- ---------------------------------------------------------------------------
 -- Table 4: email_scan_run  (canonical field list — C81)
@@ -327,11 +521,9 @@ CREATE TABLE email_scan_run (
   scan_limit                INTEGER,
   discovery_page_token      TEXT,
   discovery_complete        BOOLEAN     NOT NULL DEFAULT false,
-  status                    TEXT        NOT NULL DEFAULT 'CREATED'
-    CHECK (status IN ('CREATED','DISCOVERING','FETCHING','RETRY_WAIT','PAUSED',
-                      'COMPLETED','COMPLETED_WITH_ERRORS','FAILED','CANCELLING','CANCELLED')),
-  current_stage             TEXT        CHECK (current_stage IN ('DISCOVERY','FETCH')),
-  resume_stage              TEXT        CHECK (resume_stage IN ('DISCOVERY','FETCH')),
+  status                    TEXT        NOT NULL DEFAULT 'CREATED',
+  current_stage             TEXT,
+  resume_stage              TEXT,
   state_version             INTEGER     NOT NULL DEFAULT 0,
   worker_lease_owner        TEXT,
   worker_lease_expires_at   TIMESTAMPTZ,
@@ -365,7 +557,7 @@ CREATE TABLE email_scan_run (
   cancelled_at              TIMESTAMPTZ,
   batch_sequence            BIGINT      NOT NULL DEFAULT 0,
   pending_continuation_sequence     BIGINT,
-  pending_continuation_stage        TEXT  CHECK (pending_continuation_stage IN ('DISCOVERY','FETCH')),
+  pending_continuation_stage        TEXT,
   pending_continuation_not_before   TIMESTAMPTZ,
   pending_continuation_published_at TIMESTAMPTZ,
   CONSTRAINT chk_pending_continuation_coherence CHECK (
@@ -381,6 +573,144 @@ CREATE TABLE email_scan_run (
   CONSTRAINT chk_pending_sequence_matches_scan_sequence CHECK (
     pending_continuation_sequence IS NULL
     OR pending_continuation_sequence = batch_sequence
+  ),
+  CONSTRAINT chk_scan_run_status CHECK (
+    status IN ('CREATED','DISCOVERING','FETCHING','RETRY_WAIT','PAUSED',
+               'COMPLETED','COMPLETED_WITH_ERRORS','FAILED','CANCELLING','CANCELLED')
+  ),
+  CONSTRAINT chk_scan_run_current_stage CHECK (
+    current_stage IS NULL OR current_stage IN ('DISCOVERY','FETCH')
+  ),
+  CONSTRAINT chk_scan_run_resume_stage CHECK (
+    resume_stage IS NULL OR resume_stage IN ('DISCOVERY','FETCH')
+  ),
+  CONSTRAINT chk_scan_run_pending_stage CHECK (
+    pending_continuation_stage IS NULL
+    OR pending_continuation_stage IN ('DISCOVERY','FETCH')
+  ),
+  CONSTRAINT chk_scan_run_date_range CHECK (from_date <= to_date),
+  CONSTRAINT chk_scan_run_nonnegative_values CHECK (
+    (scan_limit IS NULL OR scan_limit > 0)
+    AND state_version >= 0
+    AND retry_count >= 0
+    AND max_retries >= 0
+    AND max_item_retries >= 0
+    AND total_discovered >= 0
+    AND fetch_pending_count >= 0
+    AND fetch_in_progress_count >= 0
+    AND fetch_success_count >= 0
+    AND fetch_failed_count >= 0
+    AND filter_included_count >= 0
+    AND filter_excluded_count >= 0
+    AND manual_review_count >= 0
+    AND batch_sequence >= 0
+  ),
+  CONSTRAINT chk_scan_run_counter_bounds CHECK (
+    fetch_pending_count
+      + fetch_in_progress_count
+      + fetch_success_count
+      + fetch_failed_count <= total_discovered
+    AND fetch_pending_count <= total_discovered
+    AND fetch_in_progress_count <= total_discovered
+    AND fetch_success_count <= total_discovered
+    AND fetch_failed_count <= total_discovered
+    AND filter_included_count <= fetch_success_count
+    AND filter_excluded_count <= fetch_success_count
+    AND filter_included_count + filter_excluded_count <= fetch_success_count
+    AND manual_review_count <= fetch_success_count
+  ),
+  CONSTRAINT chk_scan_run_stage_coherence CHECK (
+    (
+      status = 'CREATED'
+      AND current_stage IS NULL
+      AND resume_stage IS NULL
+      AND started_at IS NULL
+    )
+    OR (
+      status = 'DISCOVERING'
+      AND current_stage = 'DISCOVERY'
+      AND resume_stage IS NULL
+      AND started_at IS NOT NULL
+    )
+    OR (
+      status = 'FETCHING'
+      AND current_stage = 'FETCH'
+      AND resume_stage IS NULL
+      AND started_at IS NOT NULL
+    )
+    OR (
+      status IN ('RETRY_WAIT','PAUSED')
+      AND current_stage IS NULL
+      AND resume_stage IS NOT NULL
+      AND started_at IS NOT NULL
+    )
+    OR (
+      status = 'CANCELLING'
+      AND started_at IS NOT NULL
+      AND (
+        (current_stage IS NOT NULL AND resume_stage IS NULL)
+        OR (current_stage IS NULL AND resume_stage IS NOT NULL)
+      )
+    )
+    OR (
+      status IN ('CANCELLED','COMPLETED','COMPLETED_WITH_ERRORS','FAILED')
+      AND current_stage IS NULL
+      AND resume_stage IS NULL
+      AND (
+        status = 'CANCELLED'
+        OR started_at IS NOT NULL
+      )
+    )
+  ),
+  CONSTRAINT chk_scan_run_lease_coherence CHECK (
+    (worker_lease_owner IS NULL AND worker_lease_expires_at IS NULL)
+    OR (
+      worker_lease_owner IS NOT NULL
+      AND worker_lease_expires_at IS NOT NULL
+      AND status IN ('CREATED','DISCOVERING','FETCHING','RETRY_WAIT','CANCELLING')
+    )
+  ),
+  CONSTRAINT chk_scan_run_retry_coherence CHECK (
+    status <> 'RETRY_WAIT' OR next_retry_at IS NOT NULL
+  ),
+  CONSTRAINT chk_scan_run_pending_status CHECK (
+    pending_continuation_sequence IS NULL
+    OR status IN ('CREATED','DISCOVERING','FETCHING','RETRY_WAIT','PAUSED','CANCELLING')
+  ),
+  CONSTRAINT chk_scan_run_terminal_coherence CHECK (
+    (
+      status NOT IN ('CANCELLED','COMPLETED','COMPLETED_WITH_ERRORS','FAILED')
+    )
+    OR (
+      worker_lease_owner IS NULL
+      AND worker_lease_expires_at IS NULL
+      AND next_retry_at IS NULL
+      AND pending_continuation_sequence IS NULL
+      AND pending_continuation_stage IS NULL
+      AND pending_continuation_not_before IS NULL
+      AND pending_continuation_published_at IS NULL
+    )
+  ),
+  CONSTRAINT chk_scan_run_terminal_timestamps CHECK (
+    (status NOT IN ('COMPLETED','COMPLETED_WITH_ERRORS') OR completed_at IS NOT NULL)
+    AND (status <> 'CANCELLED' OR cancelled_at IS NOT NULL)
+    AND (status <> 'PAUSED' OR paused_at IS NOT NULL)
+  ),
+  CONSTRAINT chk_scan_run_timestamps CHECK (
+    updated_at >= created_at
+    AND (started_at IS NULL OR started_at >= created_at)
+    AND (last_checkpoint_at IS NULL OR started_at IS NULL OR last_checkpoint_at >= started_at)
+    AND (last_batch_started_at IS NULL OR started_at IS NULL OR last_batch_started_at >= started_at)
+    AND (
+      last_batch_completed_at IS NULL
+      OR (
+        last_batch_started_at IS NOT NULL
+        AND last_batch_completed_at >= last_batch_started_at
+      )
+    )
+    AND (completed_at IS NULL OR started_at IS NULL OR completed_at >= started_at)
+    AND (paused_at IS NULL OR started_at IS NULL OR paused_at >= started_at)
+    AND (cancelled_at IS NULL OR started_at IS NULL OR cancelled_at >= started_at)
   ),
   UNIQUE(user_id, client_request_id),
   created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -402,6 +732,12 @@ CREATE INDEX email_scan_run_user_status_idx ON email_scan_run(user_id, status);
 CREATE INDEX email_scan_run_user_account_idx ON email_scan_run(user_id, gmail_account_id);
 CREATE INDEX email_scan_run_retry_idx ON email_scan_run(next_retry_at)
   WHERE status = 'RETRY_WAIT';
+CREATE INDEX email_scan_run_lease_idx ON email_scan_run(worker_lease_expires_at)
+  WHERE worker_lease_owner IS NOT NULL;
+CREATE INDEX email_scan_run_continuation_recovery_idx
+  ON email_scan_run(pending_continuation_not_before)
+  WHERE pending_continuation_sequence IS NOT NULL
+    AND pending_continuation_published_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- Table 5: email_scan_item
@@ -410,8 +746,7 @@ CREATE TABLE email_scan_item (
   id                            TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
   scan_run_id                   TEXT        NOT NULL REFERENCES email_scan_run(id) ON DELETE CASCADE,
   email_source_id               TEXT        NOT NULL REFERENCES email_source(id) ON DELETE RESTRICT,
-  status                        TEXT        NOT NULL DEFAULT 'DISCOVERED'
-    CHECK (status IN ('DISCOVERED','FETCHING','FETCHED','RETRY_WAIT','PERMANENTLY_FAILED','CANCELLED')),
+  status                        TEXT        NOT NULL DEFAULT 'DISCOVERED',
   state_version                 INTEGER     NOT NULL DEFAULT 0,
   fetch_attempt_count           INTEGER     NOT NULL DEFAULT 0,
   next_retry_at                 TIMESTAMPTZ,
@@ -419,8 +754,7 @@ CREATE TABLE email_scan_item (
   last_error_message_sanitized  TEXT,
   item_lease_owner              TEXT,
   item_lease_expires_at         TIMESTAMPTZ,
-  filter_decision               TEXT        NOT NULL DEFAULT 'PENDING'
-    CHECK (filter_decision IN ('PENDING','INCLUDED','EXCLUDED')),
+  filter_decision               TEXT        NOT NULL DEFAULT 'PENDING',
   matched_include_rule_ids      TEXT[],
   matched_exclude_rule_ids      TEXT[],
   filter_decision_reason_sanitized TEXT,
@@ -428,7 +762,52 @@ CREATE TABLE email_scan_item (
   fetch_started_at              TIMESTAMPTZ,
   fetch_completed_at            TIMESTAMPTZ,
   updated_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(scan_run_id, email_source_id)
+  UNIQUE(scan_run_id, email_source_id),
+  CONSTRAINT chk_scan_item_status CHECK (
+    status IN ('DISCOVERED','FETCHING','FETCHED','RETRY_WAIT','PERMANENTLY_FAILED','CANCELLED')
+  ),
+  CONSTRAINT chk_scan_item_filter_decision CHECK (
+    filter_decision IN ('PENDING','INCLUDED','EXCLUDED')
+  ),
+  CONSTRAINT chk_scan_item_nonnegative_values CHECK (
+    state_version >= 0 AND fetch_attempt_count >= 0
+  ),
+  CONSTRAINT chk_scan_item_lease_coherence CHECK (
+    (status = 'FETCHING'
+     AND item_lease_owner IS NOT NULL
+     AND item_lease_expires_at IS NOT NULL)
+    OR
+    (status <> 'FETCHING'
+     AND item_lease_owner IS NULL
+     AND item_lease_expires_at IS NULL)
+  ),
+  CONSTRAINT chk_scan_item_retry_coherence CHECK (
+    (status = 'RETRY_WAIT' AND next_retry_at IS NOT NULL)
+    OR
+    (status <> 'RETRY_WAIT' AND next_retry_at IS NULL)
+  ),
+  CONSTRAINT chk_scan_item_filter_coherence CHECK (
+    (status = 'FETCHED')
+    OR (filter_decision = 'PENDING')
+  ),
+  CONSTRAINT chk_scan_item_terminal_timestamps CHECK (
+    (
+      status NOT IN ('FETCHED','PERMANENTLY_FAILED')
+      OR fetch_completed_at IS NOT NULL
+    )
+    AND (status <> 'FETCHING' OR fetch_started_at IS NOT NULL)
+  ),
+  CONSTRAINT chk_scan_item_timestamps CHECK (
+    updated_at >= discovered_at
+    AND (fetch_started_at IS NULL OR fetch_started_at >= discovered_at)
+    AND (
+      fetch_completed_at IS NULL
+      OR (
+        fetch_started_at IS NOT NULL
+        AND fetch_completed_at >= fetch_started_at
+      )
+    )
+  )
 );
 CREATE INDEX email_scan_item_run_status_idx ON email_scan_item(scan_run_id, status);
 CREATE INDEX email_scan_item_source_idx ON email_scan_item(email_source_id);
@@ -436,10 +815,15 @@ CREATE INDEX email_scan_item_retry_idx ON email_scan_item(next_retry_at)
   WHERE status = 'RETRY_WAIT';
 CREATE INDEX email_scan_item_lease_idx ON email_scan_item(item_lease_expires_at)
   WHERE item_lease_owner IS NOT NULL;
+CREATE INDEX email_scan_item_filter_decision_idx
+  ON email_scan_item(scan_run_id, filter_decision)
+  WHERE status = 'FETCHED';
 
 -- Cross-table ownership trigger
 CREATE OR REPLACE FUNCTION check_scan_item_source_ownership()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
   IF NEW.email_source_id IS NOT NULL THEN
     IF NOT EXISTS (
@@ -464,7 +848,9 @@ CREATE CONSTRAINT TRIGGER trg_email_scan_item_source_ownership
 
 -- Parent-field immutability trigger
 CREATE OR REPLACE FUNCTION prevent_scan_item_parent_change()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+RETURNS TRIGGER LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $$
 BEGIN
   IF NEW.scan_run_id IS DISTINCT FROM OLD.scan_run_id THEN
     RAISE EXCEPTION 'email_scan_item.scan_run_id is immutable after creation';
@@ -486,16 +872,27 @@ CREATE TABLE email_manual_classification (
   id                        TEXT        PRIMARY KEY DEFAULT gen_random_uuid()::text,
   user_id                   TEXT        NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
   email_source_id           TEXT        NOT NULL,
-  previous_classification   TEXT        NOT NULL
-                              CHECK (previous_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')),
-  new_classification        TEXT        NOT NULL
-                              CHECK (new_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')),
+  previous_classification   TEXT        NOT NULL,
+  new_classification        TEXT        NOT NULL,
   reason                    TEXT,
   classified_by             TEXT        REFERENCES "User"(id) ON DELETE SET NULL,
   classified_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
   classification_version    INTEGER     NOT NULL,
   created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(email_source_id, classification_version)
+  UNIQUE(email_source_id, classification_version),
+  CONSTRAINT chk_manual_previous_classification CHECK (
+    previous_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')
+  ),
+  CONSTRAINT chk_manual_new_classification CHECK (
+    new_classification IN ('UNREVIEWED','FINANCIAL','NON_FINANCIAL','UNCERTAIN')
+  ),
+  CONSTRAINT chk_manual_classification_version CHECK (classification_version > 0),
+  CONSTRAINT chk_manual_classification_change CHECK (
+    previous_classification <> new_classification
+  ),
+  CONSTRAINT chk_manual_classification_timestamps CHECK (
+    created_at >= classified_at
+  )
 );
 CREATE INDEX email_manual_classification_source_idx
   ON email_manual_classification(email_source_id, classified_at DESC);
@@ -528,6 +925,83 @@ ALTER TABLE email_scan_run
   FOREIGN KEY (user_id, gmail_account_id)
   REFERENCES "Account" ("userId", id)
   ON DELETE RESTRICT;
+
+\endif
+
+-- =============================================================================
+-- VP2b: Exact six-table column fingerprints (C112)
+-- =============================================================================
+\echo '--- VP2b: Exact Phase 1A column fingerprints ---'
+DO $$
+DECLARE
+  rec RECORD;
+  actual_cols TEXT[];
+BEGIN
+  FOR rec IN
+    SELECT *
+    FROM (VALUES
+      ('email_filter', ARRAY[
+        'id','user_id','gmail_account_id','name','is_active','current_version_id',
+        'created_at','updated_at'
+      ]::TEXT[]),
+      ('email_filter_version', ARRAY[
+        'id','email_filter_id','version','gmail_query','include_rules_json',
+        'exclude_rules_json','rule_schema_version','filter_evaluator_version',
+        'supersedes_version_id','created_by','created_at'
+      ]::TEXT[]),
+      ('email_source', ARRAY[
+        'id','user_id','gmail_account_id','gmail_message_id','subject',
+        'normalized_subject','sender_email','sender_name','sender_domain','received_at',
+        'snippet_redacted','gmail_thread_id','gmail_labels','has_attachment',
+        'attachment_metadata','source_url','last_fetch_status','last_fetch_attempt_at',
+        'last_fetch_error_code','last_fetch_error_message_sanitized',
+        'current_manual_classification','classification_version','first_discovered_at',
+        'last_fetched_at','created_at','updated_at','retained_until','deleted_at'
+      ]::TEXT[]),
+      ('email_scan_run', ARRAY[
+        'id','user_id','client_request_id','gmail_account_id','email_filter_id',
+        'email_filter_version_id','effective_gmail_query','from_date','to_date',
+        'scan_limit','discovery_page_token','discovery_complete','status','current_stage',
+        'resume_stage','state_version','worker_lease_owner','worker_lease_expires_at',
+        'next_retry_at','retry_count','max_retries','max_item_retries',
+        'filter_rule_schema_version','filter_evaluator_version','filter_snapshot_json',
+        'total_discovered','fetch_pending_count','fetch_in_progress_count',
+        'fetch_success_count','fetch_failed_count','filter_included_count',
+        'filter_excluded_count','manual_review_count','last_error_code',
+        'last_error_message_sanitized','started_at','last_checkpoint_at',
+        'last_batch_started_at','last_batch_completed_at','completed_at','paused_at',
+        'cancelled_at','batch_sequence','pending_continuation_sequence',
+        'pending_continuation_stage','pending_continuation_not_before',
+        'pending_continuation_published_at','created_at','updated_at'
+      ]::TEXT[]),
+      ('email_scan_item', ARRAY[
+        'id','scan_run_id','email_source_id','status','state_version',
+        'fetch_attempt_count','next_retry_at','last_error_code',
+        'last_error_message_sanitized','item_lease_owner','item_lease_expires_at',
+        'filter_decision','matched_include_rule_ids','matched_exclude_rule_ids',
+        'filter_decision_reason_sanitized','discovered_at','fetch_started_at',
+        'fetch_completed_at','updated_at'
+      ]::TEXT[]),
+      ('email_manual_classification', ARRAY[
+        'id','user_id','email_source_id','previous_classification','new_classification',
+        'reason','classified_by','classified_at','classification_version','created_at'
+      ]::TEXT[])
+    ) AS expected(table_name, columns)
+  LOOP
+    SELECT array_agg(column_name ORDER BY ordinal_position)
+    INTO actual_cols
+    FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = rec.table_name;
+
+    IF actual_cols IS DISTINCT FROM rec.columns THEN
+      RAISE EXCEPTION
+        'FAIL VP2b: % column fingerprint mismatch. Actual: %, expected: %',
+        rec.table_name, actual_cols, rec.columns;
+    END IF;
+  END LOOP;
+
+  RAISE NOTICE 'PASS VP2b: Exact column fingerprints match for all six tables';
+END; $$;
 
 -- =============================================================================
 -- VP3: Account additive changes confirmed (assertions)
@@ -581,6 +1055,31 @@ BEGIN
   RAISE NOTICE 'PASS VP3: account_disconnected_idx present exactly once';
 END; $$;
 
+DO $$
+DECLARE
+  definition TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid, TRUE)
+  INTO definition
+  FROM pg_constraint
+  WHERE conrelid = '"Account"'::regclass
+    AND contype = 'c'
+    AND conname = 'chk_account_disconnection_coherence';
+
+  IF definition IS NULL
+     OR definition NOT LIKE '%disconnected_at IS NULL%'
+     OR definition NOT LIKE '%disconnection_reason%'
+     OR definition NOT LIKE '%user_request%'
+     OR definition NOT LIKE '%token_revoked%'
+     OR definition NOT LIKE '%invalid_grant%' THEN
+    RAISE EXCEPTION
+      'FAIL VP3: chk_account_disconnection_coherence missing or structurally incorrect: %',
+      definition;
+  END IF;
+
+  RAISE NOTICE 'PASS VP3: Account disconnection CHECK present with approved reasons';
+END; $$;
+
 -- =============================================================================
 -- VP4: FK structural inventory — bidirectional 22-FK set comparison (C105)
 -- =============================================================================
@@ -612,30 +1111,57 @@ BEGIN
     RAISE EXCEPTION 'FAIL VP4: FK count = % (expected exactly 22)', actual_count;
   END IF;
 
-  -- 2. Duplicate structural definition check
+  -- 2. Duplicate structural definition check.
+  -- Build one row per FK first. Joining conkey/confkey unnests directly would create an
+  -- N×N Cartesian product for composite keys and falsely report every composite FK as a
+  -- duplicate (C111).
   SELECT COUNT(*) INTO dup_count FROM (
     SELECT
-      rc.relname                                                          AS src_tbl,
-      string_agg(sa.attname, ',' ORDER BY u.pos)                         AS src_cols,
-      rr.relname                                                          AS ref_tbl,
-      string_agg(ra.attname, ',' ORDER BY v.pos)                         AS ref_cols,
-      c.confdeltype,
-      c.condeferrable,
-      c.condeferred
-    FROM pg_constraint c
-    JOIN pg_class rc ON rc.oid = c.conrelid
-    JOIN pg_class rr ON rr.oid = c.confrelid
-    JOIN LATERAL unnest(c.conkey)  WITH ORDINALITY u(attnum, pos) ON TRUE
-    JOIN pg_attribute sa ON sa.attrelid = c.conrelid  AND sa.attnum = u.attnum
-    JOIN LATERAL unnest(c.confkey) WITH ORDINALITY v(attnum, pos) ON TRUE
-    JOIN pg_attribute ra ON ra.attrelid = c.confrelid AND ra.attnum = v.attnum
-    WHERE c.contype = 'f'
-      AND rc.relname IN (
-        'email_filter','email_filter_version',
-        'email_source','email_scan_run',
-        'email_scan_item','email_manual_classification'
-      )
-    GROUP BY rc.relname, rr.relname, c.confdeltype, c.condeferrable, c.condeferred, c.oid
+      fk.src_tbl,
+      fk.src_cols,
+      fk.ref_tbl,
+      fk.ref_cols,
+      fk.confdeltype,
+      fk.condeferrable,
+      fk.condeferred
+    FROM (
+      SELECT
+        c.oid,
+        rc.relname AS src_tbl,
+        (
+          SELECT string_agg(sa.attname, ',' ORDER BY u.pos)
+          FROM unnest(c.conkey) WITH ORDINALITY u(attnum, pos)
+          JOIN pg_attribute sa
+            ON sa.attrelid = c.conrelid AND sa.attnum = u.attnum
+        ) AS src_cols,
+        rr.relname AS ref_tbl,
+        (
+          SELECT string_agg(ra.attname, ',' ORDER BY v.pos)
+          FROM unnest(c.confkey) WITH ORDINALITY v(attnum, pos)
+          JOIN pg_attribute ra
+            ON ra.attrelid = c.confrelid AND ra.attnum = v.attnum
+        ) AS ref_cols,
+        c.confdeltype,
+        c.condeferrable,
+        c.condeferred
+      FROM pg_constraint c
+      JOIN pg_class rc ON rc.oid = c.conrelid
+      JOIN pg_class rr ON rr.oid = c.confrelid
+      WHERE c.contype = 'f'
+        AND rc.relname IN (
+          'email_filter','email_filter_version',
+          'email_source','email_scan_run',
+          'email_scan_item','email_manual_classification'
+        )
+    ) fk
+    GROUP BY
+      fk.src_tbl,
+      fk.src_cols,
+      fk.ref_tbl,
+      fk.ref_cols,
+      fk.confdeltype,
+      fk.condeferrable,
+      fk.condeferred
     HAVING COUNT(*) > 1
   ) dups;
 
@@ -933,6 +1459,148 @@ WHERE tgrelid::regclass::text IN ('email_filter_version','email_scan_item')
 ORDER BY tgrelid::regclass::text, tgname;
 
 -- =============================================================================
+-- VP5b: Exact CHECK-constraint and supporting-index inventories (C109/C112/C115)
+-- =============================================================================
+\echo '--- VP5b: Exact CHECK and supporting-index inventories ---'
+
+DO $$
+DECLARE
+  actual_checks   TEXT[];
+  expected_checks TEXT[] := ARRAY[
+    'chk_email_filter_timestamps',
+    'chk_email_filter_version_numbers',
+    'chk_email_filter_version_rule_arrays',
+    'chk_email_source_classification_version',
+    'chk_email_source_fetch_timestamps',
+    'chk_email_source_fetched_timestamp',
+    'chk_email_source_last_fetch_status',
+    'chk_email_source_manual_classification',
+    'chk_email_source_timestamps',
+    'chk_manual_classification_change',
+    'chk_manual_classification_timestamps',
+    'chk_manual_classification_version',
+    'chk_manual_new_classification',
+    'chk_manual_previous_classification',
+    'chk_pending_continuation_coherence',
+    'chk_pending_sequence_matches_scan_sequence',
+    'chk_scan_item_filter_coherence',
+    'chk_scan_item_filter_decision',
+    'chk_scan_item_lease_coherence',
+    'chk_scan_item_nonnegative_values',
+    'chk_scan_item_retry_coherence',
+    'chk_scan_item_status',
+    'chk_scan_item_terminal_timestamps',
+    'chk_scan_item_timestamps',
+    'chk_scan_run_counter_bounds',
+    'chk_scan_run_current_stage',
+    'chk_scan_run_date_range',
+    'chk_scan_run_lease_coherence',
+    'chk_scan_run_nonnegative_values',
+    'chk_scan_run_pending_stage',
+    'chk_scan_run_pending_status',
+    'chk_scan_run_resume_stage',
+    'chk_scan_run_retry_coherence',
+    'chk_scan_run_stage_coherence',
+    'chk_scan_run_status',
+    'chk_scan_run_terminal_coherence',
+    'chk_scan_run_terminal_timestamps',
+    'chk_scan_run_timestamps'
+  ];
+BEGIN
+  SELECT array_agg(c.conname ORDER BY c.conname)
+  INTO actual_checks
+  FROM pg_constraint c
+  JOIN pg_class r ON r.oid = c.conrelid
+  WHERE c.contype = 'c'
+    AND r.relname IN (
+      'email_filter','email_filter_version',
+      'email_source','email_scan_run',
+      'email_scan_item','email_manual_classification'
+    );
+
+  IF actual_checks IS DISTINCT FROM expected_checks THEN
+    RAISE EXCEPTION
+      'FAIL VP5b: Phase 1A CHECK inventory mismatch. Actual: %, expected: %',
+      actual_checks, expected_checks;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = '"Account"'::regclass
+      AND contype = 'c'
+      AND conname = 'chk_account_disconnection_coherence'
+  ) THEN
+    RAISE EXCEPTION 'FAIL VP5b: chk_account_disconnection_coherence missing';
+  END IF;
+
+  RAISE NOTICE 'PASS VP5b: Exact 38-table CHECK inventory plus Account disconnection CHECK present';
+END; $$;
+
+DO $$
+DECLARE
+  actual_indexes   TEXT[];
+  expected_indexes TEXT[] := ARRAY[
+    'account_disconnected_idx',
+    'email_filter_user_account_idx',
+    'email_filter_user_idx',
+    'email_filter_version_filter_idx',
+    'email_manual_classification_source_idx',
+    'email_manual_classification_user_idx',
+    'email_scan_item_filter_decision_idx',
+    'email_scan_item_lease_idx',
+    'email_scan_item_retry_idx',
+    'email_scan_item_run_status_idx',
+    'email_scan_item_source_idx',
+    'email_scan_run_continuation_recovery_idx',
+    'email_scan_run_lease_idx',
+    'email_scan_run_retry_idx',
+    'email_scan_run_user_account_idx',
+    'email_scan_run_user_status_idx',
+    'email_source_manual_review_idx',
+    'email_source_user_account_discovered_idx',
+    'email_source_user_account_fetch_idx'
+  ];
+BEGIN
+  SELECT array_agg(idx.relname ORDER BY idx.relname)
+  INTO actual_indexes
+  FROM pg_index i
+  JOIN pg_class idx ON idx.oid = i.indexrelid
+  JOIN pg_class tbl ON tbl.oid = i.indrelid
+  JOIN pg_namespace ns ON ns.oid = tbl.relnamespace
+  LEFT JOIN pg_constraint con ON con.conindid = i.indexrelid
+  WHERE ns.nspname = 'public'
+    AND con.oid IS NULL
+    AND (
+      (tbl.relname = 'Account' AND idx.relname = 'account_disconnected_idx')
+      OR tbl.relname IN (
+        'email_filter','email_filter_version',
+        'email_source','email_scan_run',
+        'email_scan_item','email_manual_classification'
+      )
+    );
+
+  IF actual_indexes IS DISTINCT FROM expected_indexes THEN
+    RAISE EXCEPTION
+      'FAIL VP5b: Supporting-index inventory mismatch. Actual: %, expected: %',
+      actual_indexes, expected_indexes;
+  END IF;
+
+  RAISE NOTICE 'PASS VP5b: All 19 named supporting indexes present';
+END; $$;
+
+-- C116: Optional deterministic interruption drill. With ON_ERROR_STOP=1, psql exits and closes
+-- the connection; PostgreSQL must roll back this open transaction. The next normal invocation
+-- proves recovery by passing the exact VP1 baseline fingerprint before reapplying the DDL.
+\if :{?PHASE1A_FAIL_AFTER_DDL}
+DO $$
+BEGIN
+  RAISE EXCEPTION
+    'EXPECTED INTERRUPTION DRILL: close connection and verify rollback with a normal rerun';
+END; $$;
+\endif
+
+-- =============================================================================
 -- TEST DATA SETUP (synthetic rows; no production data)
 -- =============================================================================
 \echo '--- Test data setup ---'
@@ -985,6 +1653,37 @@ INSERT INTO email_manual_classification (
   previous_classification, new_classification,
   classification_version
 ) VALUES ('dryrun-mc1','dryrun-u1','dryrun-es1','UNREVIEWED','FINANCIAL',1);
+UPDATE email_source
+SET current_manual_classification = 'FINANCIAL',
+    classification_version = 1,
+    updated_at = now()
+WHERE id = 'dryrun-es1' AND classification_version = 0;
+
+DO $$
+DECLARE
+  src_classification TEXT;
+  src_version        INTEGER;
+  history_version    INTEGER;
+BEGIN
+  SELECT current_manual_classification, classification_version
+  INTO src_classification, src_version
+  FROM email_source
+  WHERE id = 'dryrun-es1';
+
+  SELECT classification_version
+  INTO history_version
+  FROM email_manual_classification
+  WHERE id = 'dryrun-mc1';
+
+  IF src_classification <> 'FINANCIAL'
+     OR src_version <> 1
+     OR history_version <> src_version THEN
+    RAISE EXCEPTION
+      'FAIL classification fixture: source/history mismatch class %, source version %, history version %',
+      src_classification, src_version, history_version;
+  END IF;
+  RAISE NOTICE 'PASS classification fixture: source materialization and history version agree at 1';
+END; $$;
 
 -- =============================================================================
 -- VP6: Deferred circular-FK operational test (C96)
@@ -1172,6 +1871,11 @@ INSERT INTO email_manual_classification (
   id, user_id, email_source_id,
   previous_classification, new_classification, classification_version
 ) VALUES ('dryrun-mc-casc','dryrun-u1','dryrun-es-casc','UNREVIEWED','FINANCIAL',1);
+UPDATE email_source
+SET current_manual_classification = 'FINANCIAL',
+    classification_version = 1,
+    updated_at = now()
+WHERE id = 'dryrun-es-casc' AND classification_version = 0;
 
 DELETE FROM email_source WHERE id = 'dryrun-es-casc';
 
@@ -1239,6 +1943,219 @@ BEGIN
 END; $$;
 
 -- =============================================================================
+-- VP12c: Row-local lifecycle, lease, retry, counter, timestamp, and Account CHECKs
+-- =============================================================================
+\echo '--- VP12c: Row-local integrity CHECK negative tests ---'
+DO $$
+BEGIN
+  BEGIN
+    UPDATE "Account"
+    SET disconnection_reason = 'user_request'
+    WHERE id = 'dryrun-a1';
+    RAISE EXCEPTION 'FAIL VP12c: Account reason without disconnected_at was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: Account disconnection coherence rejected partial state';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_run (
+      id,user_id,client_request_id,gmail_account_id,email_filter_id,email_filter_version_id,
+      effective_gmail_query,from_date,to_date,filter_rule_schema_version,
+      filter_evaluator_version,filter_snapshot_json
+    ) VALUES (
+      'dryrun-sr-date','dryrun-u1','req-date','dryrun-a1','dryrun-f1','dryrun-fv1',
+      'q','2026-07-02','2026-07-01',1,1,'{}'
+    );
+    RAISE EXCEPTION 'FAIL VP12c: reversed scan date range was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: scan date-range CHECK rejected from_date > to_date';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_run (
+      id,user_id,client_request_id,gmail_account_id,email_filter_id,email_filter_version_id,
+      effective_gmail_query,from_date,to_date,filter_rule_schema_version,
+      filter_evaluator_version,filter_snapshot_json,total_discovered
+    ) VALUES (
+      'dryrun-sr-negative','dryrun-u1','req-negative','dryrun-a1','dryrun-f1','dryrun-fv1',
+      'q','2026-01-01','2026-07-01',1,1,'{}',-1
+    );
+    RAISE EXCEPTION 'FAIL VP12c: negative scan counter was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: nonnegative-value CHECK rejected negative counter';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_run (
+      id,user_id,client_request_id,gmail_account_id,email_filter_id,email_filter_version_id,
+      effective_gmail_query,from_date,to_date,filter_rule_schema_version,
+      filter_evaluator_version,filter_snapshot_json,total_discovered,
+      fetch_pending_count,fetch_success_count
+    ) VALUES (
+      'dryrun-sr-overcount','dryrun-u1','req-overcount','dryrun-a1','dryrun-f1','dryrun-fv1',
+      'q','2026-01-01','2026-07-01',1,1,'{}',1,1,1
+    );
+    RAISE EXCEPTION 'FAIL VP12c: over-partitioned scan counters were accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: counter-bound CHECK rejected state counts above total';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_run (
+      id,user_id,client_request_id,gmail_account_id,email_filter_id,email_filter_version_id,
+      effective_gmail_query,from_date,to_date,filter_rule_schema_version,
+      filter_evaluator_version,filter_snapshot_json,current_stage
+    ) VALUES (
+      'dryrun-sr-stage','dryrun-u1','req-stage','dryrun-a1','dryrun-f1','dryrun-fv1',
+      'q','2026-01-01','2026-07-01',1,1,'{}','DISCOVERY'
+    );
+    RAISE EXCEPTION 'FAIL VP12c: CREATED scan with active stage was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: stage-coherence CHECK rejected CREATED + current_stage';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_run (
+      id,user_id,client_request_id,gmail_account_id,email_filter_id,email_filter_version_id,
+      effective_gmail_query,from_date,to_date,filter_rule_schema_version,
+      filter_evaluator_version,filter_snapshot_json,worker_lease_owner
+    ) VALUES (
+      'dryrun-sr-lease','dryrun-u1','req-lease','dryrun-a1','dryrun-f1','dryrun-fv1',
+      'q','2026-01-01','2026-07-01',1,1,'{}','owner-only'
+    );
+    RAISE EXCEPTION 'FAIL VP12c: half-populated scan lease was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: lease-coherence CHECK rejected half-populated lease';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_run (
+      id,user_id,client_request_id,gmail_account_id,email_filter_id,email_filter_version_id,
+      effective_gmail_query,from_date,to_date,filter_rule_schema_version,
+      filter_evaluator_version,filter_snapshot_json,status,resume_stage,started_at
+    ) VALUES (
+      'dryrun-sr-retry','dryrun-u1','req-retry','dryrun-a1','dryrun-f1','dryrun-fv1',
+      'q','2026-01-01','2026-07-01',1,1,'{}','RETRY_WAIT','DISCOVERY',now()
+    );
+    RAISE EXCEPTION 'FAIL VP12c: RETRY_WAIT scan without next_retry_at was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: retry-coherence CHECK rejected missing retry timestamp';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_run (
+      id,user_id,client_request_id,gmail_account_id,email_filter_id,email_filter_version_id,
+      effective_gmail_query,from_date,to_date,filter_rule_schema_version,
+      filter_evaluator_version,filter_snapshot_json,status,started_at,completed_at,
+      batch_sequence,pending_continuation_sequence,pending_continuation_stage,
+      pending_continuation_not_before
+    ) VALUES (
+      'dryrun-sr-terminal','dryrun-u1','req-terminal','dryrun-a1','dryrun-f1','dryrun-fv1',
+      'q','2026-01-01','2026-07-01',1,1,'{}','COMPLETED',now(),now(),
+      0,0,'FETCH',now()
+    );
+    RAISE EXCEPTION 'FAIL VP12c: terminal scan with pending continuation was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: terminal-state CHECK rejected pending continuation';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_item (
+      id,scan_run_id,email_source_id,status,fetch_started_at
+    ) VALUES (
+      'dryrun-si-lease','dryrun-sr1','dryrun-es2','FETCHING',now()
+    );
+    RAISE EXCEPTION 'FAIL VP12c: FETCHING item without lease was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: item lease-coherence CHECK rejected FETCHING without lease';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_item (
+      id,scan_run_id,email_source_id,status
+    ) VALUES (
+      'dryrun-si-retry','dryrun-sr1','dryrun-es2','RETRY_WAIT'
+    );
+    RAISE EXCEPTION 'FAIL VP12c: RETRY_WAIT item without next_retry_at was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: item retry-coherence CHECK rejected missing retry timestamp';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_item (
+      id,scan_run_id,email_source_id,filter_decision
+    ) VALUES (
+      'dryrun-si-filter','dryrun-sr1','dryrun-es2','INCLUDED'
+    );
+    RAISE EXCEPTION 'FAIL VP12c: non-FETCHED item with final filter decision was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: filter-coherence CHECK rejected premature filter decision';
+  END;
+
+  BEGIN
+    INSERT INTO email_manual_classification (
+      id,user_id,email_source_id,previous_classification,new_classification,
+      classification_version
+    ) VALUES (
+      'dryrun-mc-noop','dryrun-u1','dryrun-es2','UNREVIEWED','UNREVIEWED',1
+    );
+    RAISE EXCEPTION 'FAIL VP12c: no-op classification was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS VP12c: classification-change CHECK rejected no-op event';
+  END;
+END; $$;
+
+-- =============================================================================
+-- VP12d: Idempotency/duplicate-prevention operational tests
+-- =============================================================================
+\echo '--- VP12d: Idempotency unique-constraint negative tests ---'
+DO $$
+BEGIN
+  BEGIN
+    INSERT INTO email_source (id,user_id,gmail_account_id,gmail_message_id)
+    VALUES ('dryrun-es-dup','dryrun-u1','dryrun-a1','msg1');
+    RAISE EXCEPTION 'FAIL VP12d: duplicate email source identity was accepted';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'PASS VP12d: duplicate email source identity rejected';
+  END;
+
+  BEGIN
+    INSERT INTO email_scan_run (
+      id,user_id,client_request_id,gmail_account_id,email_filter_id,email_filter_version_id,
+      effective_gmail_query,from_date,to_date,filter_rule_schema_version,
+      filter_evaluator_version,filter_snapshot_json
+    ) VALUES (
+      'dryrun-sr-dup','dryrun-u1','req1','dryrun-a1','dryrun-f1','dryrun-fv1',
+      'q','2026-01-01','2026-07-01',1,1,'{}'
+    );
+    RAISE EXCEPTION 'FAIL VP12d: duplicate client_request_id was accepted';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'PASS VP12d: duplicate client_request_id rejected';
+  END;
+
+  BEGIN
+    INSERT INTO email_filter_version (
+      id,email_filter_id,version,gmail_query,created_by
+    ) VALUES ('dryrun-fv-dup','dryrun-f1',1,'q','dryrun-u1');
+    RAISE EXCEPTION 'FAIL VP12d: duplicate filter version was accepted';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'PASS VP12d: duplicate filter version rejected';
+  END;
+
+  BEGIN
+    INSERT INTO email_manual_classification (
+      id,user_id,email_source_id,previous_classification,new_classification,
+      classification_version
+    ) VALUES (
+      'dryrun-mc-dup','dryrun-u1','dryrun-es1','FINANCIAL','UNCERTAIN',1
+    );
+    RAISE EXCEPTION 'FAIL VP12d: duplicate classification version was accepted';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'PASS VP12d: duplicate classification version rejected';
+  END;
+END; $$;
+
+-- =============================================================================
 -- VP13: User-erasure transaction test (canonical 7-step C90 order)
 -- =============================================================================
 \echo '--- VP13: User erasure in canonical C90 order ---'
@@ -1271,6 +2188,11 @@ INSERT INTO email_manual_classification (
   id, user_id, email_source_id,
   previous_classification, new_classification, classification_version
 ) VALUES ('dryrun-mcerase','dryrun-uerase','dryrun-eserase','UNREVIEWED','FINANCIAL',1);
+UPDATE email_source
+SET current_manual_classification = 'FINANCIAL',
+    classification_version = 1,
+    updated_at = now()
+WHERE id = 'dryrun-eserase' AND classification_version = 0;
 
 -- C90 canonical erasure order:
 -- Step 1: manual classifications (RESTRICT on email_source_id does not block this)
@@ -1327,6 +2249,45 @@ ROLLBACK;
 -- VP15: Post-rollback baseline-schema verification (outside transaction)
 -- =============================================================================
 \echo '--- VP15: Post-rollback verification ---'
+
+\if :{?PHASE1A_VALIDATE_MIGRATED}
+
+-- In migrated-schema mode ROLLBACK removes only synthetic fixtures. Installed schema must remain.
+DO $$
+DECLARE
+  table_count INT;
+  account_column_count INT;
+BEGIN
+  SELECT COUNT(*) INTO table_count
+  FROM pg_tables
+  WHERE schemaname = 'public'
+    AND tablename IN (
+      'email_filter','email_filter_version',
+      'email_source','email_scan_run',
+      'email_scan_item','email_manual_classification'
+    );
+  IF table_count <> 6 THEN
+    RAISE EXCEPTION
+      'FAIL VP15: migrated-schema mode retained % Phase 1A tables (expected 6)',
+      table_count;
+  END IF;
+
+  SELECT COUNT(*) INTO account_column_count
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'Account'
+    AND column_name IN ('disconnected_at','disconnection_reason');
+  IF account_column_count <> 2 THEN
+    RAISE EXCEPTION
+      'FAIL VP15: migrated-schema mode retained % Account additions (expected 2)',
+      account_column_count;
+  END IF;
+
+  RAISE NOTICE
+    'PASS VP15: migrated schema remains installed after fixture rollback';
+END; $$;
+
+\else
 
 -- Assert Phase 1A tables are gone
 DO $$
@@ -1395,6 +2356,26 @@ BEGIN
   END IF;
   RAISE NOTICE 'PASS VP15: account_disconnected_idx removed by rollback';
 END; $$;
+
+-- Assert Account disconnection CHECK is gone
+DO $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT COUNT(*) INTO cnt
+  FROM pg_constraint
+  WHERE conrelid = '"Account"'::regclass
+    AND contype = 'c'
+    AND conname = 'chk_account_disconnection_coherence';
+  IF cnt <> 0 THEN
+    RAISE EXCEPTION
+      'FAIL VP15: chk_account_disconnection_coherence survives rollback (count = %)',
+      cnt;
+  END IF;
+  RAISE NOTICE 'PASS VP15: Account disconnection CHECK removed by rollback';
+END; $$;
+
+\endif
 
 -- C99: Assert exact User and Account counts equal the pre-BEGIN baseline
 -- from the session-local temp table (survives ROLLBACK).

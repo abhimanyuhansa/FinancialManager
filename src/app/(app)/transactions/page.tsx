@@ -62,7 +62,8 @@ export default function TransactionsPage() {
   }, [search, type, category, from, to, page]);
 
   useEffect(() => {
-    fetchTransactions();
+    const timeoutId = window.setTimeout(fetchTransactions, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [fetchTransactions]);
 
   useEffect(() => {

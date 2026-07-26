@@ -8,7 +8,16 @@
 > **Architecture Remediation update:** 2026-07-16 — Tasks 0–7 complete; final commit `260dd90a792ae0fb2d13f952ef26a93d28c1cec8`
 > **Phase 0 Assessment update:** 2026-07-16 — Full audit complete against `260dd90`. 10 root
 > causes confirmed. Phase 1A plan documented in `14-phase0-assessment.md`. Status: awaiting
-> PM approval of D-1 through D-6 before any Phase 1A code changes.
+> PM approval of D-1 through D-6 before any Phase 1A code changes. D-1 was subsequently approved
+> for the bounded Stage 1 schema/migration work on 2026-07-26; runtime work remains unimplemented.
+> **Migration reconciliation update 2026-07-26:** Historical ParseTemplate/LLM clean replay and
+> the three missing nullable LLM columns are resolved by four new migrations. All 18 migrations
+> replay cleanly; already-migrated representative rows and historical checksums are preserved;
+> Prisma reports zero drift.
+> **Quality/security blocker update 2026-07-26:** ESLint now passes with zero errors and zero
+> warnings. Patched Auth.js, Next.js, and Prisma dependencies pass focused authentication tests,
+> all 248 unit tests, production build, Prisma migration/status/drift checks, and a production
+> dependency audit with zero vulnerabilities.
 > **Phase 0 revision 2026-07-19:** Phase 1A design plan row corrected: 6 new tables (not 5);
 > table names corrected to `email_filter`, `email_filter_version`, `email_source`, `email_scan_run`,
 > `email_scan_item`, `email_manual_classification` (Q1–Q4 + C1–C8). C2: `gmail_account_id`
@@ -17,7 +26,7 @@
 > C6: `to_date` NOT NULL; `previous_classification` NOT NULL; `classification_version` UNIQUE added
 > to `email_manual_classification`. C7: filter evaluation semantics finalized (exclude wins, empty
 > include = all included). C8: QStash deterministic dedup IDs; DB-commit-before-publish ordering.
-> C1: cross-table integrity via PostgreSQL constraint triggers. D-1 status: pending final schema
+> C1: cross-table integrity via PostgreSQL constraint triggers. D-1 status was pending final schema
 > approval. D-2 through D-6: see updated §5 in `14-phase0-assessment.md`.
 > **Phase 0 revision 2026-07-19 pass 6 (C24–C33):**
 > C29: Phase 1A design plan table — `GET /api/gmail/scan/list` row removed; `GET/DELETE`
@@ -96,17 +105,18 @@ migrations. Evidence throughout `02`–`06`.
 | Monetization / paid tiers (spec §14 V2+) | No billing/plan/entitlement code |
 | Multi-currency FX conversion | `currency` stored; no conversion logic |
 
-### 1.6 Phase 1A planned items — [Planned, pending D-1 final consolidation approval; D-2–D-6 approved]
+### 1.6 Phase 1A items — [Stage 1 database implemented; runtime not started]
 
-Per Phase 0 assessment `14-phase0-assessment.md`. These items are **[Not Implemented]**
-at assessment date 2026-07-16 and are pending PM/architect approval before any code changes.
+Per Phase 0 assessment `14-phase0-assessment.md`. D-1 was approved on 2026-07-26 only for the
+bounded Stage 1 schema/migration work. That database layer is implemented and executable evidence
+is recorded; all runtime entries below remain **[Not Implemented]**.
 
 | Item | Description |
 |------|-------------|
 | `src/lib/featureFlags.ts` | `isLlmParsingEnabled()` — reads `LLM_PARSING_ENABLED` env var; safe default false |
 | LLM gate in `router.ts` | Guard call at router entry that throws `LlmDisabledError` if flag is false |
 | LLM=0 regression test | `tests/lib/featureFlags.test.ts` — proves zero provider calls when flag is false |
-| Migration: 6 new tables | `email_filter`, `email_filter_version`, `email_source`, `email_scan_run`, `email_scan_item`, `email_manual_classification` |
+| Migration: 6 new tables | **Implemented and verified** in `20260726000000_phase1a_stage1_scan_schema`; production deployment not performed |
 | `POST /api/gmail/scan` | POST — creates `email_scan_run`, returns `scanRunId` |
 | `POST /api/gmail/scan/worker` | POST — advances one bounded unit (≤25 IDs or ≤25 fetches); worker lease pattern |
 | `/api/gmail/scan/[id]` | GET — status; POST sub-routes: pause, resume, cancel, retry |
@@ -136,7 +146,7 @@ See the conflict table in §2.
 | 7 | `emailFilter.ts` "fully removed" | File/entity gone from **pipeline**, but `EmailFilter` model + `/api/settings/filters` + Settings UI still active | **Partial / misleading** |
 | 8 | 25 Prisma models | **27** models (`grep -c "^model "`) | **Stale** |
 | 9 | Plain "3-tier" parse chain | 3-tier **plus static tier-0** + VPA auto-learn | **Under-documented** |
-| 10 | Next.js 14 (spec) | **Next.js 16.2.10** (`package.json`) | **Stale** |
+| 10 | Next.js 14 (spec) | **Next.js 16.2.12** (`package.json`) | **Stale** |
 | 11 | CHUNK_SIZE / chunked advance | Confirmed **25** (`advance/route.ts:22`) | **Confirmed** |
 | 12 | Watermark = `job.startedAt` | Confirmed | **Confirmed** |
 | 13 | Auto-retry of 1-error rows | Confirmed (advance route; commit `57d29dc`) | **Confirmed** |
