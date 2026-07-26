@@ -16,6 +16,8 @@ Updated: 2026-07-26
 - The legacy EmailFilter screen is clearly labelled as legacy and not part of Gmail parsing.
 - Returning Google sign-ins refresh the stored Gmail account tokens without erasing an existing refresh token when Google omits a replacement.
 - Processing Review and new parser-miss writes are deduplicated by Gmail message ID.
+- Authenticated users can sign out from the desktop sidebar or Settings. Auth.js deletes the database session and redirects to `/login` without revoking Gmail access or deleting user, account, token, transaction, or Gmail data.
+- Phase 1A has started with typed scan states and an authoritative progress/completion calculator. It prevents filter-excluded emails from being counted twice, prevents premature 100% display, and treats cancellation as a terminal display without a percentage.
 
 ## How to run
 
@@ -30,14 +32,16 @@ Then configure the existing database, Auth.js, Google OAuth/Gmail, cron, and sta
 
 ```bash
 npm install
-npx prisma migrate deploy
+npx prisma migrate status
 npm run dev
 ```
+
+Do not run the five pending migrations against live Neon until DEF-1 is resolved.
 
 ## Verification
 
 - `npm run lint` — passed.
-- `npm test -- --runInBand` — 32 suites, 270 tests passed.
+- `npm test -- --runInBand` — 34 suites, 274 tests passed.
 - `npx prisma validate` and `npx prisma generate` — passed.
 - All 18 migrations applied and reported up to date on an isolated PostgreSQL 17 database.
 - Read-only live `npx prisma migrate status` — 18 known migrations, 5 pending. No live migration was applied because the pending chain contains destructive replay operations.
@@ -54,7 +58,10 @@ npm run dev
 - Processing Review contains 1,516 distinct deterministic misses. Seven historical duplicate rows were created by the first incremental run before the deduplication fix; the deployed API displays each message once.
 - Two post-baseline incremental scans each processed 20/20 messages, created 0 transactions, and left the transaction and LLM counts unchanged.
 - The final incremental scan added no parser-miss rows and advanced `gmailSyncedAt` exactly to its `startedAt` (`2026-07-26T15:10:51.282Z`).
+- Sign-out interaction test — passed; concurrent clicks produce one Auth.js request with redirect target `/login`.
+- Production sign-out — owner verified: redirect to `/login` and protected pages require authentication again.
+- Phase 1A progress tests — passed for evaluated/excluded overlap, incomplete-item completion guard, and cancellation display.
 
 ## Next task
 
-Resolve the owner actions in `OPEN_DEFECTS.md`, then review and split the five pending live migrations into an approved non-destructive deployment path. Do not run the current replay chain against live Neon as-is.
+Continue Phase 1A with authoritative item-counter reconciliation and a protected scan-status API. In parallel, prove the five pending migrations on an isolated production-like Neon branch before requesting any live deployment.

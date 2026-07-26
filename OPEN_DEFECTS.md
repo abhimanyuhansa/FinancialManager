@@ -7,8 +7,8 @@
 - Severity: High
 - Status: Open
 - Impact: The generated Prisma model is ahead of the live schema. The application currently needs a compatibility omit for two unused Account fields.
-- Cause: The pending chain includes parse-template replay migrations with destructive operations, so automated production deployment was rejected.
-- Workaround: Review and split the pending chain into an explicitly approved non-destructive production migration. Do not run `migrate deploy` against live Neon as-is.
+- Cause: The three parse-template bridge migrations contain guarded `DROP` operations for an empty clean-replay bootstrap. The SQL audit indicates they are no-ops on a valid already-migrated database, but this has not yet been proven against an isolated clone of the current live schema and data.
+- Workaround: Replay and fingerprint the exact five-migration chain on an isolated production-like Neon branch. Do not run `migrate deploy` against live Neon until the result is reviewed and explicitly approved.
 
 ### DEF-2 — Seven historical duplicate parser-miss rows remain
 
