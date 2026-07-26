@@ -34,10 +34,14 @@ export async function GET(req: Request) {
     }
   }
 
-  const [total, logs] = await Promise.all([
-    prisma.parseLog.count({ where }),
+  const [groups, logs] = await Promise.all([
+    prisma.parseLog.groupBy({
+      by: ["gmailMsgId"],
+      where,
+    }),
     prisma.parseLog.findMany({
       where,
+      distinct: ["gmailMsgId"],
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
@@ -59,5 +63,6 @@ export async function GET(req: Request) {
     }),
   ]);
 
+  const total = groups.length;
   return NextResponse.json({ logs, total, page, pageSize: PAGE_SIZE });
 }

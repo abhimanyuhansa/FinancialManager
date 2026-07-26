@@ -23,7 +23,11 @@ import {
   isLegacyTransactionIngestionEnabled,
   isLlmParsingEnabled,
 } from "@/lib/featureFlags";
-import { buildLlmDisabledParseLogs } from "@/lib/legacyIngestion";
+import {
+  buildLlmDisabledParseLogs,
+  deduplicateLlmDisabledParseLogs,
+  UNPARSED_LLM_DISABLED,
+} from "@/lib/legacyIngestion";
 
 const CHUNK_SIZE = 25;
 const BODY_LIMIT = 1500;
@@ -575,7 +579,31 @@ async function advanceJobLocked(
 
   // Flush all accumulated ParseLog writes in one batch
   if (pendingLogs.length > 0) {
-    await prisma.parseLog.createMany({ data: pendingLogs });
+    const disabledMessageIds = [
+      ...new Set(
+        pendingLogs
+          .filter((log) => log.outcome === UNPARSED_LLM_DISABLED)
+          .map((log) => log.gmailMsgId),
+      ),
+    ];
+    const existingDisabledMisses = disabledMessageIds.length > 0
+      ? await prisma.parseLog.findMany({
+          where: {
+            userId: job.userId,
+            outcome: UNPARSED_LLM_DISABLED,
+            gmailMsgId: { in: disabledMessageIds },
+          },
+          select: { gmailMsgId: true },
+        })
+      : [];
+    const logsToCreate = deduplicateLlmDisabledParseLogs(
+      pendingLogs,
+      new Set(existingDisabledMisses.map((log) => log.gmailMsgId)),
+    );
+
+    if (logsToCreate.length > 0) {
+      await prisma.parseLog.createMany({ data: logsToCreate });
+    }
   }
 
   await prisma.syncJobMessage.updateMany({

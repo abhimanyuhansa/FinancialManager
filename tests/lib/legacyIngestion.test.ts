@@ -1,5 +1,6 @@
 import {
   buildLlmDisabledParseLogs,
+  deduplicateLlmDisabledParseLogs,
   UNPARSED_LLM_DISABLED,
 } from "@/lib/legacyIngestion";
 
@@ -35,5 +36,64 @@ describe("static-only deterministic misses", () => {
     ]);
     expect(logs[0].transactionId).toBeUndefined();
     expect(logs[0].errorDetail).toBeUndefined();
+  });
+
+  it("keeps each disabled-parser miss once across existing and batched logs", () => {
+    const logs = [
+      {
+        userId: "user-1",
+        syncJobId: "job-2",
+        gmailMsgId: "existing-message",
+        senderDomain: "bank.example",
+        bodyLengthRaw: 10,
+        bodyLengthSent: 0,
+        wasTruncated: false,
+        batchSize: 1,
+        outcome: UNPARSED_LLM_DISABLED,
+      },
+      {
+        userId: "user-1",
+        syncJobId: "job-2",
+        gmailMsgId: "new-message",
+        senderDomain: "bank.example",
+        bodyLengthRaw: 10,
+        bodyLengthSent: 0,
+        wasTruncated: false,
+        batchSize: 1,
+        outcome: UNPARSED_LLM_DISABLED,
+      },
+      {
+        userId: "user-1",
+        syncJobId: "job-2",
+        gmailMsgId: "new-message",
+        senderDomain: "bank.example",
+        bodyLengthRaw: 10,
+        bodyLengthSent: 0,
+        wasTruncated: false,
+        batchSize: 1,
+        outcome: UNPARSED_LLM_DISABLED,
+      },
+      {
+        userId: "user-1",
+        syncJobId: "job-2",
+        gmailMsgId: "new-message",
+        senderDomain: "bank.example",
+        bodyLengthRaw: 10,
+        bodyLengthSent: 0,
+        wasTruncated: false,
+        batchSize: 1,
+        outcome: "skipped_duplicate",
+      },
+    ];
+
+    expect(
+      deduplicateLlmDisabledParseLogs(
+        logs,
+        new Set(["existing-message"]),
+      ).map((log) => [log.gmailMsgId, log.outcome]),
+    ).toEqual([
+      ["new-message", UNPARSED_LLM_DISABLED],
+      ["new-message", "skipped_duplicate"],
+    ]);
   });
 });

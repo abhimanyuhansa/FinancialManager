@@ -29,3 +29,17 @@ export function buildLlmDisabledParseLogs(
     resolvedBy: "llm_disabled",
   }));
 }
+
+export function deduplicateLlmDisabledParseLogs(
+  logs: Prisma.ParseLogCreateManyInput[],
+  existingMessageIds: ReadonlySet<string>,
+): Prisma.ParseLogCreateManyInput[] {
+  const seenMessageIds = new Set(existingMessageIds);
+
+  return logs.filter((log) => {
+    if (log.outcome !== UNPARSED_LLM_DISABLED) return true;
+    if (seenMessageIds.has(log.gmailMsgId)) return false;
+    seenMessageIds.add(log.gmailMsgId);
+    return true;
+  });
+}
