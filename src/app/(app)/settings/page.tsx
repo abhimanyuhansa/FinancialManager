@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import { IconPicker } from "@/components/IconPicker";
 import { SignOutButton } from "@/components/SignOutButton";
+import { EmailInventoryPanel } from "@/components/EmailInventoryPanel";
 import { invalidateCategoryCache, invalidateSubCategoryCache } from "@/hooks/useCategories";
 
 type EmailFilter = {
@@ -106,7 +107,7 @@ const VALID_CATEGORIES = [
 ];
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<"filters" | "audit" | "passwords" | "parse-logs" | "categories">("filters");
+  const [tab, setTab] = useState<"inventory" | "filters" | "audit" | "passwords" | "parse-logs" | "categories">("inventory");
 
   /* ── Categories ── */
   type CategoryRow = { id: string; slug: string; name: string; icon: string; isDefault: boolean };
@@ -716,7 +717,7 @@ export default function SettingsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-[#E9E9EB]">
-        {(["filters", "audit", "passwords", "parse-logs", "categories"] as const).map((t) => (
+        {(["inventory", "filters", "audit", "passwords", "parse-logs", "categories"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -724,10 +725,12 @@ export default function SettingsPage() {
               tab === t ? "text-[#04B488] border-b-2 border-[#04B488]" : "text-[#7C7E8C] hover:text-[#44475B]"
             }`}
           >
-            {t === "filters" ? "Legacy Filters" : t === "audit" ? "Reconciliation Audit" : t === "passwords" ? "Statement Passwords" : t === "parse-logs" ? "Processing Review" : "Categories"}
+            {t === "inventory" ? "Email Inventory" : t === "filters" ? "Legacy Filters" : t === "audit" ? "Reconciliation Audit" : t === "passwords" ? "Statement Passwords" : t === "parse-logs" ? "Processing Review" : "Categories"}
           </button>
         ))}
       </div>
+
+      {tab === "inventory" && <EmailInventoryPanel />}
 
       {/* ── Email Filters Tab ── */}
       {tab === "filters" && (

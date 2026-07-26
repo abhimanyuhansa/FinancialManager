@@ -19,6 +19,10 @@ Updated: 2026-07-26
 - Authenticated users can sign out from the desktop sidebar or Settings. Auth.js deletes the database session and redirects to `/login` without revoking Gmail access or deleting user, account, token, transaction, or Gmail data.
 - Phase 1A has started with typed scan states and an authoritative progress/completion calculator. It prevents filter-excluded emails from being counted twice, prevents premature 100% display, and treats cancellation as a terminal display without a percentage.
 - Phase 1A `GET /api/gmail/scan/{id}` is implemented as a read-only, database-session-protected status endpoint. It scopes the scan lookup by user, reconciles counters from scan items, detects cached-counter drift, and returns 404 for another tenant or an unknown scan.
+- Phase 1A provider-independent runtime is implemented on `codex/phase1a-runtime`: idempotent first/incremental scan creation, immutable per-user filters, QStash scheduling and signed worker verification, durable leases/checkpoints/retries, pause/resume/retry/cancel, metadata-only inventory/statistics, manual classification audit history, and tenant-scoped APIs.
+- Settings → Email Inventory provides six-month/incremental scan controls, reconciled progress and failures, a versioned filter editor, inventory statistics, and manual financial/non-financial/uncertain classification. Phase 1A does not invoke the parser, create transactions, or call an LLM.
+- The isolated Neon branch `phase1a-test` (`br-noisy-tree-at1qvlx6`) is migrated to all 18 migrations. Migration replay preserved 649 transactions, 402 LLM call logs, and 3,463 parse logs, with no schema drift.
+- Phase 1A cutover is not active. Production remains on the proven static legacy path until the real QStash/Gmail flow passes.
 
 ## How to run
 
@@ -37,12 +41,12 @@ npx prisma migrate status
 npm run dev
 ```
 
-Do not run the five pending migrations against live Neon until DEF-1 is resolved.
+Do not run the five pending migrations against live Neon or disable legacy ingestion until the Phase 1A external-runtime blockers are resolved and the real flow passes.
 
 ## Verification
 
 - `npm run lint` — passed.
-- `npm test -- --runInBand` — 36 suites, 279 tests passed.
+- `npm test -- --runInBand` — 40 suites, 288 tests passed; the opt-in real branch smoke is skipped by the normal suite.
 - `npx prisma validate` and `npx prisma generate` — passed.
 - All 18 migrations applied and reported up to date on an isolated PostgreSQL 17 database.
 - Read-only live `npx prisma migrate status` — 18 known migrations, 5 pending. No live migration was applied because the pending chain contains destructive replay operations.
@@ -63,7 +67,12 @@ Do not run the five pending migrations against live Neon until DEF-1 is resolved
 - Production sign-out — owner verified: redirect to `/login` and protected pages require authentication again.
 - Phase 1A progress tests — passed for evaluated/excluded overlap, incomplete-item completion guard, and cancellation display.
 - Phase 1A status-service/API tests — passed for tenant scoping, item reconciliation, cache matching, unauthenticated rejection, tenant-safe 404, and successful status response.
+- Phase 1A tests — passed for filter precedence/schema validation, deterministic QStash deduplication keys, incremental watermark overlap, worker rejection before database access when unsigned, and tenant-scoped inventory reads.
+- `npm audit --omit=dev --audit-level=critical` — zero vulnerabilities.
+- Isolated Neon `npx prisma migrate status` — all 18 migrations applied and schema up to date.
+- Application startup on the isolated Neon branch — passed at `http://localhost:3000`.
+- Real branch smoke reached the actual OAuth/Gmail boundary. One copied grant could not refresh (HTTP 400); the other token could authenticate but Gmail message listing returned HTTP 403. No email metadata, classification, transaction, or LLM rows were created by the blocked run. Branch counts remain 649 transactions and 402 LLM calls.
 
 ## Next task
 
-Create a dedicated production-like Neon test branch and prove the five pending migrations. Once its Phase 1A tables are available, run the status endpoint against real scan rows, then implement the idempotent scan-creation domain service and protected start API.
+Complete Google consent in the open localhost OAuth flow and provision the three QStash runtime credentials. Then rerun `tests/integration/phase1a-branch.test.ts`, deploy a branch-backed preview, demonstrate the complete UI flow, and only after that approve the live migration and set `LEGACY_TRANSACTION_INGESTION_ENABLED=false`.

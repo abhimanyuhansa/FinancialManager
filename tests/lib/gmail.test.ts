@@ -34,6 +34,8 @@ describe("parseBatchResponse", () => {
       "",
       JSON.stringify({
         id: "msg1",
+        threadId: "thread1",
+        labelIds: ["INBOX", "IMPORTANT"],
         internalDate: "1735725600000",
         payload: {
           headers: [
@@ -72,6 +74,8 @@ describe("parseBatchResponse", () => {
     expect(results[0].id).toBe("msg1");
     expect(results[0].senderEmail).toBe("test@example.com");
     expect(results[0].body).toContain("₹500");
+    expect(results[0].gmailThreadId).toBe("thread1");
+    expect(results[0].gmailLabels).toEqual(["INBOX", "IMPORTANT"]);
     expect(results[1].id).toBe("msg2");
     expect(results[1].senderEmail).toBe("noreply@hdfcbank.com");
   });

@@ -22,6 +22,11 @@ type ScanRunRecord = {
   completedAt: Date | null;
   pausedAt: Date | null;
   cancelledAt: Date | null;
+  nextRetryAt: Date | null;
+  lastErrorCode: string | null;
+  lastErrorMessageSanitized: string | null;
+  pendingContinuationSequence: bigint | null;
+  pendingContinuationPublishedAt: Date | null;
 };
 
 type ScanItemGroup = {
@@ -72,6 +77,11 @@ export async function getScanProgressForUser(
       completedAt: true,
       pausedAt: true,
       cancelledAt: true,
+      nextRetryAt: true,
+      lastErrorCode: true,
+      lastErrorMessageSanitized: true,
+      pendingContinuationSequence: true,
+      pendingContinuationPublishedAt: true,
     },
   });
 
@@ -135,5 +145,11 @@ export async function getScanProgressForUser(
     completedAt: scan.completedAt,
     pausedAt: scan.pausedAt,
     cancelledAt: scan.cancelledAt,
+    nextRetryAt: scan.nextRetryAt,
+    lastErrorCode: scan.lastErrorCode,
+    lastErrorMessage: scan.lastErrorMessageSanitized,
+    schedulingPending:
+      scan.pendingContinuationSequence !== null &&
+      scan.pendingContinuationPublishedAt === null,
   };
 }

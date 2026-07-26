@@ -23,6 +23,7 @@ describe("getGmailToken", () => {
   it("returns access_token when session and account exist and token is fresh", async () => {
     mockAuth.mockResolvedValue({ user: { id: "user-1", email: "a@b.com" } } as never);
     mockFindFirst.mockResolvedValue({
+      id: "account-1",
       access_token: "token-abc",
       refresh_token: "refresh-xyz",
       expires_at: FAR_FUTURE,
@@ -31,8 +32,17 @@ describe("getGmailToken", () => {
     const token = await getGmailToken("user-1");
     expect(token).toBe("token-abc");
     expect(mockFindFirst).toHaveBeenCalledWith({
-      where: { userId: "user-1", provider: "google" },
-      select: { access_token: true, refresh_token: true, expires_at: true },
+      where: {
+        userId: "user-1",
+        provider: "google",
+        disconnectedAt: null,
+      },
+      select: {
+        id: true,
+        access_token: true,
+        refresh_token: true,
+        expires_at: true,
+      },
     });
   });
 

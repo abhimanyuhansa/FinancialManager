@@ -37,11 +37,11 @@ export async function fetchPdfAttachment(
 
 export async function getGmailToken(userId: string): Promise<string | null> {
   const account = await prisma.account.findFirst({
-    where: { userId, provider: "google" },
-    select: { access_token: true, refresh_token: true, expires_at: true },
+    where: { userId, provider: "google", disconnectedAt: null },
+    select: { id: true, access_token: true, refresh_token: true, expires_at: true },
   });
   if (!account) {
-    console.warn(`[gmail] No Google account found for user ${userId}`);
+    console.warn("[gmail] No connected Google account found");
     return null;
   }
 
@@ -55,7 +55,7 @@ export async function getGmailToken(userId: string): Promise<string | null> {
 
   // Token expired or missing — try to refresh
   if (!account.refresh_token) {
-    console.warn(`[gmail] Access token expired and no refresh_token for user ${userId}`);
+    console.warn("[gmail] Access token expired without a refresh token");
     return null;
   }
 
@@ -71,8 +71,7 @@ export async function getGmailToken(userId: string): Promise<string | null> {
       }),
     });
     if (!res.ok) {
-      const err = await res.text();
-      console.error(`[gmail] Token refresh failed: ${res.status}`, err);
+      console.error(`[gmail] Token refresh failed with HTTP ${res.status}`);
       return null;
     }
     const tokens = (await res.json()) as {
@@ -82,13 +81,13 @@ export async function getGmailToken(userId: string): Promise<string | null> {
     };
     const newExpiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;
     await prisma.account.updateMany({
-      where: { userId, provider: "google" },
+      where: { id: account.id, userId, provider: "google", disconnectedAt: null },
       data: { access_token: tokens.access_token, expires_at: newExpiresAt },
     });
-    console.log(`[gmail] Token refreshed for user ${userId}, expires_at=${newExpiresAt}`);
+    console.info("[gmail] Access token refreshed");
     return tokens.access_token;
-  } catch (e) {
-    console.error(`[gmail] Token refresh error:`, e);
+  } catch {
+    console.error("[gmail] Token refresh failed");
     return null;
   }
 }
@@ -134,7 +133,9 @@ export type FullMessage = {
   senderName: string;
   senderEmail: string;
   senderDomain: string;
-  receivedDate: string; // YYYY-MM-DD
+  receivedDate: string;
+  gmailThreadId: string | null;
+  gmailLabels: string[];
   hasPdfAttachment: boolean;
   pdfAttachmentId: string | null;
 };
@@ -188,6 +189,8 @@ export function parseBatchResponse(responseBody: string, boundary: string): Full
     let msg: {
       id?: string;
       internalDate?: string;
+      threadId?: string;
+      labelIds?: string[];
       payload?: {
         headers?: Array<{ name: string; value: string }>;
         body?: { data?: string };
@@ -212,8 +215,8 @@ export function parseBatchResponse(responseBody: string, boundary: string): Full
     const senderEmail = emailMatch ? emailMatch[1] : senderRaw.replace(/\s+/g, "");
     const senderDomain = senderEmail.includes("@") ? senderEmail.split("@")[1] : senderEmail;
     const receivedDate = msg.internalDate
-      ? new Date(Number(msg.internalDate)).toISOString().split("T")[0]
-      : new Date().toISOString().split("T")[0];
+      ? new Date(Number(msg.internalDate)).toISOString()
+      : new Date().toISOString();
 
     let body = "";
     const parts2 = msg.payload?.parts ?? [];
@@ -228,7 +231,19 @@ export function parseBatchResponse(responseBody: string, boundary: string): Full
     const hasPdfAttachment = pdfParts.length > 0;
     const pdfAttachmentId = hasPdfAttachment ? pdfParts[0].body!.attachmentId! : null;
 
-    results.push({ id: msg.id, body, subject, senderName, senderEmail, senderDomain, receivedDate, hasPdfAttachment, pdfAttachmentId });
+    results.push({
+      id: msg.id,
+      body,
+      subject,
+      senderName,
+      senderEmail,
+      senderDomain,
+      receivedDate,
+      gmailThreadId: msg.threadId ?? null,
+      gmailLabels: msg.labelIds ?? [],
+      hasPdfAttachment,
+      pdfAttachmentId,
+    });
   }
 
   return results;
@@ -236,7 +251,8 @@ export function parseBatchResponse(responseBody: string, boundary: string): Full
 
 export async function fetchFullMessageBatch(
   accessToken: string,
-  messageIds: string[]
+  messageIds: string[],
+  options: { metadataOnly?: boolean } = {},
 ): Promise<FullMessage[]> {
   if (messageIds.length === 0) return [];
 
@@ -244,7 +260,11 @@ export async function fetchFullMessageBatch(
   const subRequests = messageIds
     .map(
       (id) =>
-        `--${boundary}\r\nContent-Type: application/http\r\n\r\nGET /gmail/v1/users/me/messages/${id}?format=full\r\n`
+        `--${boundary}\r\nContent-Type: application/http\r\n\r\nGET /gmail/v1/users/me/messages/${id}?${
+          options.metadataOnly
+            ? "format=metadata&metadataHeaders=From&metadataHeaders=Subject"
+            : "format=full"
+        }\r\n`,
     )
     .join("");
   const batchBody = subRequests + `--${boundary}--`;
@@ -259,8 +279,7 @@ export async function fetchFullMessageBatch(
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    console.error(`[gmail] fetchFullMessageBatch failed: ${res.status}`, err);
+    console.error(`[gmail] Gmail batch failed with HTTP ${res.status}`);
     if (res.status === 429) throw new Error("GMAIL_RATE_LIMITED");
     throw new Error(`Gmail batch failed: ${res.status}`);
   }
@@ -287,8 +306,7 @@ export async function fetchMessageIdPage(
   );
 
   if (!res.ok) {
-    const err = await res.text();
-    console.error(`[gmail] fetchMessageIdPage failed: ${res.status}`, err);
+    console.error(`[gmail] Gmail list failed with HTTP ${res.status}`);
     throw new Error(`Gmail list failed: ${res.status}`);
   }
 
