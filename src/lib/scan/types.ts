@@ -1,14 +1,17 @@
-export type ScanRunStatus =
-  | "CREATED"
-  | "DISCOVERING"
-  | "FETCHING"
-  | "RETRY_WAIT"
-  | "PAUSED"
-  | "COMPLETED"
-  | "COMPLETED_WITH_ERRORS"
-  | "FAILED"
-  | "CANCELLING"
-  | "CANCELLED";
+export const SCAN_RUN_STATUSES = [
+  "CREATED",
+  "DISCOVERING",
+  "FETCHING",
+  "RETRY_WAIT",
+  "PAUSED",
+  "COMPLETED",
+  "COMPLETED_WITH_ERRORS",
+  "FAILED",
+  "CANCELLING",
+  "CANCELLED",
+] as const;
+
+export type ScanRunStatus = (typeof SCAN_RUN_STATUSES)[number];
 
 export type ScanStage = "DISCOVERY" | "FETCH";
 
@@ -27,3 +30,7 @@ export type ManualClassification =
   | "FINANCIAL"
   | "NON_FINANCIAL"
   | "UNCERTAIN";
+
+export function isScanRunStatus(value: string): value is ScanRunStatus {
+  return (SCAN_RUN_STATUSES as readonly string[]).includes(value);
+}

@@ -18,6 +18,7 @@ Updated: 2026-07-26
 - Processing Review and new parser-miss writes are deduplicated by Gmail message ID.
 - Authenticated users can sign out from the desktop sidebar or Settings. Auth.js deletes the database session and redirects to `/login` without revoking Gmail access or deleting user, account, token, transaction, or Gmail data.
 - Phase 1A has started with typed scan states and an authoritative progress/completion calculator. It prevents filter-excluded emails from being counted twice, prevents premature 100% display, and treats cancellation as a terminal display without a percentage.
+- Phase 1A `GET /api/gmail/scan/{id}` is implemented as a read-only, database-session-protected status endpoint. It scopes the scan lookup by user, reconciles counters from scan items, detects cached-counter drift, and returns 404 for another tenant or an unknown scan.
 
 ## How to run
 
@@ -41,7 +42,7 @@ Do not run the five pending migrations against live Neon until DEF-1 is resolved
 ## Verification
 
 - `npm run lint` — passed.
-- `npm test -- --runInBand` — 34 suites, 274 tests passed.
+- `npm test -- --runInBand` — 36 suites, 279 tests passed.
 - `npx prisma validate` and `npx prisma generate` — passed.
 - All 18 migrations applied and reported up to date on an isolated PostgreSQL 17 database.
 - Read-only live `npx prisma migrate status` — 18 known migrations, 5 pending. No live migration was applied because the pending chain contains destructive replay operations.
@@ -61,7 +62,8 @@ Do not run the five pending migrations against live Neon until DEF-1 is resolved
 - Sign-out interaction test — passed; concurrent clicks produce one Auth.js request with redirect target `/login`.
 - Production sign-out — owner verified: redirect to `/login` and protected pages require authentication again.
 - Phase 1A progress tests — passed for evaluated/excluded overlap, incomplete-item completion guard, and cancellation display.
+- Phase 1A status-service/API tests — passed for tenant scoping, item reconciliation, cache matching, unauthenticated rejection, tenant-safe 404, and successful status response.
 
 ## Next task
 
-Continue Phase 1A with authoritative item-counter reconciliation and a protected scan-status API. In parallel, prove the five pending migrations on an isolated production-like Neon branch before requesting any live deployment.
+Create a dedicated production-like Neon test branch and prove the five pending migrations. Once its Phase 1A tables are available, run the status endpoint against real scan rows, then implement the idempotent scan-creation domain service and protected start API.
