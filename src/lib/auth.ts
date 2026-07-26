@@ -3,6 +3,29 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
 import { authConfig } from "@/lib/auth.config";
 
+function logAuthError(error: Error): void {
+  let current: unknown = error;
+  let depth = 0;
+
+  while (current && depth < 6) {
+    if (current instanceof Error) {
+      console.error(
+        `[auth] error[${depth}]: ${current.constructor.name}: ${current.message}`,
+      );
+      current = (current as Error & { cause?: unknown }).cause;
+      depth++;
+      continue;
+    }
+
+    if (typeof current === "object" && "err" in current) {
+      current = (current as { err?: unknown }).err;
+      continue;
+    }
+
+    break;
+  }
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   trustHost: true,
@@ -18,26 +41,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
   events: {
-    async signIn({ user }) {
-      console.log(`[auth] signIn success: userId=${user.id} email=${user.email}`);
+    async signIn() {
+      console.log("[auth] signIn success");
     },
   },
   logger: {
-    error(error) {
-      let e: unknown = error;
-      let depth = 0;
-      while (e instanceof Error && depth < 6) {
-        console.error(`[auth] error[${depth}]: ${e.constructor.name}: ${e.message}`);
-        if (depth === 0) console.error(`[auth] stack:`, (e as Error).stack);
-        e = (e as Error & { cause?: unknown }).cause;
-        depth++;
-      }
-      if (e !== undefined && e !== null) {
-        console.error(`[auth] root cause:`, e);
-      }
-    },
-    debug(message, metadata) {
-      console.log(`[auth][debug] ${message}`, JSON.stringify(metadata ?? {}));
-    },
+    error: logAuthError,
   },
 });
