@@ -16,6 +16,8 @@ export default defineConfig({
       DATABASE_URL: process.env.DATABASE_URL ?? "",
       NEXTAUTH_URL: process.env.NEXTAUTH_URL ?? "http://localhost:3000",
       NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET ?? "",
+      LLM_PARSING_ENABLED: "false",
+      LEGACY_TRANSACTION_INGESTION_ENABLED: "true",
     },
   },
   timeout: 120_000,

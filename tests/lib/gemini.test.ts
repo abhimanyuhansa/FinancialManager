@@ -6,6 +6,14 @@ import { parseEmailBatch } from "@/lib/gemini";
 
 const FAKE_KEY = "test-key";
 
+beforeEach(() => {
+  process.env.LLM_PARSING_ENABLED = "true";
+});
+
+afterEach(() => {
+  delete process.env.LLM_PARSING_ENABLED;
+});
+
 function mockGeminiResponse(json: object) {
   mockFetch.mockResolvedValueOnce({
     ok: true,

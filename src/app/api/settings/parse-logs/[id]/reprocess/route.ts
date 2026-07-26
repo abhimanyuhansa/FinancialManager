@@ -6,6 +6,7 @@ import { parseEmailBatchLLM } from "@/lib/llm";
 import { createHash } from "crypto";
 import { upsertTransactionV2 } from "@/lib/dedup";
 import { lookupAndUpsertMerchant } from "@/lib/merchantMaster";
+import { isLlmParsingEnabled } from "@/lib/featureFlags";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -59,6 +60,13 @@ export async function POST(_req: Request, { params }: RouteContext) {
   }
   const userId = session.user.id;
   const { id } = await params;
+
+  if (!isLlmParsingEnabled()) {
+    return NextResponse.json(
+      { error: "LLM parsing is disabled; this email remains in the processing review queue" },
+      { status: 503 },
+    );
+  }
 
   const log = await prisma.parseLog.findUnique({
     where: { id },

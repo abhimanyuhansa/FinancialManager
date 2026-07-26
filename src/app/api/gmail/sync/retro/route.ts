@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { buildGmailQueryFromDB } from "@/lib/gmailQuery";
+import { isLegacyTransactionIngestionEnabled } from "@/lib/featureFlags";
 
 export async function POST(req: Request) {
+  if (!isLegacyTransactionIngestionEnabled()) {
+    return NextResponse.json({ error: "legacy_ingestion_disabled" }, { status: 503 });
+  }
+
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

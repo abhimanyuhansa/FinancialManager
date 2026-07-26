@@ -1,4 +1,4 @@
-import { parseEmailBatchLLM } from "../../../src/lib/llm/index";
+import { parseEmailBatchLLM, parseStatementLLM } from "../../../src/lib/llm/index";
 import { LlmCallContext } from "../../../src/lib/llm/providers/types";
 
 jest.mock("../../../src/lib/llm/router");
@@ -39,6 +39,7 @@ const selectedOpenAI = { provider: "openai" as const, isHalfOpenProbe: false, re
 
 describe("parseEmailBatchLLM", () => {
   beforeEach(() => {
+    process.env.LLM_PARSING_ENABLED = "true";
     mockAcquireIdempotency.mockResolvedValue({ status: "claimed" });
     mockCompleteIdempotency.mockResolvedValue(undefined);
     mockFailIdempotency.mockResolvedValue(undefined);
@@ -47,7 +48,37 @@ describe("parseEmailBatchLLM", () => {
     mockRecordFailure.mockResolvedValue(undefined);
     mockReleaseHalfOpenProbe.mockResolvedValue(undefined);
   });
-  afterEach(() => jest.resetAllMocks());
+  afterEach(() => {
+    delete process.env.LLM_PARSING_ENABLED;
+    jest.resetAllMocks();
+  });
+
+  it("makes zero provider, router, or idempotency calls when LLM parsing is disabled", async () => {
+    process.env.LLM_PARSING_ENABLED = "false";
+
+    await expect(parseEmailBatchLLM([input], "disabled-batch", ctx)).rejects.toThrow(
+      "LLM parsing is disabled",
+    );
+
+    expect(mockAcquireIdempotency).not.toHaveBeenCalled();
+    expect(mockSelectProvider).not.toHaveBeenCalled();
+    expect(mockCallGemini).not.toHaveBeenCalled();
+    expect(mockCallOpenAI).not.toHaveBeenCalled();
+    expect(mockLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("blocks statement parsing before provider selection when LLM parsing is disabled", async () => {
+    process.env.LLM_PARSING_ENABLED = "false";
+
+    await expect(parseStatementLLM("statement body", ctx)).rejects.toThrow(
+      "LLM parsing is disabled",
+    );
+
+    expect(mockSelectProvider).not.toHaveBeenCalled();
+    expect(mockCallGemini).not.toHaveBeenCalled();
+    expect(mockCallOpenAI).not.toHaveBeenCalled();
+    expect(mockLogCreate).not.toHaveBeenCalled();
+  });
 
   it("returns validated results on success via gemini and writes LlmCallLog", async () => {
     mockSelectProvider.mockResolvedValue(selectedGemini);

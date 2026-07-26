@@ -78,7 +78,9 @@ export default function OnboardingPage() {
         {step === "syncing" && syncJobId && (
           <div className="flex flex-col gap-4">
             <h2 className="text-xl font-semibold text-[#44475B]">Importing transactions</h2>
-            <p className="text-sm text-[#7C7E8C]">Parsing emails with Gemini. This may take a few minutes.</p>
+            <p className="text-sm text-[#7C7E8C]">
+              Importing transactions with deterministic rules. Emails that need attention will be added to Processing Review.
+            </p>
             <SyncProgressBar
               jobId={syncJobId}
               onComplete={() => router.push("/dashboard")}

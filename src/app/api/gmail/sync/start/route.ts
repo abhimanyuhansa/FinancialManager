@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getGmailToken } from "@/lib/gmail";
+import { getGmailToken, resolveLegacySyncFromDate, type LookbackPeriod } from "@/lib/gmail";
 import { buildGmailQueryFromDB } from "@/lib/gmailQuery";
+import { isLegacyTransactionIngestionEnabled } from "@/lib/featureFlags";
 
 export async function POST(req: Request) {
+  if (!isLegacyTransactionIngestionEnabled()) {
+    return NextResponse.json({ error: "legacy_ingestion_disabled" }, { status: 503 });
+  }
+
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,19 +37,20 @@ export async function POST(req: Request) {
     select: { syncFromDate: true, gmailSyncedAt: true },
   });
 
-  const body = await req.json().catch(() => ({})) as { period?: string };
+  const body = await req.json().catch(() => ({})) as { period?: LookbackPeriod };
 
-  let fromDate: Date;
-  if (user?.gmailSyncedAt) {
-    fromDate = new Date(user.gmailSyncedAt.getTime() - 24 * 60 * 60 * 1000);
-  } else if (body.period) {
-    const months = body.period === "1m" ? 1 : body.period === "3m" ? 3 : 6;
-    fromDate = new Date();
-    fromDate.setMonth(fromDate.getMonth() - months);
-  } else {
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    fromDate = user?.syncFromDate ?? sixMonthsAgo;
+  const { fromDate, persistSelectedStart } = resolveLegacySyncFromDate(
+    {
+      gmailSyncedAt: user?.gmailSyncedAt ?? null,
+      syncFromDate: user?.syncFromDate ?? null,
+    },
+    body.period,
+  );
+  if (persistSelectedStart) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { syncFromDate: fromDate },
+    });
   }
 
   const gmailQuery = await buildGmailQueryFromDB(fromDate);

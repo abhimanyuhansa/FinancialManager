@@ -13,6 +13,7 @@ import { validateProviderResults } from "./validate";
 import { recordSuccess, recordFailure, releaseHalfOpenProbe } from "./circuitBreaker";
 import { estimateInputTokens, estimateOutputTokens, EmailInput, MAX_BATCH_SIZE } from "./prompts";
 import { acquireIdempotencyKey, completeIdempotencyKey, failIdempotencyKey } from "./idempotency";
+import { assertLlmParsingEnabled } from "@/lib/featureFlags";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
@@ -95,6 +96,8 @@ export async function parseEmailBatchLLM(
   ctx: LlmCallContext,
   invocationDeadlineMs?: number
 ): Promise<ParsedEmailItem[]> {
+  assertLlmParsingEnabled();
+
   // If input exceeds MAX_BATCH_SIZE, split into micro-batches and merge results.
   // Limits blast radius: a malformed email in one micro-batch cannot affect others.
   if (inputs.length > MAX_BATCH_SIZE) {
@@ -173,6 +176,8 @@ export async function parseStatementLLM(
   ctx: LlmCallContext,
   invocationDeadlineMs?: number
 ): Promise<StatementItem[]> {
+  assertLlmParsingEnabled();
+
   const estimatedInput = Math.ceil(body.length / 4);
   const estimatedOutput = 200;
 

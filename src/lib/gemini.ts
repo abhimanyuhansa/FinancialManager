@@ -1,3 +1,5 @@
+import { assertLlmParsingEnabled } from "@/lib/featureFlags";
+
 export type ParsedTransaction = {
   merchant: string;
   amount: number;
@@ -135,6 +137,8 @@ export async function parseEmailBatch(
   inputs: BatchInput[],
   apiKey: string
 ): Promise<GeminiEmailResult[]> {
+  assertLlmParsingEnabled();
+
   const prepared = inputs.map((i) => {
     const bodyLengthRaw = i.body.length;
     const truncated = i.body.slice(0, BODY_LIMIT);
@@ -319,6 +323,8 @@ async function callGemini(body: string, apiKey: string, attempt = 0): Promise<Re
 }
 
 export async function parseEmailTransaction(input: ParseInput): Promise<ParsedTransaction | null> {
+  assertLlmParsingEnabled();
+
   const { body, senderName, fallbackDate, apiKey } = input;
 
   const res = await callGemini(body, apiKey);

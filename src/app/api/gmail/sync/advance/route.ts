@@ -19,6 +19,11 @@ import {
   recordShadowDisagreement, recordActiveFailure, type ParseTemplateRow,
 } from "@/lib/parseTemplateCache";
 import { lookupExactCache } from "@/lib/exactResultCache";
+import {
+  isLegacyTransactionIngestionEnabled,
+  isLlmParsingEnabled,
+} from "@/lib/featureFlags";
+import { buildLlmDisabledParseLogs } from "@/lib/legacyIngestion";
 
 const CHUNK_SIZE = 25;
 const BODY_LIMIT = 1500;
@@ -156,6 +161,8 @@ async function advanceJobLocked(
     receivedDate: string;
     subject: string;
     rowId: string;
+    bodyLengthRaw: number;
+    bodyWasTruncated: boolean;
   };
 
   const filteredLogs: Array<{
@@ -204,6 +211,8 @@ async function advanceJobLocked(
       receivedDate: msg.receivedDate,
       subject: msg.subject ?? "",
       rowId,
+      bodyLengthRaw: msg.body.length,
+      bodyWasTruncated: msg.body.length > BODY_LIMIT,
     });
   }
 
@@ -417,139 +426,144 @@ async function advanceJobLocked(
 
         // Tier 3: LLM fallback for emails that need it (includes shadow runs)
         if (llmCandidates.length > 0) {
-          if (lock.lockLost.value) throw new LockLostError(job.id);
-          const batchKey = createHash("sha256")
-            .update(`${job.userId}:sync:v1:${llmCandidates.map((e) => e.msgId).sort().join(",")}`)
-            .digest("hex");
-          const llmContext = { userId: job.userId, syncJobId: job.id, operationType: "sync" as const };
+          if (!isLlmParsingEnabled()) {
+            // The static-only MVP treats deterministic misses as completed review
+            // items. No body is sent externally and these rows do not retry.
+            pendingLogs.push(...buildLlmDisabledParseLogs(llmCandidates, job));
+          } else {
+            if (lock.lockLost.value) throw new LockLostError(job.id);
+            const batchKey = createHash("sha256")
+              .update(`${job.userId}:sync:v1:${llmCandidates.map((e) => e.msgId).sort().join(",")}`)
+              .digest("hex");
+            const llmContext = { userId: job.userId, syncJobId: job.id, operationType: "sync" as const };
 
-          let results: Awaited<ReturnType<typeof parseEmailBatchLLM>>;
-          try {
-            results = await parseEmailBatchLLM(
-              llmCandidates.map((e, idx) => ({
-                emailIndex: idx,
-                body: e.sanitizedBody,
-                senderName: e.senderName,
-                subject: e.subject,
-                fallbackDate: e.receivedDate,
-              })),
-              batchKey,
-              llmContext,
-              invocationDeadlineMs
-            );
-          } catch (llmErr) {
-            // LLM batch failed entirely (both providers exhausted or contract error).
-            // Log the error but do NOT mark these messages as processed — leave them
-            // for the next tick to retry rather than silently dropping transactions.
-            const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
-            for (const email of llmCandidates) {
-              pendingLogs.push({
+            let results: Awaited<ReturnType<typeof parseEmailBatchLLM>>;
+            try {
+              results = await parseEmailBatchLLM(
+                llmCandidates.map((e, idx) => ({
+                  emailIndex: idx,
+                  body: e.sanitizedBody,
+                  senderName: e.senderName,
+                  subject: e.subject,
+                  fallbackDate: e.receivedDate,
+                })),
+                batchKey,
+                llmContext,
+                invocationDeadlineMs
+              );
+            } catch (llmErr) {
+              // An enabled LLM batch failed transiently. Keep these messages
+              // retryable; disabled LLMs use the completed review outcome above.
+              const errMsg = llmErr instanceof Error ? llmErr.message : String(llmErr);
+              for (const email of llmCandidates) {
+                pendingLogs.push({
+                  ...buildLogBase(email, job),
+                  outcome: "error",
+                  bodyLengthRaw: email.body.length,
+                  bodyLengthSent: email.body.length,
+                  wasTruncated: email.body.length >= BODY_LIMIT,
+                  batchSize: llmCandidates.length,
+                  resolvedBy: "llm",
+                  geminiConfidence: 0,
+                  parsedMerchant: errMsg.slice(0, 200),
+                });
+                llmFailedRowIds.add(email.rowId);
+              }
+              results = [];
+            }
+
+            for (const result of results) {
+              const email = llmCandidates[result.emailIndex];
+              if (!email) continue;
+
+              const bodyLen = email.body.length;
+              const logBase = {
                 ...buildLogBase(email, job),
-                outcome: "error",
-                bodyLengthRaw: email.body.length,
-                bodyLengthSent: email.body.length,
-                wasTruncated: email.body.length >= BODY_LIMIT,
+                bodyLengthRaw: bodyLen,
+                bodyLengthSent: bodyLen,
+                wasTruncated: bodyLen >= BODY_LIMIT,
                 batchSize: llmCandidates.length,
-                resolvedBy: "llm",
-                geminiConfidence: 0,
-                parsedMerchant: errMsg.slice(0, 200),
-              });
-              llmFailedRowIds.add(email.rowId);
-            }
-            results = [];
-          }
+              };
 
-          for (const result of results) {
-            const email = llmCandidates[result.emailIndex];
-            if (!email) continue;
+              const shadowEmail = email as typeof email & {
+                _shadowApplied?: ReturnType<typeof applyTemplate>;
+                _shadowKey?: string;
+                _shadowTmplId?: string;
+                _shadowTmplStatus?: string;
+              };
 
-            const bodyLen = email.body.length;
-            const logBase = {
-              ...buildLogBase(email, job),
-              bodyLengthRaw: bodyLen,
-              bodyLengthSent: bodyLen,
-              wasTruncated: bodyLen >= BODY_LIMIT,
-              batchSize: llmCandidates.length,
-            };
+              if (result.outcome !== "parsed" || !result.transactions.length) {
+                pendingLogs.push({ ...logBase, outcome: result.outcome, resolvedBy: "llm" });
 
-            const shadowEmail = email as typeof email & {
-              _shadowApplied?: ReturnType<typeof applyTemplate>;
-              _shadowKey?: string;
-              _shadowTmplId?: string;
-              _shadowTmplStatus?: string;
-            };
-
-            if (result.outcome !== "parsed" || !result.transactions.length) {
-              pendingLogs.push({ ...logBase, outcome: result.outcome, resolvedBy: "llm" });
-
-              // Shadow disagreement: LLM couldn't parse but template had a result
-              if (shadowEmail._shadowTmplId && shadowEmail._shadowKey) {
-                await recordShadowDisagreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, shadowEmail._shadowTmplStatus ?? "SHADOW", invocationMap);
-              }
-              continue;
-            }
-
-            for (const tx of result.transactions) {
-              const { category: resolvedCategory, subCategory: resolvedSubCategory } =
-                await lookupAndUpsertMerchant(tx.merchant, tx.category, tx.subCategory ?? null, tx.confidence ?? 0);
-
-              const upsertResult = await upsertTransactionV2(prisma, {
-                userId: job.userId, gmailMsgId: email.msgId, date: new Date(tx.date),
-                merchant: tx.merchant, amount: tx.amount, type: tx.type,
-                currency: tx.currency, category: resolvedCategory, source: "gmail",
-                sourceRank: 1, confidence: tx.confidence, needsReview: tx.needsReview,
-                subCategory: resolvedSubCategory ?? undefined,
-                lineItems: tx.lineItems ?? undefined,
-              });
-
-              const outcome = upsertResult.action === "inserted" ? "inserted"
-                : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
-              if (outcome === "inserted") newTransactions++;
-
-              pendingLogs.push({
-                ...logBase, outcome, geminiConfidence: tx.confidence,
-                parsedMerchant: tx.merchant, parsedAmount: tx.amount,
-                transactionId: upsertResult.id, resolvedBy: "llm",
-              });
-
-              // Template learning: upsert new template from Gemini result if templates provided
-              if (result.subjectTemplate && result.bodyTemplate && !shadowEmail._shadowTmplId) {
-                const hash = templateHash(email.subject, email.body);
-                const geminiApplied = {
-                  amount: tx.amount,
-                  currency: tx.currency,
-                  date: tx.date,
-                  transactionType: tx.type as "expense" | "income",
-                  ...(tx.merchant ? { merchant: tx.merchant } : {}),
-                };
-                const extractors = deriveExtractors(
-                  email.subject, email.body,
-                  result.bodyTemplate, result.subjectTemplate,
-                  geminiApplied
-                );
-                if (Object.keys(extractors).length >= 2) {
-                  await upsertTemplate(
-                    job.userId, email.senderDomain, hash,
-                    result.subjectTemplate, result.bodyTemplate,
-                    extractors, invocationMap
-                  );
-                }
-              }
-
-              // Shadow run: compare template result with Gemini result
-              if (shadowEmail._shadowApplied && shadowEmail._shadowTmplId && shadowEmail._shadowKey) {
-                const geminiForCompare = {
-                  amount: tx.amount,
-                  currency: tx.currency,
-                  date: tx.date,
-                  transactionType: tx.type as "expense" | "income",
-                  ...(tx.merchant ? { merchant: tx.merchant } : {}),
-                };
-                const agree = compareOutputs(shadowEmail._shadowApplied, geminiForCompare);
-                if (agree) {
-                  await recordShadowAgreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, invocationMap);
-                } else {
+                // Shadow disagreement: LLM couldn't parse but template had a result
+                if (shadowEmail._shadowTmplId && shadowEmail._shadowKey) {
                   await recordShadowDisagreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, shadowEmail._shadowTmplStatus ?? "SHADOW", invocationMap);
+                }
+                continue;
+              }
+
+              for (const tx of result.transactions) {
+                const { category: resolvedCategory, subCategory: resolvedSubCategory } =
+                  await lookupAndUpsertMerchant(tx.merchant, tx.category, tx.subCategory ?? null, tx.confidence ?? 0);
+
+                const upsertResult = await upsertTransactionV2(prisma, {
+                  userId: job.userId, gmailMsgId: email.msgId, date: new Date(tx.date),
+                  merchant: tx.merchant, amount: tx.amount, type: tx.type,
+                  currency: tx.currency, category: resolvedCategory, source: "gmail",
+                  sourceRank: 1, confidence: tx.confidence, needsReview: tx.needsReview,
+                  subCategory: resolvedSubCategory ?? undefined,
+                  lineItems: tx.lineItems ?? undefined,
+                });
+
+                const outcome = upsertResult.action === "inserted" ? "inserted"
+                  : upsertResult.action === "upgraded" ? "upgraded" : "skipped_duplicate";
+                if (outcome === "inserted") newTransactions++;
+
+                pendingLogs.push({
+                  ...logBase, outcome, geminiConfidence: tx.confidence,
+                  parsedMerchant: tx.merchant, parsedAmount: tx.amount,
+                  transactionId: upsertResult.id, resolvedBy: "llm",
+                });
+
+                // Template learning: upsert new template from Gemini result if templates provided
+                if (result.subjectTemplate && result.bodyTemplate && !shadowEmail._shadowTmplId) {
+                  const hash = templateHash(email.subject, email.body);
+                  const geminiApplied = {
+                    amount: tx.amount,
+                    currency: tx.currency,
+                    date: tx.date,
+                    transactionType: tx.type as "expense" | "income",
+                    ...(tx.merchant ? { merchant: tx.merchant } : {}),
+                  };
+                  const extractors = deriveExtractors(
+                    email.subject, email.body,
+                    result.bodyTemplate, result.subjectTemplate,
+                    geminiApplied
+                  );
+                  if (Object.keys(extractors).length >= 2) {
+                    await upsertTemplate(
+                      job.userId, email.senderDomain, hash,
+                      result.subjectTemplate, result.bodyTemplate,
+                      extractors, invocationMap
+                    );
+                  }
+                }
+
+                // Shadow run: compare template result with Gemini result
+                if (shadowEmail._shadowApplied && shadowEmail._shadowTmplId && shadowEmail._shadowKey) {
+                  const geminiForCompare = {
+                    amount: tx.amount,
+                    currency: tx.currency,
+                    date: tx.date,
+                    transactionType: tx.type as "expense" | "income",
+                    ...(tx.merchant ? { merchant: tx.merchant } : {}),
+                  };
+                  const agree = compareOutputs(shadowEmail._shadowApplied, geminiForCompare);
+                  if (agree) {
+                    await recordShadowAgreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, invocationMap);
+                  } else {
+                    await recordShadowDisagreement(shadowEmail._shadowTmplId, shadowEmail._shadowKey, shadowEmail._shadowTmplStatus ?? "SHADOW", invocationMap);
+                  }
                 }
               }
             }
@@ -604,12 +618,14 @@ async function advanceJobLocked(
 }
 
 export async function GET(req: NextRequest) {
+  if (!isLegacyTransactionIngestionEnabled()) {
+    return NextResponse.json({ error: "legacy_ingestion_disabled" }, { status: 503 });
+  }
+
   // Auth: accept valid session (client) OR Bearer token (cron)
   const authHeader = req.headers.get("authorization");
   const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  const querySecret = req.nextUrl.searchParams.get("secret");
-  const providedToken = bearerToken ?? querySecret;
-  const isCron = !!process.env.CRON_SECRET && providedToken === process.env.CRON_SECRET;
+  const isCron = !!process.env.CRON_SECRET && bearerToken === process.env.CRON_SECRET;
 
   let sessionUserId: string | null = null;
   if (!isCron) {

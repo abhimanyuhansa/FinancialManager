@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 // Guard: this endpoint must never be accessible in production
 // It is only enabled when CRON_SECRET matches, providing a safety gate
 export async function POST(req: NextRequest) {
-  if (process.env.NODE_ENV === "production" && !process.env.ENABLE_TEST_AUTH_SEED) {
+  if (process.env.NODE_ENV === "production" || !process.env.ENABLE_TEST_AUTH_SEED) {
     return NextResponse.json({ error: "Not available" }, { status: 404 });
   }
 
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       domain: new URL(process.env.NEXTAUTH_URL ?? "http://localhost:3000").hostname,
       path: "/",
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: false,
       sameSite: "Lax" as const,
       expires: Math.floor(expires.getTime() / 1000),
     },

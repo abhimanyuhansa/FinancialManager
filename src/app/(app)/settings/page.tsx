@@ -76,6 +76,7 @@ function outcomeColor(outcome: string): string {
   if (outcome === "upgraded") return "text-blue-700 bg-blue-50";
   if (outcome === "skipped_duplicate") return "text-[#7C7E8C] bg-[#F8F8F8]";
   if (outcome.startsWith("skipped_")) return "text-orange-700 bg-orange-50";
+  if (outcome === "unparsed_llm_disabled") return "text-amber-800 bg-amber-100";
   if (outcome.startsWith("failed_") || outcome === "parse_failed") return "text-[#ED5533] bg-red-50";
   return "text-[#7C7E8C] bg-[#F8F8F8]";
 }
@@ -378,7 +379,7 @@ export default function SettingsPage() {
   const [parseLogsTotal, setParseLogsTotal] = useState(0);
   const [parseLogsPage, setParseLogsPage] = useState(1);
   const [parseLogsLoading, setParseLogsLoading] = useState(false);
-  const [parseOutcomeFilter, setParseOutcomeFilter] = useState("");
+  const [parseOutcomeFilter, setParseOutcomeFilter] = useState("unparsed_llm_disabled");
   const [parseDomainFilter, setParseDomainFilter] = useState("");
   const [parseMerchantFilter, setParseMerchantFilter] = useState("");
   const [reprocessingId, setReprocessingId] = useState<string | null>(null);
@@ -722,7 +723,7 @@ export default function SettingsPage() {
               tab === t ? "text-[#04B488] border-b-2 border-[#04B488]" : "text-[#7C7E8C] hover:text-[#44475B]"
             }`}
           >
-            {t === "filters" ? "Email Filters" : t === "audit" ? "Reconciliation Audit" : t === "passwords" ? "Statement Passwords" : t === "parse-logs" ? "Parse Logs" : "Categories"}
+            {t === "filters" ? "Legacy Filters" : t === "audit" ? "Reconciliation Audit" : t === "passwords" ? "Statement Passwords" : t === "parse-logs" ? "Processing Review" : "Categories"}
           </button>
         ))}
       </div>
@@ -730,6 +731,12 @@ export default function SettingsPage() {
       {/* ── Email Filters Tab ── */}
       {tab === "filters" && (
         <>
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-medium text-amber-900">Legacy configuration</p>
+            <p className="mt-1 text-xs text-amber-800">
+              These entries no longer control Gmail parsing. Active exclusion rules and deterministic parsers are configured separately.
+            </p>
+          </div>
           {/* Add filter form */}
           <div className="bg-white rounded-lg border border-[#E9E9EB]  p-5 mb-6">
             <h2 className="text-sm font-semibold text-[#44475B] mb-3">Add Filter</h2>
@@ -957,18 +964,30 @@ export default function SettingsPage() {
       {/* ── Parse Logs Tab ── */}
       {tab === "parse-logs" && (
         <div>
-          <h2 className="text-sm font-semibold text-[#44475B] mb-1">Parse Logs</h2>
+          <h2 className="text-sm font-semibold text-[#44475B] mb-1">Processing Review</h2>
           <p className="text-sm text-[#7C7E8C] mb-4">
-            Every email that entered the parsing pipeline. Use this to debug missing transactions. Logs are kept for 30 days.
+            Deterministic parser misses are completed without an LLM call and kept here for review. Open the Gmail source to inspect the email. Logs are kept for 30 days.
           </p>
 
           <div className="flex flex-wrap gap-2 mb-4">
+            <button
+              type="button"
+              onClick={() => setParseOutcomeFilter("unparsed_llm_disabled")}
+              className={`px-3 py-2 rounded-lg border text-sm ${
+                parseOutcomeFilter === "unparsed_llm_disabled"
+                  ? "border-amber-400 bg-amber-50 text-amber-900"
+                  : "border-[#E9E9EB] text-[#7C7E8C]"
+              }`}
+            >
+              Needs review
+            </button>
             <select
               value={parseOutcomeFilter}
               onChange={(e) => setParseOutcomeFilter(e.target.value)}
               className="px-3 py-2 rounded-lg border border-[#E9E9EB] text-sm focus:outline-none focus:ring-2 focus:ring-[#04B488]"
             >
               <option value="">All outcomes</option>
+              <option value="unparsed_llm_disabled">Needs review (deterministic miss)</option>
               <option value="inserted">Inserted</option>
               <option value="upgraded">Upgraded</option>
               <option value="skipped_duplicate">Skipped (duplicate)</option>
@@ -1028,7 +1047,7 @@ export default function SettingsPage() {
                           <td className="px-5 py-2.5 text-sm text-[#44475B]">{log.senderDomain}</td>
                           <td className="px-5 py-2.5">
                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${outcomeColor(log.outcome)}`}>
-                              {log.outcome}
+                              {log.outcome === "unparsed_llm_disabled" ? "Needs review" : log.outcome}
                             </span>
                           </td>
                           <td className="px-5 py-2.5 text-sm text-[#44475B]">{log.parsedMerchant ?? "—"}</td>
@@ -1422,24 +1441,6 @@ export default function SettingsPage() {
           {allCleared ? "All data cleared" : clearingAll ? "Clearing…" : "Clear All Data"}
         </button>
       </div>
-
-      {/* Dev-only advance sync */}
-      {process.env.NODE_ENV === "development" && (
-        <div className="mt-8 p-4 border border-dashed border-[#E9E9EB] rounded-lg">
-          <p className="text-xs text-[#7C7E8C] font-mono mb-2">DEV ONLY</p>
-          <button
-            onClick={async () => {
-              const secret = process.env.NEXT_PUBLIC_CRON_SECRET ?? "";
-              const res = await fetch(`/api/gmail/sync/advance?secret=${secret}`);
-              const data = await res.json();
-              alert(JSON.stringify(data, null, 2));
-            }}
-            className="px-4 py-2 text-sm bg-gray-800 text-white rounded-lg hover:bg-gray-700"
-          >
-            Advance Sync (dev)
-          </button>
-        </div>
-      )}
 
       {/* ── Categories Tab ── */}
       {tab === "categories" && (

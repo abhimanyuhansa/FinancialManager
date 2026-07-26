@@ -102,6 +102,31 @@ export function buildScanFromDate(period: LookbackPeriod, now: Date = new Date()
   return d;
 }
 
+export function resolveLegacySyncFromDate(
+  user: { gmailSyncedAt: Date | null; syncFromDate: Date | null },
+  period?: LookbackPeriod,
+  now: Date = new Date(),
+): { fromDate: Date; persistSelectedStart: boolean } {
+  if (user.gmailSyncedAt) {
+    return {
+      fromDate: new Date(user.gmailSyncedAt.getTime() - 24 * 60 * 60 * 1000),
+      persistSelectedStart: false,
+    };
+  }
+
+  if (period) {
+    return {
+      fromDate: buildScanFromDate(period, now),
+      persistSelectedStart: true,
+    };
+  }
+
+  return {
+    fromDate: user.syncFromDate ?? buildScanFromDate("6m", now),
+    persistSelectedStart: false,
+  };
+}
+
 export type FullMessage = {
   id: string;
   body: string;

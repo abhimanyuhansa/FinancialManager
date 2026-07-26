@@ -8,6 +8,7 @@ import {
   CandidateTransaction,
 } from "@/lib/reconcile";
 import { parseStatementLLM } from "@/lib/llm";
+import { isLlmParsingEnabled } from "@/lib/featureFlags";
 
 const TWO_DAY_MS = 2 * 24 * 60 * 60 * 1000;
 
@@ -57,6 +58,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = session.user.id;
+
+  if (!isLlmParsingEnabled()) {
+    return NextResponse.json(
+      { error: "LLM parsing is disabled; statement reconciliation is deferred" },
+      { status: 503 },
+    );
+  }
 
   const { gmailMsgId } = (await req.json()) as { gmailMsgId?: string };
   if (!gmailMsgId) {
