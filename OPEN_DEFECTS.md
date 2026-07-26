@@ -1,34 +1,48 @@
 # Open Defects
 
-## Release blockers
-
-### DEF-1 — Real Gmail static-only flow not yet demonstrated
-
-- Severity: High
-- Status: Open
-- Impact: The implementation and focused tests pass, but the required six-month Gmail-to-transactions run has not been executed against real Gmail and Neon.
-- Cause: The updated commit has not yet been deployed and exercised through the owner-approved live smoke test.
-- Workaround: Deploy only after local gates and migration status pass, then run the bounded manual flow without cleanup or synthetic data operations.
-
-### DEF-2 — Required production feature flags are not confirmed
-
-- Severity: High
-- Status: Open
-- Impact: Repository behavior is safe for LLM calls, but the deployed environment has not been inspected or changed.
-- Workaround: Before deployment, set `LLM_PARSING_ENABLED=false`, set `LEGACY_TRANSACTION_INGESTION_ENABLED=true`, and unset `NEXT_PUBLIC_CRON_SECRET`.
-
 ## Security follow-up
 
-### DEF-3 — Historical OpenRouter key revocation is external
+### DEF-1 — Revoke and re-authorize the production Google OAuth grant
+
+- Severity: High
+- Status: Owner action required
+- Impact: Before the Auth.js logger was hardened, production diagnostic output included OAuth token material. The application no longer logs that data, but previously issued credentials must be treated as exposed.
+- Workaround: Revoke the application's Google account access, re-authorize it, and verify that historical deployment-log retention meets the owner's security policy.
+
+### DEF-2 — Historical OpenRouter key revocation is external
 
 - Severity: High
 - Status: Owner action required
 - Impact: A previously exposed key may remain usable even though OpenRouter is not used by this code.
 - Workaround: Revoke the key in the OpenRouter account and do not add a replacement to this application.
 
+## Schema and data follow-up
+
+### DEF-3 — Five migrations are pending on live Neon
+
+- Severity: High
+- Status: Open
+- Impact: The generated Prisma model is ahead of the live schema. The application currently needs a compatibility omit for two unused Account fields.
+- Cause: The pending chain includes parse-template replay migrations with destructive operations, so automated production deployment was rejected.
+- Workaround: Review and split the pending chain into an explicitly approved non-destructive production migration. Do not run `migrate deploy` against live Neon as-is.
+
+### DEF-4 — Seven historical duplicate parser-miss rows remain
+
+- Severity: Medium
+- Status: Open
+- Impact: `ParseLog` has 1,523 raw `unparsed_llm_disabled` rows for 1,516 Gmail messages.
+- Workaround: Processing Review returns each Gmail message once and new syncs prevent further duplicates. No live cleanup was performed; remove the seven rows only through a separately approved, targeted migration.
+
+### DEF-5 — Historical paused sync job remains visible
+
+- Severity: Low
+- Status: Open
+- Impact: A pre-smoke-test paused job at 20/3,386 can still appear in the global sync banner even though later jobs completed successfully.
+- Workaround: Dismiss the banner. Resolve or archive the specific job only through a separately approved, non-destructive operational action.
+
 ## Environment limitation
 
-### DEF-4 — Local runtime cannot use the temporary Unix-socket PostgreSQL database
+### DEF-6 — Local runtime cannot use the temporary Unix-socket PostgreSQL database
 
 - Severity: Medium
 - Status: Open

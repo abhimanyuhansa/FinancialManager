@@ -4,6 +4,7 @@ Updated: 2026-07-26
 
 ## What works
 
+- Production is deployed at `https://financial-manager-ebon.vercel.app`.
 - The existing Gmail ingestion path is enabled for the interim single-user MVP.
 - LLM parsing is disabled unless `LLM_PARSING_ENABLED` is exactly `"true"`.
 - Email and statement LLM entry points fail before router, quota, idempotency, provider, or network work when disabled.
@@ -13,6 +14,8 @@ Updated: 2026-07-26
 - Cron advancement accepts a server-side Bearer secret only. URL query secrets and `NEXT_PUBLIC_CRON_SECRET` application usage are removed.
 - `/api/test/auth-seed` is structurally unavailable in production.
 - The legacy EmailFilter screen is clearly labelled as legacy and not part of Gmail parsing.
+- Returning Google sign-ins refresh the stored Gmail account tokens without erasing an existing refresh token when Google omits a replacement.
+- Processing Review and new parser-miss writes are deduplicated by Gmail message ID.
 
 ## How to run
 
@@ -34,23 +37,24 @@ npm run dev
 ## Verification
 
 - `npm run lint` — passed.
-- `npm test -- --runInBand` — 32 suites, 267 tests passed.
+- `npm test -- --runInBand` — 32 suites, 270 tests passed.
 - `npx prisma validate` and `npx prisma generate` — passed.
 - All 18 migrations applied and reported up to date on an isolated PostgreSQL 17 database.
+- Read-only live `npx prisma migrate status` — 18 known migrations, 5 pending. No live migration was applied because the pending chain contains destructive replay operations.
 - `npm run build` — passed.
 - Production application startup — passed.
 - `/api/health` — HTTP 200.
 - Production `/api/test/auth-seed` with its enable flag set — HTTP 404.
 - `/api/gmail/sync/advance?secret=...` — HTTP 401.
 - Focused static-only API and domain tests — passed.
+- Production flags were explicitly set to `LLM_PARSING_ENABLED=false` and `LEGACY_TRANSACTION_INGESTION_ENABLED=true`.
+- Six-month Gmail smoke test — 3,369/3,369 messages processed, 642 new transactions, 0 skipped, 0 encrypted-blocked.
+- Transactions increased from 7 to 649; all 649 Gmail source IDs are distinct.
+- `LlmCallLog` remained at 402 before and after every scan: zero new LLM calls.
+- Processing Review contains 1,516 distinct deterministic misses. Seven historical duplicate rows were created by the first incremental run before the deduplication fix; the deployed API displays each message once.
+- Two post-baseline incremental scans each processed 20/20 messages, created 0 transactions, and left the transaction and LLM counts unchanged.
+- The final incremental scan added no parser-miss rows and advanced `gmailSyncedAt` exactly to its `startedAt` (`2026-07-26T15:10:51.282Z`).
 
 ## Next task
 
-Complete the current Gmail slice with the owner-approved production smoke test using the existing live Neon database and Google OAuth configuration. Confirm:
-
-1. Static-parser transactions are created and deduplicated.
-2. Provider call count remains zero.
-3. Deterministic misses complete once and appear in Processing Review.
-4. The successful watermark drives the next incremental scan.
-
-Do not start the broader review/classification slice until this real flow passes.
+Resolve the owner actions in `OPEN_DEFECTS.md`, then review and split the five pending live migrations into an approved non-destructive deployment path. Do not run the current replay chain against live Neon as-is.
