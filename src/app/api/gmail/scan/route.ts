@@ -1,33 +1,59 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getGmailToken, fetchMessageIdPage, buildScanFromDate, LookbackPeriod } from "@/lib/gmail";
-import { buildGmailQueryFromDB } from "@/lib/gmailQuery";
+import { prisma } from "@/lib/prisma";
+import { createScanRun } from "@/lib/scan/scanCreateService";
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const userId = session.user.id;
 
-  const body = (await req.json()) as { period?: LookbackPeriod };
-  const period: LookbackPeriod = body.period ?? "6m";
+  const body = (await request.json()) as Record<string, unknown>;
+  const { clientRequestId, filterName, gmailQuery, fromDate, toDate, scanLimit } = body;
 
-  const accessToken = await getGmailToken(userId);
-  if (!accessToken) {
-    return NextResponse.json({ error: "No Gmail token — please sign in again" }, { status: 401 });
+  if (
+    typeof clientRequestId !== "string" ||
+    !clientRequestId ||
+    typeof filterName !== "string" ||
+    !filterName ||
+    typeof gmailQuery !== "string" ||
+    !gmailQuery ||
+    typeof fromDate !== "string" ||
+    !fromDate ||
+    typeof toDate !== "string" ||
+    !toDate
+  ) {
+    return NextResponse.json(
+      { error: "clientRequestId, filterName, gmailQuery, fromDate, toDate are required" },
+      { status: 400 },
+    );
   }
 
-  const fromDate = buildScanFromDate(period);
-  const gmailQuery = await buildGmailQueryFromDB(fromDate);
+  const account = await prisma.account.findFirst({
+    where: { userId: session.user.id, provider: "google", disconnectedAt: null },
+    select: { id: true },
+    orderBy: { id: "asc" },
+  });
 
-  let totalCount = 0;
-  let pageToken: string | undefined = undefined;
-  do {
-    const page = await fetchMessageIdPage(accessToken, gmailQuery, pageToken);
-    totalCount += page.messageIds.length;
-    pageToken = page.nextPageToken ?? undefined;
-  } while (pageToken);
+  if (!account) {
+    return NextResponse.json(
+      { error: "No connected Google account found" },
+      { status: 422 },
+    );
+  }
 
-  return NextResponse.json({ period, fromDate: fromDate.toISOString(), totalCount });
+  const result = await createScanRun({
+    userId: session.user.id,
+    gmailAccountId: account.id,
+    clientRequestId,
+    filterName,
+    gmailQuery,
+    fromDate: new Date(fromDate),
+    toDate: new Date(toDate),
+    scanLimit: typeof scanLimit === "number" ? scanLimit : undefined,
+  });
+
+  return NextResponse.json(result, { status: result.created ? 201 : 200 });
 }
+
