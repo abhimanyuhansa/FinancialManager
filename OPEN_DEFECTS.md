@@ -5,10 +5,8 @@
 ### DEF-1 — Five migrations are pending on live Neon
 
 - Severity: High
-- Status: Open
-- Impact: The generated Prisma model is ahead of the live schema. The application currently needs a compatibility omit for two unused Account fields, and the new Phase 1A status endpoint cannot be exercised against real scan rows.
-- Cause: The three parse-template bridge migrations contain guarded `DROP` operations for an empty clean-replay bootstrap. The SQL audit indicates they are no-ops on a valid already-migrated database, but this has not yet been proven against an isolated clone of the current live schema and data.
-- Workaround: Replay and fingerprint the exact five-migration chain on an isolated production-like Neon branch. Do not run `migrate deploy` against live Neon until the result is reviewed and explicitly approved.
+- Status: Resolved
+- Resolved: Proven on `phase1a-test` Neon branch (all 5 applied cleanly — parse-template bridge migrations were no-ops on the already-migrated database; phase1a + LLM drift migrations were additive). Applied to live Neon on 2026-08-02. Live schema is fully up to date with 23 migrations applied.
 
 ### DEF-2 — Seven historical duplicate parser-miss rows remain
 
