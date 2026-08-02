@@ -17,9 +17,9 @@ export async function POST(request: Request) {
     typeof clientRequestId !== "string" ||
     !clientRequestId ||
     typeof filterName !== "string" ||
-    !filterName ||
+    !filterName.trim() ||
     typeof gmailQuery !== "string" ||
-    !gmailQuery ||
+    !gmailQuery.trim() ||
     typeof fromDate !== "string" ||
     !fromDate ||
     typeof toDate !== "string" ||

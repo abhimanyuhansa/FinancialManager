@@ -122,4 +122,11 @@ describe("POST /api/gmail/scan", () => {
     const body = await res.json();
     expect(body.error).toMatch(/token|sign in/i);
   });
+
+  it("returns 400 when gmailQuery is blank after trimming", async () => {
+    const res = await POST(makeRequest({ ...validBody, gmailQuery: "   " }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/gmailQuery/i);
+  });
 });
