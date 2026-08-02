@@ -167,4 +167,16 @@ describe("POST /api/gmail/scan", () => {
     const res = await POST(makeRequest({ ...validBody, filterName: "a".repeat(255) }));
     expect(res.status).toBe(201);
   });
+
+  it("returns 400 when request body is malformed JSON", async () => {
+    const req = new Request("http://localhost/api/gmail/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "this is not json{{{",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/invalid.*json|malformed|parse/i);
+  });
 });
