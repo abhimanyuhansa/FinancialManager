@@ -52,6 +52,15 @@ export async function POST(request: Request) {
     );
   }
 
+  if (scanLimit !== undefined) {
+    if (typeof scanLimit !== "number" || !Number.isInteger(scanLimit) || scanLimit <= 0) {
+      return NextResponse.json(
+        { error: "scanLimit must be a positive integer" },
+        { status: 400 },
+      );
+    }
+  }
+
   const parsedFrom = new Date(fromDate);
   const parsedTo = new Date(toDate);
 

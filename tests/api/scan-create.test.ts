@@ -129,4 +129,30 @@ describe("POST /api/gmail/scan", () => {
     const body = await res.json();
     expect(body.error).toMatch(/gmailQuery/i);
   });
+
+  it("returns 400 when scanLimit is 0", async () => {
+    const res = await POST(makeRequest({ ...validBody, scanLimit: 0 }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/scanLimit/i);
+  });
+
+  it("returns 400 when scanLimit is negative", async () => {
+    const res = await POST(makeRequest({ ...validBody, scanLimit: -5 }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/scanLimit/i);
+  });
+
+  it("returns 400 when scanLimit is a float", async () => {
+    const res = await POST(makeRequest({ ...validBody, scanLimit: 1.5 }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/scanLimit/i);
+  });
+
+  it("accepts a valid positive integer scanLimit", async () => {
+    const res = await POST(makeRequest({ ...validBody, scanLimit: 100 }));
+    expect(res.status).toBe(201);
+  });
 });
