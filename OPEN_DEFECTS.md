@@ -89,3 +89,10 @@
 - Status: Open (accepted for MVP)
 - Impact: Each `POST /api/gmail/scan` creates a new `UserEmailFilter` + `EmailFilterVersion` even when `filterName` and `gmailQuery` are identical to prior scans. No unique constraint on `(userId, gmailAccountId, name)`. Rows accumulate indefinitely with no cleanup path.
 - Workaround: Acceptable for single-user MVP. See DECISIONS.md — "UserEmailFilter created per-scan". Address before adding a second user or building filter-management UI.
+
+### DEF-14 — EmailFilterVersion.version hardcoded to 1 — inextensible if filters become reusable
+
+- Severity: Low
+- Status: Open (accepted for MVP)
+- Impact: Every `EmailFilterVersion` row is created with `version=1`. The schema has `@@unique([emailFilterId, version])` and `supersedesVersionId` for a versioning chain. Under the current per-scan filter design (DEF-13) each filter id is unique so `version:1` never collides. If filters are ever made reusable, a second version for the same filter would hit P2002 on `(emailFilterId, 1)`.
+- Workaround: Acceptable for MVP. Fix together with DEF-13 when filter management is implemented.

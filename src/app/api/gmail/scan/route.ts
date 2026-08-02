@@ -118,7 +118,7 @@ export async function POST(request: Request) {
       gmailQuery,
       fromDate: parsedFrom,
       toDate: parsedTo,
-      scanLimit: typeof scanLimit === "number" ? scanLimit : undefined,
+      scanLimit: scanLimit as number | undefined,
     });
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("Invalid persisted scan status:")) {
