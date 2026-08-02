@@ -34,3 +34,23 @@ export type ManualClassification =
 export function isScanRunStatus(value: string): value is ScanRunStatus {
   return (SCAN_RUN_STATUSES as readonly string[]).includes(value);
 }
+
+export type CreateScanRequest = {
+  userId: string;
+  gmailAccountId: string;
+  clientRequestId: string;
+  filterName: string;
+  gmailQuery: string;
+  fromDate: Date;
+  toDate: Date;
+  scanLimit?: number;
+};
+
+export type CreateScanResult = {
+  scanRunId: string;
+  status: ScanRunStatus;
+  /** true = newly created; false = existing scan returned (idempotent) */
+  created: boolean;
+};
+
+export const CLIENT_REQUEST_ID_MAX_LENGTH = 500;
