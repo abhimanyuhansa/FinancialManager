@@ -74,3 +74,18 @@
 - Status: Open
 - Impact: Prisma migration CLI verification passes locally, but the runtime uses `@prisma/adapter-neon`, which expects a Neon-compatible connection and cannot exercise database-backed HTTP routes against the temporary socket database.
 - Workaround: Use a dedicated Neon test branch/project for runtime and browser E2E.
+
+## Phase 1A second-review findings (2026-08-02)
+
+### DEF-12 — Token-unavailable returns 422 not 401 — re-auth interceptors may miss it
+
+- Severity: Medium
+- Status: Resolved (by documentation)
+- Resolved: Intentional — 422 is semantically correct for an authenticated session with a missing OAuth token. Documented in DECISIONS.md under "Token-unavailable returns 422, not 401". Callers must handle 422 bodies containing `"Gmail token"` to trigger re-authentication.
+
+### DEF-13 — UserEmailFilter grows unboundedly (one row per scan, no deduplication)
+
+- Severity: Low
+- Status: Open (accepted for MVP)
+- Impact: Each `POST /api/gmail/scan` creates a new `UserEmailFilter` + `EmailFilterVersion` even when `filterName` and `gmailQuery` are identical to prior scans. No unique constraint on `(userId, gmailAccountId, name)`. Rows accumulate indefinitely with no cleanup path.
+- Workaround: Acceptable for single-user MVP. See DECISIONS.md — "UserEmailFilter created per-scan". Address before adding a second user or building filter-management UI.

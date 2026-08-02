@@ -20,3 +20,23 @@
 - Auth logging records only safe error classifications. OAuth account objects, tokens, email addresses, and stack dumps are prohibited.
 - Parser misses are unique operationally by user, outcome, and Gmail message ID. New writes filter existing misses, and Processing Review returns one row per Gmail message even where historical duplicates exist.
 - The successful sync job `startedAt` is the Gmail watermark. Incremental scans retain the existing one-day overlap and rely on transaction and review deduplication.
+
+## 2026-08-02 — Phase 1A scan-creation API contracts
+
+### Token-unavailable returns 422, not 401
+
+`POST /api/gmail/scan` returns HTTP 422 (not 401) when `getGmailToken` returns null.
+
+**Rationale:** The session is already authenticated (the Auth.js session check returned a valid session). The failure is that the Gmail OAuth token for that authenticated session is absent or revoked. 401 means "you are not authenticated"; 422 means "your request is structurally valid but the server cannot process it in its current state." 422 is semantically correct here.
+
+**Impact on callers:** Any client that intercepts 401 to trigger a re-auth redirect must also handle 422 responses whose body contains `"Gmail token"` to trigger the same flow. The `/api/gmail/sync/start` route uses the same 422 pattern.
+
+### UserEmailFilter created per-scan (Phase 1A MVP)
+
+Each call to `createScanRun` creates a new `UserEmailFilter` + `EmailFilterVersion` row, even when the caller supplies the same `filterName` and `gmailQuery` as a previous scan.
+
+**Rationale:** Phase 1A is a single-user MVP. Filter management (edit, list, deactivate, version) is a post-MVP concern. Creating a per-scan filter keeps the creation path simple and atomic. The schema supports reusable filters (versioned chain, `isActive`, `currentVersionId`); this design defers that behaviour rather than preventing it.
+
+**Constraint:** `version: 1` is hardcoded in `EmailFilterVersion`. If filters are ever made reusable, a migration will be needed to populate `supersedesVersionId` and the create path must query `MAX(version)` before inserting.
+
+**Cleanup:** A future migration may consolidate duplicate filter rows (same `userId` + `gmailQuery`) once filter management is implemented. Tracked as DEF-13.
