@@ -31,6 +31,13 @@ export async function POST(request: Request) {
     );
   }
 
+  if (filterName.length > 255) {
+    return NextResponse.json(
+      { error: "filterName must be 255 characters or fewer" },
+      { status: 400 },
+    );
+  }
+
   const account = await prisma.account.findFirst({
     where: { userId: session.user.id, provider: "google", disconnectedAt: null },
     select: { id: true },

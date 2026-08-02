@@ -155,4 +155,16 @@ describe("POST /api/gmail/scan", () => {
     const res = await POST(makeRequest({ ...validBody, scanLimit: 100 }));
     expect(res.status).toBe(201);
   });
+
+  it("returns 400 when filterName exceeds 255 characters", async () => {
+    const res = await POST(makeRequest({ ...validBody, filterName: "a".repeat(256) }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/filterName/i);
+  });
+
+  it("accepts a filterName of exactly 255 characters", async () => {
+    const res = await POST(makeRequest({ ...validBody, filterName: "a".repeat(255) }));
+    expect(res.status).toBe(201);
+  });
 });
