@@ -21,6 +21,7 @@ Updated: 2026-08-02
 - Phase 1A `GET /api/gmail/scan/{id}` is implemented as a read-only, database-session-protected status endpoint. It scopes the scan lookup by user, reconciles counters from scan items, detects cached-counter drift, and returns 404 for another tenant or an unknown scan.
 - All 5 pending migrations (parse-template bridge + Phase 1A scan schema + LLM drift reconciliation) have been applied to live Neon. Live schema is fully up to date.
 - Phase 1A `POST /api/gmail/scan` is implemented as a protected idempotent scan-creation endpoint. It creates a `UserEmailFilter` + `EmailFilterVersion` + `EmailScanRun` and returns 201 on creation or 200 on a duplicate `clientRequestId`.
+- Phase 1A scan-creation hardened after engineering lead review: all DB writes wrapped in `prisma.$transaction`, P2002 race handled as idempotent, date strings validated with `isNaN` + ordering check, Gmail token verified at creation, blank `gmailQuery` rejected, `scanLimit` validated as positive integer, `filterName` capped at 255 characters.
 
 ## How to run
 
@@ -42,7 +43,7 @@ npm run dev
 ## Verification
 
 - `npm run lint` — passed.
-- `npm test -- --runInBand` — 39 suites, 294 tests passed.
+- `npm test -- --runInBand` — 39 suites, 307 tests passed.
 - `npx prisma validate` and `npx prisma generate` — passed.
 - All 23 migrations applied and reported up to date on live Neon.
 - `npm run build` — passed.
@@ -59,8 +60,8 @@ npm run dev
 - Sign-out interaction test — passed.
 - Phase 1A progress tests — passed.
 - Phase 1A status-service/API tests — passed.
-- Phase 1A scan-creation service tests — 6 tests passed (idempotency, filter/version/run creation, date and limit propagation).
-- Phase 1A `POST /api/gmail/scan` API tests — 7 tests passed (401, 400 validation, 422 no-account, 201 create, 200 idempotent, date parsing).
+- Phase 1A scan-creation service tests — 8 tests passed (transaction, idempotency, P2002 race, filter/version/run creation, date and limit propagation).
+- Phase 1A `POST /api/gmail/scan` API tests — 18 tests passed (401, 400 validation ×9, 422 no-account, 422 no-token, 201 create, 200 idempotent, date parsing).
 
 ## Next task
 
