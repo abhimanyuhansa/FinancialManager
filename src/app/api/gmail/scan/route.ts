@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getGmailToken } from "@/lib/gmail";
 import { createScanRun } from "@/lib/scan/scanCreateService";
+import { CLIENT_REQUEST_ID_MAX_LENGTH } from "@/lib/scan/types";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -39,6 +40,13 @@ export async function POST(request: Request) {
   if (filterName.length > 255) {
     return NextResponse.json(
       { error: "filterName must be 255 characters or fewer" },
+      { status: 400 },
+    );
+  }
+
+  if (clientRequestId.length > CLIENT_REQUEST_ID_MAX_LENGTH) {
+    return NextResponse.json(
+      { error: `clientRequestId must be ${CLIENT_REQUEST_ID_MAX_LENGTH} characters or fewer` },
       { status: 400 },
     );
   }

@@ -179,4 +179,16 @@ describe("POST /api/gmail/scan", () => {
     const body = await res.json();
     expect(body.error).toMatch(/invalid.*json|malformed|parse/i);
   });
+
+  it("returns 400 when clientRequestId exceeds 500 characters", async () => {
+    const res = await POST(makeRequest({ ...validBody, clientRequestId: "x".repeat(501) }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/clientRequestId/i);
+  });
+
+  it("accepts a clientRequestId of exactly 500 characters", async () => {
+    const res = await POST(makeRequest({ ...validBody, clientRequestId: "x".repeat(500) }));
+    expect(res.status).toBe(201);
+  });
 });

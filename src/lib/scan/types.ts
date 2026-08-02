@@ -52,3 +52,5 @@ export type CreateScanResult = {
   /** true = newly created; false = existing scan returned (idempotent) */
   created: boolean;
 };
+
+export const CLIENT_REQUEST_ID_MAX_LENGTH = 500;
