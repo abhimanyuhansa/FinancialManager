@@ -99,6 +99,15 @@ export async function POST(request: Request) {
     );
   }
 
+  const maxToDate = new Date();
+  maxToDate.setFullYear(maxToDate.getFullYear() + 10);
+  if (parsedTo > maxToDate) {
+    return NextResponse.json(
+      { error: "toDate must be within 10 years from today" },
+      { status: 400 },
+    );
+  }
+
   let result: CreateScanResult;
   try {
     result = await createScanRun({

@@ -207,4 +207,26 @@ describe("POST /api/gmail/scan", () => {
     expect(res.status).toBe(400);
     expect(mockAccountFindFirst).not.toHaveBeenCalled();
   });
+
+  it("returns 400 when toDate is more than 10 years in the future", async () => {
+    const farFuture = new Date();
+    farFuture.setFullYear(farFuture.getFullYear() + 11);
+    const res = await POST(makeRequest({ ...validBody, toDate: farFuture.toISOString() }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/toDate/i);
+  });
+
+  it("accepts a toDate within 10 years from today", async () => {
+    const nearFuture = new Date();
+    nearFuture.setFullYear(nearFuture.getFullYear() + 5);
+    const fromNear = new Date();
+    fromNear.setMonth(fromNear.getMonth() - 1);
+    const res = await POST(makeRequest({
+      ...validBody,
+      fromDate: fromNear.toISOString(),
+      toDate: nearFuture.toISOString(),
+    }));
+    expect(res.status).toBe(201);
+  });
 });
