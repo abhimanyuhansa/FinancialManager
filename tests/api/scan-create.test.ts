@@ -191,4 +191,14 @@ describe("POST /api/gmail/scan", () => {
     const res = await POST(makeRequest({ ...validBody, clientRequestId: "x".repeat(500) }));
     expect(res.status).toBe(201);
   });
+
+  it("returns 409 when createScanRun throws an invalid-status error", async () => {
+    mockCreateScanRun.mockRejectedValueOnce(
+      new Error("Invalid persisted scan status: UNKNOWN_FUTURE_STATUS"),
+    );
+    const res = await POST(makeRequest(validBody));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatch(/unrecognised.*state|scan.*state|contact support/i);
+  });
 });

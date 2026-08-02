@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getGmailToken } from "@/lib/gmail";
 import { createScanRun } from "@/lib/scan/scanCreateService";
+import type { CreateScanResult } from "@/lib/scan/types";
 import { CLIENT_REQUEST_ID_MAX_LENGTH } from "@/lib/scan/types";
 
 export async function POST(request: Request) {
@@ -98,16 +99,27 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await createScanRun({
-    userId: session.user.id,
-    gmailAccountId: account.id,
-    clientRequestId,
-    filterName,
-    gmailQuery,
-    fromDate: parsedFrom,
-    toDate: parsedTo,
-    scanLimit: typeof scanLimit === "number" ? scanLimit : undefined,
-  });
+  let result: CreateScanResult;
+  try {
+    result = await createScanRun({
+      userId: session.user.id,
+      gmailAccountId: account.id,
+      clientRequestId,
+      filterName,
+      gmailQuery,
+      fromDate: parsedFrom,
+      toDate: parsedTo,
+      scanLimit: typeof scanLimit === "number" ? scanLimit : undefined,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("Invalid persisted scan status:")) {
+      return NextResponse.json(
+        { error: "Scan is in an unrecognised state; please contact support" },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 
   return NextResponse.json(result, { status: result.created ? 201 : 200 });
 }
