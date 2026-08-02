@@ -16,6 +16,7 @@ jest.mock("@/lib/prisma", () => ({
 
 import { createScanRun } from "@/lib/scan/scanCreateService";
 import type { CreateScanRequest } from "@/lib/scan/types";
+import { Prisma } from "@prisma/client";
 
 const baseRequest: CreateScanRequest = {
   userId: "user-1",
@@ -108,5 +109,23 @@ describe("createScanRun", () => {
     await createScanRun(baseRequest);
     const callArgs = mockEmailScanRunCreate.mock.calls[0][0];
     expect(callArgs.data.scanLimit).toBeUndefined();
+  });
+
+  it("returns idempotent result when concurrent request causes P2002 unique constraint error", async () => {
+    mockEmailScanRunFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "run-winner", status: "CREATED" });
+
+    const p2002 = new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+      code: "P2002",
+      clientVersion: "0.0.0",
+      meta: { target: ["userId", "clientRequestId"] },
+    });
+    mockTransaction.mockRejectedValueOnce(p2002);
+
+    const result = await createScanRun(baseRequest);
+    expect(result.scanRunId).toBe("run-winner");
+    expect(result.created).toBe(false);
+    expect(result.status).toBe("CREATED");
   });
 });
