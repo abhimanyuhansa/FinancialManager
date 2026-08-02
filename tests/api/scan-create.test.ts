@@ -201,4 +201,10 @@ describe("POST /api/gmail/scan", () => {
     const body = await res.json();
     expect(body.error).toMatch(/unrecognised.*state|scan.*state|contact support/i);
   });
+
+  it("does not call account lookup when scanLimit is invalid", async () => {
+    const res = await POST(makeRequest({ ...validBody, scanLimit: -1 }));
+    expect(res.status).toBe(400);
+    expect(mockAccountFindFirst).not.toHaveBeenCalled();
+  });
 });
