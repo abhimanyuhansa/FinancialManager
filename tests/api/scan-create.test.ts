@@ -87,4 +87,25 @@ describe("POST /api/gmail/scan", () => {
       }),
     );
   });
+
+  it("returns 400 when fromDate is not a valid date string", async () => {
+    const res = await POST(makeRequest({ ...validBody, fromDate: "not-a-date" }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/valid.*date/i);
+  });
+
+  it("returns 400 when toDate is not a valid date string", async () => {
+    const res = await POST(makeRequest({ ...validBody, toDate: "32/13/2099" }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/valid.*date/i);
+  });
+
+  it("returns 400 when fromDate is not before toDate", async () => {
+    const res = await POST(makeRequest({ ...validBody, fromDate: "2026-12-01", toDate: "2026-01-01" }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/before/i);
+  });
 });

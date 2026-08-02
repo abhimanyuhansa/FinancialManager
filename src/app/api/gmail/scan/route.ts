@@ -43,14 +43,31 @@ export async function POST(request: Request) {
     );
   }
 
+  const parsedFrom = new Date(fromDate);
+  const parsedTo = new Date(toDate);
+
+  if (isNaN(parsedFrom.getTime()) || isNaN(parsedTo.getTime())) {
+    return NextResponse.json(
+      { error: "fromDate and toDate must be valid ISO date strings" },
+      { status: 400 },
+    );
+  }
+
+  if (parsedFrom >= parsedTo) {
+    return NextResponse.json(
+      { error: "fromDate must be before toDate" },
+      { status: 400 },
+    );
+  }
+
   const result = await createScanRun({
     userId: session.user.id,
     gmailAccountId: account.id,
     clientRequestId,
     filterName,
     gmailQuery,
-    fromDate: new Date(fromDate),
-    toDate: new Date(toDate),
+    fromDate: parsedFrom,
+    toDate: parsedTo,
     scanLimit: typeof scanLimit === "number" ? scanLimit : undefined,
   });
 
