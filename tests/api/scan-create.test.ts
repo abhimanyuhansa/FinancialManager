@@ -15,6 +15,11 @@ jest.mock("@/lib/prisma", () => ({
   },
 }));
 
+const mockGetGmailToken = jest.fn();
+jest.mock("@/lib/gmail", () => ({
+  getGmailToken: (...args: unknown[]) => mockGetGmailToken(...args),
+}));
+
 import { POST } from "@/app/api/gmail/scan/route";
 
 function makeRequest(body: unknown): Request {
@@ -37,6 +42,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockAuth.mockResolvedValue({ user: { id: "user-1" } });
   mockAccountFindFirst.mockResolvedValue({ id: "acct-1" });
+  mockGetGmailToken.mockResolvedValue("fake-access-token");
   mockCreateScanRun.mockResolvedValue({ scanRunId: "run-1", status: "CREATED", created: true });
 });
 
@@ -107,5 +113,13 @@ describe("POST /api/gmail/scan", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/before/i);
+  });
+
+  it("returns 422 when Gmail token is unavailable (revoked)", async () => {
+    mockGetGmailToken.mockResolvedValue(null);
+    const res = await POST(makeRequest(validBody));
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toMatch(/token|sign in/i);
   });
 });

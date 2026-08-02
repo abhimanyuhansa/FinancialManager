@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getGmailToken } from "@/lib/gmail";
 import { createScanRun } from "@/lib/scan/scanCreateService";
 
 export async function POST(request: Request) {
@@ -39,6 +40,14 @@ export async function POST(request: Request) {
   if (!account) {
     return NextResponse.json(
       { error: "No connected Google account found" },
+      { status: 422 },
+    );
+  }
+
+  const accessToken = await getGmailToken(session.user.id);
+  if (!accessToken) {
+    return NextResponse.json(
+      { error: "No Gmail token — please sign in again" },
       { status: 422 },
     );
   }
