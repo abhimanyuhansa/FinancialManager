@@ -1,4 +1,20 @@
-import { createScanRun, type ScanCreateStore } from "@/lib/scan/scanCreateService";
+const mockEmailScanRunFindFirst = jest.fn();
+const mockEmailScanRunCreate = jest.fn();
+const mockUserEmailFilterCreate = jest.fn();
+const mockEmailFilterVersionCreate = jest.fn();
+const mockUserEmailFilterUpdate = jest.fn();
+const mockTransaction = jest.fn();
+
+jest.mock("@/lib/prisma", () => ({
+  prisma: {
+    $transaction: (...args: unknown[]) => mockTransaction(...args),
+    emailScanRun: {
+      findFirst: (...args: unknown[]) => mockEmailScanRunFindFirst(...args),
+    },
+  },
+}));
+
+import { createScanRun } from "@/lib/scan/scanCreateService";
 import type { CreateScanRequest } from "@/lib/scan/types";
 
 const baseRequest: CreateScanRequest = {
@@ -11,60 +27,56 @@ const baseRequest: CreateScanRequest = {
   toDate: new Date("2026-07-01"),
 };
 
-function makeMockStore(overrides?: Partial<ScanCreateStore>): ScanCreateStore {
+function makeTxClient() {
   return {
-    emailScanRun: {
-      findFirst: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockResolvedValue({
-        id: "run-new",
-        status: "CREATED",
-      }),
-    },
     userEmailFilter: {
-      create: jest.fn().mockResolvedValue({ id: "filter-1" }),
+      create: mockUserEmailFilterCreate,
+      update: mockUserEmailFilterUpdate,
     },
-    emailFilterVersion: {
-      create: jest.fn().mockResolvedValue({ id: "version-1" }),
-    },
-    userEmailFilter_setCurrentVersion: jest.fn().mockResolvedValue(undefined),
-    ...overrides,
+    emailFilterVersion: { create: mockEmailFilterVersionCreate },
+    emailScanRun: { create: mockEmailScanRunCreate },
   };
 }
 
-describe("createScanRun", () => {
-  it("creates filter, version, and scan run on first call", async () => {
-    const store = makeMockStore();
-    const result = await createScanRun(baseRequest, store);
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockEmailScanRunFindFirst.mockResolvedValue(null);
+  mockUserEmailFilterCreate.mockResolvedValue({ id: "filter-1" });
+  mockEmailFilterVersionCreate.mockResolvedValue({ id: "version-1" });
+  mockUserEmailFilterUpdate.mockResolvedValue({ id: "filter-1" });
+  mockEmailScanRunCreate.mockResolvedValue({ id: "run-new", status: "CREATED" });
+  mockTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+    fn(makeTxClient()),
+  );
+});
 
+describe("createScanRun", () => {
+  it("runs all writes inside a single transaction", async () => {
+    await createScanRun(baseRequest);
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates filter, version, and scan run on first call", async () => {
+    const result = await createScanRun(baseRequest);
     expect(result.scanRunId).toBe("run-new");
     expect(result.status).toBe("CREATED");
     expect(result.created).toBe(true);
-    expect(store.userEmailFilter.create).toHaveBeenCalledTimes(1);
-    expect(store.emailFilterVersion.create).toHaveBeenCalledTimes(1);
-    expect(store.emailScanRun.create).toHaveBeenCalledTimes(1);
+    expect(mockUserEmailFilterCreate).toHaveBeenCalledTimes(1);
+    expect(mockEmailFilterVersionCreate).toHaveBeenCalledTimes(1);
+    expect(mockEmailScanRunCreate).toHaveBeenCalledTimes(1);
   });
 
   it("returns existing scan run when clientRequestId already exists (idempotent)", async () => {
-    const store = makeMockStore({
-      emailScanRun: {
-        findFirst: jest.fn().mockResolvedValue({ id: "run-existing", status: "CREATED" }),
-        create: jest.fn(),
-      },
-    });
-
-    const result = await createScanRun(baseRequest, store);
-
+    mockEmailScanRunFindFirst.mockResolvedValue({ id: "run-existing", status: "CREATED" });
+    const result = await createScanRun(baseRequest);
     expect(result.scanRunId).toBe("run-existing");
     expect(result.created).toBe(false);
-    expect(store.userEmailFilter.create).not.toHaveBeenCalled();
-    expect(store.emailScanRun.create).not.toHaveBeenCalled();
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 
   it("passes gmailQuery into emailFilterVersion", async () => {
-    const store = makeMockStore();
-    await createScanRun(baseRequest, store);
-
-    expect(store.emailFilterVersion.create).toHaveBeenCalledWith(
+    await createScanRun(baseRequest);
+    expect(mockEmailFilterVersionCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ gmailQuery: "from:bank" }),
       }),
@@ -72,10 +84,8 @@ describe("createScanRun", () => {
   });
 
   it("passes fromDate and toDate into emailScanRun", async () => {
-    const store = makeMockStore();
-    await createScanRun(baseRequest, store);
-
-    expect(store.emailScanRun.create).toHaveBeenCalledWith(
+    await createScanRun(baseRequest);
+    expect(mockEmailScanRunCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           fromDate: new Date("2026-01-01"),
@@ -86,10 +96,8 @@ describe("createScanRun", () => {
   });
 
   it("sets scanLimit when provided", async () => {
-    const store = makeMockStore();
-    await createScanRun({ ...baseRequest, scanLimit: 100 }, store);
-
-    expect(store.emailScanRun.create).toHaveBeenCalledWith(
+    await createScanRun({ ...baseRequest, scanLimit: 100 });
+    expect(mockEmailScanRunCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ scanLimit: 100 }),
       }),
@@ -97,10 +105,8 @@ describe("createScanRun", () => {
   });
 
   it("omits scanLimit when not provided", async () => {
-    const store = makeMockStore();
-    await createScanRun(baseRequest, store);
-
-    const callArgs = (store.emailScanRun.create as jest.Mock).mock.calls[0][0];
+    await createScanRun(baseRequest);
+    const callArgs = mockEmailScanRunCreate.mock.calls[0][0];
     expect(callArgs.data.scanLimit).toBeUndefined();
   });
 });
